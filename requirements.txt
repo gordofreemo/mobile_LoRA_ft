@@ -1,0 +1,15 @@
+# Core ML stack
+# torch is already provided by the base Docker image (pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel)
+# Do not pin torch here — the base image version takes precedence.
+
+# HuggingFace ecosystem
+transformers>=4.45.0     # model loading, training loop, tokenizer
+peft>=0.13.0             # LoRA implementation (get_peft_model, LoraConfig)
+datasets>=3.0.0          # dataset loading and preprocessing
+accelerate>=0.34.0       # mixed precision (bf16), multi-GPU if needed, device management
+
+# Experiment tracking
+wandb>=0.18.0            # Weights & Biases — logs loss curves, eval metrics per run
+
+# Evaluation
+rouge_score>=0.1.2       # ROUGE-1 for LaMP-4, LaMP-7 evaluation
