@@ -1,0 +1,31 @@
+# Non-personalized FLOOR for LaMP — same eval harness as eval_lamp.sub, but with
+# `--no-profile` so the model sees only the task and no user information. This is
+# the bottom of the comparison ladder (answers: does the profile help at all?).
+#
+# Submit alongside the profile baseline, no editing required:
+#   condor_submit condor/eval_lamp.sub        # profile baseline (BM25 k=4)
+#   condor_submit condor/eval_lamp_floor.sub  # non-personalized floor
+#
+# Each task lands its own result file — the harness picks `noprofile` vs `bm25k4`
+# into the filename, so the two runs don't collide in results/.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver2
+executable            = eval/eval_lamp.py
+arguments             = --task $(task) --split dev --no-profile --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (LaMP_3 LaMP_4 LaMP_7)
