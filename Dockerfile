@@ -13,6 +13,13 @@ FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 # Condor will mount your transferred files here when the job runs.
 WORKDIR /workspace
 
+# Install git so scripts can record the running code's commit SHA in result
+# records via `subprocess(["git", "rev-parse", "HEAD"])`. The pytorch runtime
+# base image is slimmed down and doesn't include it. Done in its own layer
+# (before pip) so the requirements install layer stays cacheable.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy only the requirements file into the image.
 # We do this as a separate step from the pip install so Docker can cache the
 # install layer — if requirements.txt hasn't changed, Docker skips the pip step

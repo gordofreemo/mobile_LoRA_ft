@@ -10,7 +10,7 @@
 # into the filename, so the two runs don't collide in results/.
 
 universe              = docker
-docker_image          = ghcr.io/gordofreemo/smollm3-train:ver2
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver3
 executable            = eval/eval_lamp.py
 arguments             = --task $(task) --split dev --no-profile --seed 0
 
