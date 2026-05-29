@@ -23,7 +23,10 @@ error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_l
 log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp.$(ClusterId).log
 
 should_transfer_files = YES
-environment           = MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B
+# Forward Condor's job IDs into the job environment so each result JSON carries
+# them in `condor_cluster_id` / `condor_proc_id`. This is what links a result
+# back to its runlog file (runlogs/eval_lamp.<task>.<cluster>.<proc>.{out,err}).
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
 
 request_GPUs          = 1
 request_CPUs          = 2

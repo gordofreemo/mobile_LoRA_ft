@@ -332,6 +332,12 @@ def collect_provenance() -> dict:
     return {
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "hostname": socket.gethostname(),
+        # Condor IDs come from env vars set in the sub file's `environment` line.
+        # They're what links a result JSON back to its runlog file
+        # (runlogs/eval_lamp.<task>.<cluster>.<proc>.{out,err}). None when running
+        # interactively (no Condor job around).
+        "condor_cluster_id": os.environ.get("CONDOR_CLUSTER_ID") or None,
+        "condor_proc_id": os.environ.get("CONDOR_PROC_ID") or None,
         "git_commit": _git("rev-parse", "HEAD"),
         "git_dirty": None if porcelain is None else bool(porcelain),
         "python_version": platform.python_version(),
@@ -399,6 +405,22 @@ def main():
     parser.add_argument("--model-dir", default=MODEL_DIR)
     parser.add_argument("--max-new-tokens", type=int, default=0, help="override per-task default")
     args = parser.parse_args()
+
+    # Capture provenance once at startup so the banner and the result record agree
+    # and `timestamp_utc` reflects start time. The banner makes the runlog
+    # self-documenting: anyone reading runlogs/eval_lamp.<task>.<cluster>.<proc>.out
+    # sees task, condition, seed, commit, and Condor IDs on the very first line.
+    provenance = collect_provenance()
+    cond_label = "noprofile" if args.no_profile else f"bm25k{args.k}"
+    commit_short = (provenance.get("git_commit") or "unknown")[:8]
+    print(
+        f"[run] task={args.task} split={args.split} cond={cond_label} "
+        f"seed={args.seed} limit={args.limit} commit={commit_short} "
+        f"condor={provenance.get('condor_cluster_id') or '-'}."
+        f"{provenance.get('condor_proc_id') or '-'} "
+        f"host={provenance.get('hostname')}",
+        flush=True,
+    )
 
     import random
 
@@ -511,8 +533,9 @@ def main():
         "adapter_params": adapter_params,
         "seconds": round(elapsed, 1),
         "sec_per_example": round(elapsed / max(len(preds), 1), 3),
-        # provenance (commit, versions, host, timestamp)
-        **collect_provenance(),
+        # provenance captured at run start — includes Condor IDs, git commit,
+        # library versions, hostname, and start timestamp.
+        **provenance,
     }
 
     Path(RESULTS_DIR).mkdir(parents=True, exist_ok=True)
