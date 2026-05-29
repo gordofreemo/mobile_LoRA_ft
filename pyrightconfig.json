@@ -1,0 +1,4 @@
+{
+  "include": ["train", "eval"],
+  "exclude": ["**/data", "**/results", "**/runlogs", "**/experiments", "**/notebooks", "**/condor", "**/__pycache__", "**/.git", "**/*.ipynb_checkpoints"]
+}

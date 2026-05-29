@@ -1,4 +1,6 @@
 data/lamp/*
 data/synthetic/*
+data/models/*
 runlogs/*
 notebooks/*
+.venv/

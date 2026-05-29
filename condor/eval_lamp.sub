@@ -1,0 +1,36 @@
+# Baseline zero-shot LaMP evaluation — one GPU job per task, run in parallel.
+#
+# This runs the PROFILE baseline (BM25-retrieved profile in the system prompt, no
+# adapter) on the dev split for the three usable LaMP tasks. LaMP-6 is omitted: its
+# public data ships only Avocado file-id placeholders, not text.
+#
+# Smoke-test FIRST in an interactive session before submitting the full sweep:
+#   condor_submit -i condor/interactive.sub
+#   python eval/eval_lamp.py --task LaMP_3 --split dev --k 4 --limit 5
+# Then submit this for the full dev numbers:
+#   condor_submit condor/eval_lamp.sub
+#
+# For the non-personalized floor, add --no-profile to the arguments line (or run it
+# as a second submit), and change the run tag implicitly captured in the filename.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver2
+executable            = eval/eval_lamp.py
+arguments             = --task $(task) --split dev --k 4 --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Queue one job per task; each lands on its own GPU and writes its own results file.
+queue task in (LaMP_3 LaMP_4 LaMP_7)
