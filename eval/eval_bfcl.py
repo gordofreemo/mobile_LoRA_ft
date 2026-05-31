@@ -31,6 +31,16 @@ import time
 from pathlib import Path
 from collections import Counter
 
+# bfcl-eval's `eval_config.py` does `RESULT_PATH.mkdir(...)` at import time,
+# rooted at $BFCL_PROJECT_ROOT (default: the package install dir, e.g.
+# /opt/conda/lib/python3.11/site-packages/, which is read-only inside the Docker
+# container). Point it at a writable scratch dir BEFORE any `import bfcl_eval`
+# anywhere in the script — even transitively via load_bfcl_data or score_one.
+_BFCL_ROOT = os.environ.setdefault(
+    "BFCL_PROJECT_ROOT", "/tmp/bfcl_project_root"
+)
+Path(_BFCL_ROOT).mkdir(parents=True, exist_ok=True)
+
 MODEL_DIR = os.environ.get(
     "MODEL_OUT_DIR",
     "/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B",
