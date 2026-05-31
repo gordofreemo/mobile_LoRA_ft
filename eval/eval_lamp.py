@@ -404,6 +404,11 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="evaluate only first N (smoke test)")
     parser.add_argument("--model-dir", default=MODEL_DIR)
     parser.add_argument("--max-new-tokens", type=int, default=0, help="override per-task default")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="overwrite existing results JSON / predictions JSONL (default: refuse)",
+    )
     args = parser.parse_args()
 
     # Capture provenance once at startup so the banner and the result record agree
@@ -421,6 +426,32 @@ def main():
         f"host={provenance.get('hostname')}",
         flush=True,
     )
+
+    # Compute the output paths up front so we can refuse to overwrite *before*
+    # loading the 6 GB model and burning generation cycles. This is the safeguard
+    # added after a smoke re-run silently clobbered a full baseline's results.
+    # Default is refuse; `--overwrite` is the explicit opt-in.
+    adapter_tag = "base" if args.adapter.lower() == "none" else Path(args.adapter).name
+    profile_tag = "noprofile" if args.no_profile else f"bm25k{args.k}"
+    limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
+    stem = f"{args.task}_{args.split}_{adapter_tag}_{profile_tag}_seed{args.seed}{limit_tag}"
+    out_path = Path(RESULTS_DIR) / f"{stem}.json"
+    pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
+    if not args.overwrite and (out_path.exists() or pred_path.exists()):
+        print(
+            "ERROR: refusing to overwrite existing results:",
+            file=sys.stderr,
+        )
+        for p in (out_path, pred_path):
+            mark = "exists" if p.exists() else "would-be-new"
+            print(f"  {p}   [{mark}]", file=sys.stderr)
+        print(
+            "\nPass --overwrite to replace, or vary --seed / --task / --adapter / etc.\n"
+            "to write to a different path. (Smoke runs with --limit already get a\n"
+            "_limitN suffix and won't collide with full runs.)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     import random
 
@@ -492,9 +523,6 @@ def main():
     def mean(xs):
         return (sum(xs) / len(xs)) if xs else 0.0
 
-    adapter_tag = "base" if args.adapter.lower() == "none" else Path(args.adapter).name
-    profile_tag = "noprofile" if args.no_profile else f"bm25k{args.k}"
-
     # FLAT, single-level record: every field is a scalar so a whole sweep of runs
     # loads straight into a dataframe with no unnesting —
     #   import pandas as pd, glob, json
@@ -539,14 +567,11 @@ def main():
     }
 
     Path(RESULTS_DIR).mkdir(parents=True, exist_ok=True)
-    stem = f"{args.task}_{args.split}_{adapter_tag}_{profile_tag}_seed{args.seed}"
-    out_path = Path(RESULTS_DIR) / f"{stem}.json"
     out_path.write_text(json.dumps(record, indent=2))
 
     # Full per-example predictions go to a sibling JSONL — kept out of the summary
     # so the summary stays a clean one-row record, but available for error analysis
     # and re-scoring without re-running the model.
-    pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
     with pred_path.open("w") as f:
         for _id, p, g in zip(ids, preds, gold_list):
             f.write(json.dumps({"id": _id, "pred": p, "gold": g}) + "\n")

@@ -14,7 +14,7 @@
 # as a second submit), and change the run tag implicitly captured in the filename.
 
 universe              = docker
-docker_image          = ghcr.io/gordofreemo/smollm3-train:ver3
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = eval/eval_lamp.py
 arguments             = --task $(task) --split dev --k 4 --seed 0
 

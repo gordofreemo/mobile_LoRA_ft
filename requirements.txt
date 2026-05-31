@@ -13,3 +13,5 @@ wandb>=0.18.0            # Weights & Biases — logs loss curves, eval metrics p
 
 # Evaluation
 rouge_score>=0.1.2       # ROUGE-1 for LaMP-4, LaMP-7 evaluation
+bfcl-eval                # Berkeley Function Calling Leaderboard — official AST scorer
+soundfile                # transitive dep of bfcl-eval's qwen_agent handler chain

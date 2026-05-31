@@ -1,5 +1,5 @@
 universe              = docker
-docker_image          = ghcr.io/gordofreemo/smollm3-train:ver3
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = condor/download_model.py
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/download_model.$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/download_model.$(ClusterId).$(ProcId).err
