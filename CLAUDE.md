@@ -64,8 +64,8 @@ The teacher model (Qwen3-30B or GPT-4o) is used **only for offline synthetic dat
 from peft import LoraConfig
 
 task_lora = LoraConfig(
-    r=64,
-    lora_alpha=128,
+    r=4,
+    lora_alpha=8,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                     "gate_proj", "up_proj", "down_proj"],
     lora_dropout=0.05,
@@ -73,6 +73,13 @@ task_lora = LoraConfig(
     task_type="CAUSAL_LM",
 )
 ```
+
+**Rank choice (r=4, alpha=8):** the original spec used r=64 / alpha=128. Dropped to
+r=4 because the whole project's value proposition is on-device efficiency — adapter
+parameter count scales linearly in r, and r=4 is 16× smaller than r=64 in both disk
+and inference overhead. alpha is dropped proportionally (preserving the standard
+alpha/r = 2 scaling); see [arXiv:2402.04401] OPPU and the LoRA literature for
+typical r=4–16 mobile configurations.
 
 - **A1-lamp:** one training run, LaMP splits only (no synthetic data)
 - **A1-full:** one training run, LaMP splits + synthetic data mixed

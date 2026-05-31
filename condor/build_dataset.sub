@@ -1,0 +1,38 @@
+# LaMP training-corpus preprocessing — one-shot CPU job.
+#
+# Streams the raw 2.9 GB / 789 MB / 25 MB LaMP train_questions.json files,
+# does BM25 top-k retrieval per example, and writes compact training-ready
+# JSONLs (+ a mixed/shuffled file + provenance meta sidecar) to data/.
+# See train/build_dataset.py for details.
+#
+# Login-node OOMs on the 2.9 GB JSON read, hence the Condor job — needs CPU
+# and memory but NOT a GPU.
+#
+# Smoke first if you want (interactive, e.g. on simple_python equivalent):
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/build_dataset.py --tasks LaMP_7 --limit 100
+# Then submit for the real build (all 3 tasks, full data):
+#   condor_submit condor/build_dataset.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_dataset.py
+arguments             = --k 4 --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_dataset.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_dataset.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_dataset.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp DATA_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — no GPU needed for streaming JSON + BM25 + JSONL write.
+request_CPUs          = 2
+request_memory        = 12G
+request_disk          = 4G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
