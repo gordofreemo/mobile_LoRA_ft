@@ -149,24 +149,148 @@ Also run **BFCL regression** before and after each Task-LoRA training run. Targe
 
 ---
 
-## Repo structure
+## Repo structure (current — reflects what's actually built)
 
 ```
 /
+├── CLAUDE.md, Dockerfile, requirements.txt, pyrightconfig.json
+├── condor/
+│   ├── build_dataset.sub        # one-shot CPU job: preprocess LaMP train → JSONL
+│   ├── download_model.{py,sub}  # one-time HF Hub pull of SmolLM3-3B
+│   ├── interactive.sub          # GPU shell for smoke tests
+│   ├── eval_lamp.sub            # LaMP profile-baseline + adapter eval (3 parallel jobs)
+│   ├── eval_lamp_floor.sub      # LaMP non-personalized floor (3 parallel jobs)
+│   ├── eval_bfcl.sub            # BFCL AST regression (1 GPU job, all categories)
+│   ├── chat.py                  # interactive REPL with the model + optional adapter
+│   └── smoke_test.py            # Docker-image env check
 ├── data/
-│   ├── lamp/           # LaMP dataset splits (downloaded)
-│   ├── synthetic/      # Teacher-generated preference-conditional data
-│   └── tool/           # xlam, glaive (for A2 tool-calling run)
+│   ├── download_lamp.py         # one-time LaMP download
+│   ├── lamp/                    # LaMP-{3,4,6,7}/{train,dev,test}_{questions,outputs}.json
+│   ├── models/SmolLM3-3B/       # downloaded weights (~6 GB)
+│   ├── lamp_train_<task>_bm25k4.jsonl + lamp_train_mixed_bm25k4.jsonl  # built by build_dataset.py
+│   ├── synthetic/               # teacher-generated preference data (not yet produced)
+│   └── tool/                    # xlam / glaive (A2 only — not yet downloaded)
 ├── train/
-│   ├── train.py        # Main training script — --condition {a1_lamp,a1_full,a2_tool,a2_email,a2_recs}
-│   └── config/         # YAML configs per condition
+│   ├── build_dataset.py         # streams raw LaMP train → BM25-retrieved JSONL
+│   ├── train.py                 # main trainer — NOT YET WRITTEN
+│   └── config/                  # YAML per condition — NOT YET WRITTEN
 ├── eval/
-│   ├── eval_lamp.py    # LaMP evaluation script
-│   └── eval_bfcl.py    # BFCL regression check
-├── results/            # JSON result files, one per condition per run
-├── notebooks/          # Analysis and figure generation
-└── experiments/        # Experiment log entries (one .md per run)
+│   ├── eval_lamp.py             # LaMP harness (BM25 k=4 retrieval, refuse-to-overwrite)
+│   ├── eval_bfcl.py             # BFCL harness using bfcl-eval's ast_checker as a library
+│   └── summary.py               # flatten results/*.json → one-row-per-run table
+├── results/                     # flat scalar JSON records + predictions JSONL
+├── runlogs/                     # Condor stdout/stderr (gitignored)
+├── experiments/                 # YYYY-MM-DD-<slug>.md per run
+└── notebooks/                   # personal analysis (gitignored)
 ```
+
+---
+
+## Phase 1 implementation status (as of session refresh)
+
+**Completed:**
+- Zero-shot baselines on LaMP-3 / LaMP-4 / LaMP-7 dev — both the profile baseline
+  (BM25 k=4 in system) and the non-personalized floor. Documented in
+  `experiments/2026-05-29-baseline-lamp.md`.
+- BFCL bare-model AST regression (catastrophic-forgetting reference).
+  Documented in `notebooks/bfcl_baseline_results.md`.
+- Training-corpus preprocessing script (`train/build_dataset.py`) — streams the
+  2.9 GB LaMP-3 train JSON, runs BM25 top-k, writes per-task + mixed JSONLs.
+
+**Baselines for comparison** (LaMP dev, seed 0, greedy, BM25 k=4):
+
+| Task | No-profile floor | Profile baseline |
+|---|---|---|
+| LaMP-3 | acc 0.4404 | acc 0.6924 (a re-run on `loki` got 0.6892 — bf16 cross-host drift, see experiment log) |
+| LaMP-4 | rouge1 0.1410 | rouge1 0.1615 |
+| LaMP-7 | rouge1 0.4139 | rouge1 0.4352 |
+| **BFCL AST overall** | — | **0.8078** (0.8870 on Python-only subset) |
+
+Result files: `results/LaMP_{3,4,7}_dev_base_{bm25k4,noprofile}_seed0.{json,predictions.jsonl}` and `results/bfcl_ast_base_seed0.{json,predictions.jsonl}`.
+
+**Next milestone:** A1-lamp training (`train/train.py --condition a1_lamp` — script not yet written). Build_dataset.py needs to finish first to produce the training corpus.
+
+---
+
+## Standard script patterns (converged on across all eval/train/data-prep scripts)
+
+- **Provenance banner at startup** — first stdout line prints task / split /
+  condition / seed / commit short SHA / Condor cluster.proc IDs / host. Makes
+  runlogs self-documenting.
+- **Provenance dict in every result record** — `git_commit`, `git_dirty`,
+  `condor_cluster_id`, `condor_proc_id`, `hostname`, `timestamp_utc`, library
+  versions (torch / transformers / peft / bfcl-eval).
+- **Flat single-level JSON result records** — every field is a scalar, so
+  `pd.DataFrame([json.load(open(p)) for p in glob.glob("results/*.json")])`
+  produces a usable sweep table with zero unnesting.
+- **Per-example predictions in a sibling JSONL** — one `{id, pred, gold}` per
+  line (BFCL adds `category`, `pred_text`, `pred_parsed`, `valid`, `error_type`).
+- **Refuse-to-overwrite by default** — every output-producing script checks
+  existing files up front and `sys.exit(1)` unless `--overwrite` is passed.
+  Smoke runs (`--limit > 0`) get an `_limitN` filename suffix so they can't
+  collide with full-run outputs even if `--overwrite` was used.
+- **Condor IDs forwarded via the submit file's `environment` line**:
+  `CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)` — the script reads
+  them via `os.environ.get`. This is what links a result record back to its
+  runlog file.
+
+---
+
+## Eval methodology choices (frozen — don't relitigate)
+
+- **LaMP personalization channel = BM25 top-k retrieval** (k=4) of the user's
+  profile into the system slot. Not summarization. The summarization detour
+  was tried, then reverted — see `notebooks/lamp_evaluation_approach.md` for
+  the reasoning. The same BM25, same k, same per-task formatting, and same
+  role layout are used at training time (build_dataset.py) and eval time
+  (eval_lamp.py); train/eval consistency is the cardinal rule.
+- **BFCL eval uses Path C** — install bfcl-eval in the image, generate via our
+  own transformers stack, call the official `ast_checker` as a library on the
+  outputs. Avoids the vllm/sglang requirement of `bfcl generate` and avoids
+  upstreaming a SmolLM3 handler. Caveats: SmolLM3 isn't in BFCL's
+  `MODEL_CONFIG_MAPPING`, so we pass `model_name="meta-llama/Llama-3.1-8B-Instruct"`
+  as a neutral placeholder (recorded in every result as
+  `scorer_model_name_placeholder`); the `BFCL_PROJECT_ROOT` env var must be
+  set before any bfcl_eval import (eval_bfcl.py sets it to `/tmp/bfcl_project_root`).
+- **LaMP-6 is unsupported** — its public release ships only Avocado email
+  file-id placeholders (no text), so it can't be scored without the licensed
+  Avocado corpus. Treat the LaMP task list as effectively LaMP-{3,4,7}.
+- **BFCL `irrelevance` category is currently skipped** (the data file
+  `possible_answer/BFCL_v4_irrelevance.json` doesn't ship — correct answer is
+  "no call", no gold needed). `eval_bfcl.py` could be extended in ~10 lines to
+  load questions only and score "correct iff `pred_parsed == []`".
+
+---
+
+## Docker image
+
+Current tag: **`ghcr.io/gordofreemo/smollm3-train:ver4`**. Layers (in order):
+
+1. Base: `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime` (Python 3.11, torch 2.5.1+cu124)
+2. `apt-get install git` — added ver3 — for `git_commit` provenance capture inside the container
+3. `pip install -r requirements.txt` — transformers, peft, datasets, accelerate, wandb, rouge_score, bfcl-eval, soundfile
+
+**When you change `requirements.txt` or the Dockerfile**, bump the tag and update
+**all six** sub files: `condor/{eval_lamp,eval_lamp_floor,eval_bfcl,build_dataset,interactive,download_model}.sub`.
+
+---
+
+## Open design decisions
+
+1. **Train-time prompt regime (Phase-2 deployment hinge).** `build_dataset.py`
+   currently puts the BM25-retrieved profile in `system` for **every** training
+   example. The Task-LoRA will therefore expect that input shape at inference,
+   meaning a deployed model pays the +118 to +482 prompt-token tax per query
+   forever. Alternative — "mixed regime" — emits some training examples with
+   profile and some without, so the deployed model is robust to either format
+   and the Phase-2 deployment can drop the profile at inference if User-LoRA's
+   weights successfully encode the user. **This decision should be made before
+   the first training run** because retraining is expensive.
+2. **BFCL `irrelevance` not yet scored** — small fix (above).
+3. **BFCL Java/JS errors not investigated** — 80 `type_error:{java,js}`
+   account for most of the 80.78 vs 92.3 gap. Could be a model limitation or
+   a parser/normalizer issue. Worth a 2-min spot-check before the
+   post-training comparison.
 
 ---
 
