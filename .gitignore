@@ -1,4 +1,7 @@
-data/lamp/*
+data/lamp*
+eval/*
+results/*
+train/*
 data/synthetic/*
 data/models/*
 runlogs/*
