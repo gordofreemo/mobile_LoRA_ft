@@ -347,6 +347,23 @@ def collect_provenance() -> dict:
     }
 
 
+# --- Adapter-path tagging ----------------------------------------------------
+def derive_adapter_tag(adapter_path: str) -> str:
+    """Short identifier for filenames / records.
+
+    `Path(args.adapter).name` alone yields uninformative tags like "final" or
+    "checkpoint-500" because every training condition writes those same leaf
+    names. When the leaf is generic, prepend the parent dir so results from
+    e.g. `train/checkpoints/a1_lamp_seed0/final` get tagged `a1_lamp_seed0_final`.
+    """
+    if adapter_path.lower() == "none":
+        return "base"
+    p = Path(adapter_path.rstrip("/"))
+    if p.name == "final" or p.name.startswith("checkpoint-"):
+        return f"{p.parent.name}_{p.name}"
+    return p.name
+
+
 # --- Data loading ------------------------------------------------------------
 def load_split(task: str, split: str):
     """Load a LaMP split. Questions are a list of {id, input, profile}; outputs are
@@ -431,7 +448,7 @@ def main():
     # loading the 6 GB model and burning generation cycles. This is the safeguard
     # added after a smoke re-run silently clobbered a full baseline's results.
     # Default is refuse; `--overwrite` is the explicit opt-in.
-    adapter_tag = "base" if args.adapter.lower() == "none" else Path(args.adapter).name
+    adapter_tag = derive_adapter_tag(args.adapter)
     profile_tag = "noprofile" if args.no_profile else f"bm25k{args.k}"
     limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
     stem = f"{args.task}_{args.split}_{adapter_tag}_{profile_tag}_seed{args.seed}{limit_tag}"

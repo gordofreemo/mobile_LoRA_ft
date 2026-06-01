@@ -85,6 +85,23 @@ LANGUAGE_BY_CATEGORY = {
 SCORER_MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
 
 
+# --- Adapter-path tagging ----------------------------------------------------
+def derive_adapter_tag(adapter_path: str) -> str:
+    """Short identifier for filenames / records.
+
+    Mirrors eval_lamp.py.derive_adapter_tag — when the leaf is a generic name
+    ("final" or "checkpoint-N"), prepend the parent dir so results from e.g.
+    `train/checkpoints/a1_lamp_seed0/final` get tagged `a1_lamp_seed0_final`
+    instead of the uninformative `final`.
+    """
+    if adapter_path.lower() == "none":
+        return "base"
+    p = Path(adapter_path.rstrip("/"))
+    if p.name == "final" or p.name.startswith("checkpoint-"):
+        return f"{p.parent.name}_{p.name}"
+    return p.name
+
+
 # --- BFCL data loading -------------------------------------------------------
 def load_bfcl_data(category: str):
     """Load (questions, golds-by-id) for one BFCL category.
@@ -406,9 +423,7 @@ def main():
 
     provenance = collect_provenance()
     categories = [c.strip() for c in args.categories.split(",") if c.strip()]
-    adapter_tag = (
-        "base" if args.adapter.lower() == "none" else Path(args.adapter).name
-    )
+    adapter_tag = derive_adapter_tag(args.adapter)
     cat_tag = "ast" if set(categories) == set(DEFAULT_CATEGORIES) else "cats" + str(
         abs(hash(",".join(sorted(categories)))) % 10000
     )

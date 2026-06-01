@@ -1,22 +1,31 @@
-# Baseline zero-shot LaMP evaluation — one GPU job per task, run in parallel.
+# LaMP evaluation — one GPU job per task, run in parallel.
 #
-# This runs the PROFILE baseline (BM25-retrieved profile in the system prompt, no
-# adapter) on the dev split for the three usable LaMP tasks. LaMP-6 is omitted: its
-# public data ships only Avocado file-id placeholders, not text.
+# Default mode: PROFILE baseline (BM25-retrieved profile in the system prompt,
+# no adapter) on the dev split for the three usable LaMP tasks. LaMP-6 is
+# omitted: its public data ships only Avocado file-id placeholders, not text.
 #
 # Smoke-test FIRST in an interactive session before submitting the full sweep:
 #   condor_submit -i condor/interactive.sub
 #   python eval/eval_lamp.py --task LaMP_3 --split dev --k 4 --limit 5
-# Then submit this for the full dev numbers:
+# Then submit this for the full dev numbers (bare model):
 #   condor_submit condor/eval_lamp.sub
 #
-# For the non-personalized floor, add --no-profile to the arguments line (or run it
-# as a second submit), and change the run tag implicitly captured in the filename.
+# For an adapter run, override the `adapter` variable at submit time. The
+# results filename picks up the adapter tag automatically (parent_leaf when the
+# leaf is generic like `final` or `checkpoint-N`):
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_seed0/final' condor/eval_lamp.sub
+#
+# For the non-personalized floor, see eval_lamp_floor.sub (it sets --no-profile).
 
 universe              = docker
 docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = eval/eval_lamp.py
-arguments             = --task $(task) --split dev --k 4 --seed 0
+
+# Default: bare model. Override with `condor_submit -a 'adapter=<path>'` for an
+# adapter eval. eval_lamp.py treats "none" as "no adapter".
+adapter               = none
+
+arguments             = --task $(task) --split dev --k 4 --seed 0 --adapter $(adapter)
 
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp.$(task).$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp.$(task).$(ClusterId).$(ProcId).err

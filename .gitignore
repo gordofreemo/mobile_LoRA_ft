@@ -4,6 +4,7 @@ results/*
 data/synthetic/*
 data/models/*
 runlogs/*
+train/checkpoints/*
 notebooks/*
 *pycache*
 .venv/

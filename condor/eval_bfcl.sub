@@ -1,5 +1,5 @@
 # Berkeley Function Calling Leaderboard (BFCL) AST regression — bare model and
-# (later) Task-LoRA adapters. Single job covering all non-live AST categories.
+# Task-LoRA adapters. Single job covering all non-live AST categories.
 #
 # CLAUDE.md mandates this before/after each Task-LoRA run (target ≥ 90, ref 92.3)
 # as the catastrophic-forgetting sanity check.
@@ -11,13 +11,20 @@
 # Then submit this for the full bare-model AST run:
 #   condor_submit condor/eval_bfcl.sub
 #
-# For an adapter, override arguments at submit time, e.g.:
-#   condor_submit -a 'arguments=--adapter data/adapters/a1_lamp_seed0 --seed 0' condor/eval_bfcl.sub
+# For an adapter run, override the `adapter` variable at submit time. The
+# results filename picks up the adapter tag automatically (parent_leaf when the
+# leaf is generic like `final` or `checkpoint-N`):
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_seed0/final' condor/eval_bfcl.sub
 
 universe              = docker
 docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = eval/eval_bfcl.py
-arguments             = --seed 0
+
+# Default: bare model. Override with `condor_submit -a 'adapter=<path>'` for an
+# adapter eval. eval_bfcl.py treats "none" as "no adapter".
+adapter               = none
+
+arguments             = --seed 0 --adapter $(adapter)
 
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl.$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl.$(ClusterId).$(ProcId).err
