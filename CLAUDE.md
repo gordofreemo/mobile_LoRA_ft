@@ -94,7 +94,10 @@ Optimizer:    AdamW, lr=3e-4, cosine decay, warmup 3%
 Batch:        per-device bs=4, gradient accumulation=8 (effective bs=32)
 Epochs:       2–3
 Checkpoint:   every 500 steps
-Logging:      W&B — CE loss, LaMP metrics per domain, BFCL regression score
+Logging:      metrics.jsonl streamed per logging_steps + train_meta.json
+              summary scalars at end. W&B is wired up in train.py but
+              defaults off (no account); flip `report_to` in the config
+              to re-enable.
 ```
 
 ---
@@ -161,19 +164,22 @@ Also run **BFCL regression** before and after each Task-LoRA training run. Targe
 │   ├── eval_lamp.sub            # LaMP profile-baseline + adapter eval (3 parallel jobs)
 │   ├── eval_lamp_floor.sub      # LaMP non-personalized floor (3 parallel jobs)
 │   ├── eval_bfcl.sub            # BFCL AST regression (1 GPU job, all categories)
+│   ├── train.sub                # Task-LoRA training (1 GPU job, reads train/config/<cond>.json)
 │   ├── chat.py                  # interactive REPL with the model + optional adapter
 │   └── smoke_test.py            # Docker-image env check
 ├── data/
 │   ├── download_lamp.py         # one-time LaMP download
 │   ├── lamp/                    # LaMP-{3,4,6,7}/{train,dev,test}_{questions,outputs}.json
 │   ├── models/SmolLM3-3B/       # downloaded weights (~6 GB)
-│   ├── lamp_train_<task>_bm25k4.jsonl + lamp_train_mixed_bm25k4.jsonl  # built by build_dataset.py
+│   ├── lamp_train_{LaMP_3,LaMP_4,LaMP_7,mixed}_bm25k4.jsonl  # built by build_dataset.py
+│   ├── lamp_train_mixed_bm25k4.meta.json                     # provenance sidecar
 │   ├── synthetic/               # teacher-generated preference data (not yet produced)
 │   └── tool/                    # xlam / glaive (A2 only — not yet downloaded)
 ├── train/
 │   ├── build_dataset.py         # streams raw LaMP train → BM25-retrieved JSONL
-│   ├── train.py                 # main trainer — NOT YET WRITTEN
-│   └── config/                  # YAML per condition — NOT YET WRITTEN
+│   ├── train.py                 # SFT trainer — reads config JSON, applies SmolLM3 chat template (thinking off), loss-masked to assistant, streams metrics.jsonl
+│   └── config/
+│       └── a1_lamp.json         # hyperparameters for the A1-lamp condition
 ├── eval/
 │   ├── eval_lamp.py             # LaMP harness (BM25 k=4 retrieval, refuse-to-overwrite)
 │   ├── eval_bfcl.py             # BFCL harness using bfcl-eval's ast_checker as a library
@@ -194,8 +200,13 @@ Also run **BFCL regression** before and after each Task-LoRA training run. Targe
   `experiments/2026-05-29-baseline-lamp.md`.
 - BFCL bare-model AST regression (catastrophic-forgetting reference).
   Documented in `notebooks/bfcl_baseline_results.md`.
-- Training-corpus preprocessing script (`train/build_dataset.py`) — streams the
-  2.9 GB LaMP-3 train JSON, runs BM25 top-k, writes per-task + mixed JSONLs.
+- Training-corpus preprocessing (`train/build_dataset.py`) — produced the
+  full LaMP-3/4/7 BM25-k=4 corpus: 42,964 examples in
+  `data/lamp_train_mixed_bm25k4.jsonl` (20,000 + 12,527 + 10,437),
+  87.9 MB, via Condor job 163355. Provenance in `lamp_train_mixed_bm25k4.meta.json`.
+- A1-lamp training pipeline written but not yet run:
+  `train/train.py` + `train/config/a1_lamp.json` + `condor/train.sub`.
+  Hyperparameter rationale documented in `experiments/2026-05-31-a1-lamp.md`.
 
 **Baselines for comparison** (LaMP dev, seed 0, greedy, BM25 k=4):
 
@@ -208,7 +219,10 @@ Also run **BFCL regression** before and after each Task-LoRA training run. Targe
 
 Result files: `results/LaMP_{3,4,7}_dev_base_{bm25k4,noprofile}_seed0.{json,predictions.jsonl}` and `results/bfcl_ast_base_seed0.{json,predictions.jsonl}`.
 
-**Next milestone:** A1-lamp training (`train/train.py --condition a1_lamp` — script not yet written). Build_dataset.py needs to finish first to produce the training corpus.
+**Next milestone:** A1-lamp training run. Smoke-test under interactive
+Condor first, commit the new files, then `condor_submit condor/train.sub`.
+After training completes, run `eval_lamp.sub` and `eval_bfcl.sub` pointed
+at the saved adapter to fill the Result section of the experiment log.
 
 ---
 
@@ -271,21 +285,22 @@ Current tag: **`ghcr.io/gordofreemo/smollm3-train:ver4`**. Layers (in order):
 3. `pip install -r requirements.txt` — transformers, peft, datasets, accelerate, wandb, rouge_score, bfcl-eval, soundfile
 
 **When you change `requirements.txt` or the Dockerfile**, bump the tag and update
-**all six** sub files: `condor/{eval_lamp,eval_lamp_floor,eval_bfcl,build_dataset,interactive,download_model}.sub`.
+**all seven** sub files: `condor/{eval_lamp,eval_lamp_floor,eval_bfcl,build_dataset,train,interactive,download_model}.sub`.
 
 ---
 
 ## Open design decisions
 
-1. **Train-time prompt regime (Phase-2 deployment hinge).** `build_dataset.py`
-   currently puts the BM25-retrieved profile in `system` for **every** training
-   example. The Task-LoRA will therefore expect that input shape at inference,
-   meaning a deployed model pays the +118 to +482 prompt-token tax per query
-   forever. Alternative — "mixed regime" — emits some training examples with
-   profile and some without, so the deployed model is robust to either format
-   and the Phase-2 deployment can drop the profile at inference if User-LoRA's
-   weights successfully encode the user. **This decision should be made before
-   the first training run** because retraining is expensive.
+1. ~~**Train-time prompt regime.**~~ **Resolved 2026-05-31:** system-always
+   regime picked. The BM25 profile sits in `system` for every training
+   example, so the Task-LoRA expects that input shape at inference and the
+   deployed model pays the +118 to +482 prompt-token tax per query. The
+   open hypothesis is that Phase-2 on-device User-LoRA training can absorb
+   the profile into adapter weights and let us drop it from `system` at
+   inference. If A1-lamp doesn't beat the profile baseline at all, the
+   fallback is to rebuild the corpus in mixed regime (some examples with
+   profile, some without) and retry — `build_dataset.py` would need a
+   small flag for that.
 2. **BFCL `irrelevance` not yet scored** — small fix (above).
 3. **BFCL Java/JS errors not investigated** — 80 `type_error:{java,js}`
    account for most of the 80.78 vs 92.3 gap. Could be a model limitation or

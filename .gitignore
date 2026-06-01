@@ -1,9 +1,9 @@
 data/lamp*
 eval/*
 results/*
-train/*
 data/synthetic/*
 data/models/*
 runlogs/*
 notebooks/*
+*pycache*
 .venv/

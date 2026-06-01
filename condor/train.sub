@@ -1,0 +1,54 @@
+# A1-lamp Task-LoRA training run — single-GPU job.
+#
+# Reads all hyperparameters from train/config/a1_lamp.json. Edit that file
+# (or pass --config <other.json>) to redirect; do not modify the script.
+#
+# Metrics are logged to disk only: train/checkpoints/a1_lamp_seed0/
+# {metrics.jsonl, log_history.json, train_meta.json}. To enable W&B
+# instead, flip report_to in the config and run `wandb login` once.
+#
+# Smoke first in an interactive session before submitting the real run:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/train.py --limit 64 --max_steps 4 --no-wandb
+# Then submit the real run:
+#   condor_submit condor/train.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/a1_lamp.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_a1_lamp.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_a1_lamp.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_a1_lamp.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# GPU selection. 32 GB minimum filters out the 16 GB V100s (loki node)
+# where bs=4 OOMs; admitted: A100 40/80, L40/L40S 48, RTX 6000 Ada 48, H200 141.
+# Capability 8.0 lets the job match Ampere and newer (A100=8.0, L40s/RTX 6000 Ada=8.9, H200=9.0).
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+# Opt in to the preemptible H200 / RTX 6000 nodes. Value is informational;
+# 28800 s = 8 h, the upper bound the cluster accepts. We checkpoint every
+# 500 steps and train.py --resume picks up from the latest, so a preemption
+# loses at most one save_steps interval of work.
+max_job_retirement_time = 28800
+
+# Stream stdout/stderr into the runlog while the job runs (so we can tail
+# loss as it goes) and ensure outputs are flushed back home on eviction.
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
