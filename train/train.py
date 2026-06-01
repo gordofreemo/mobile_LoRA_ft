@@ -250,7 +250,11 @@ def main():
     )
     args = parser.parse_args()
 
-    cfg = json.loads(Path(args.config).read_text())
+    # Resolve via _resolve so a relative `--config` (as passed from the
+    # Condor sub file) is interpreted against PROJECT_ROOT, not the
+    # sandbox CWD. Treats absolute paths unchanged.
+    config_path = _resolve(args.config)
+    cfg = json.loads(config_path.read_text())
 
     provenance = collect_provenance()
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
@@ -413,7 +417,7 @@ def main():
     meta = {
         "schema_version": 1,
         "condition": cfg["condition"],
-        "config_path": str(args.config),
+        "config_path": str(config_path),
         "config_snapshot": cfg,
         "command": "python " + " ".join(sys.argv),
         "limit": args.limit,
