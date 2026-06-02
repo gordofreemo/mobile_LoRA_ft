@@ -1,0 +1,52 @@
+# A1-lamp-1ep Task-LoRA training run — single-GPU job.
+#
+# Sister of train.sub. Same script, same image, same hardware filter; the
+# only difference is the config it reads: train/config/a1_lamp_1ep.json
+# (num_train_epochs=1, save_steps=200, save_total_limit=null). Motivated by
+# the 2026-06-02 checkpoint-2000 follow-up — LaMP saturated by step 2000
+# while BFCL kept degrading. Goal: pin down the Pareto frontier.
+#
+# Outputs go to train/checkpoints/a1_lamp_1ep_seed0/ (separate dir so this
+# run does NOT touch the 2-epoch checkpoints from job 163392).
+#
+# Expected wall time: ~2.5 h (half the 2-epoch run; same effective batch).
+#
+# Smoke first in an interactive session before submitting the real run:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/train.py --config train/config/a1_lamp_1ep.json --limit 64 --max_steps 4
+# Then submit the real run:
+#   condor_submit condor/train_1ep.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/a1_lamp_1ep.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_a1_lamp_1ep.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_a1_lamp_1ep.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_a1_lamp_1ep.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Same GPU selection as train.sub — see comments there for rationale.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+# Half the run length means we don't strictly need the 8h preemption window,
+# but opting in matches train.sub and keeps the eligible-node pool wide.
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

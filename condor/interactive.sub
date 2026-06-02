@@ -5,6 +5,12 @@ should_transfer_files = YES
 request_GPUs          = 1
 request_CPUs          = 2
 request_memory        = 16G
+
+# Match the train.sub / eval *.sub GPU filter so smoke tests can't land on
+# the 16 GB V100 (loki) where SmolLM3-3B SFT at bs=4 OOMs in the CE loss.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
 requirements          = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true

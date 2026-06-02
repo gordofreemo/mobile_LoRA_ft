@@ -1,0 +1,53 @@
+{
+  "_doc": "A1-lamp-1ep condition: identical to a1_lamp.json EXCEPT num_train_epochs=1, save_steps=200, save_total_limit=null (keep all). Motivated by the 2026-06-02 checkpoint-2000 follow-up which showed LaMP gain saturated by step 2000 while BFCL kept degrading — see experiments/2026-05-31-a1-lamp.md. Goal: pin down whether a single epoch already saturates LaMP and recovers BFCL ground, producing ~7 evenly-spaced checkpoints (steps 200/400/600/800/1000/1200/final) for a real Pareto curve.",
+
+  "condition": "a1_lamp_1ep",
+  "seed": 0,
+  "model_name_or_path": "data/models/SmolLM3-3B",
+  "dataset_path": "data/lamp_train_mixed_bm25k4.jsonl",
+  "output_dir": "train/checkpoints/a1_lamp_1ep_seed0",
+
+  "lora": {
+    "r": 4,
+    "lora_alpha": 8,
+    "lora_dropout": 0.05,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+
+  "data": {
+    "max_seq_length": 2048
+  },
+
+  "trainer": {
+    "num_train_epochs": 1,
+    "per_device_train_batch_size": 4,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 3e-4,
+    "weight_decay": 0.0,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_epsilon": 1e-8,
+    "max_grad_norm": 1.0,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.03,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "gradient_checkpointing_kwargs": {"use_reentrant": false},
+    "save_strategy": "steps",
+    "save_steps": 200,
+    "save_total_limit": null,
+    "logging_steps": 10,
+    "optim": "adamw_torch",
+    "report_to": "none",
+    "remove_unused_columns": false,
+    "dataloader_num_workers": 2
+  },
+
+  "wandb": {
+    "_doc": "Disabled — report_to above is 'none'. Flip report_to to 'wandb' and run `wandb login` once on the login node to re-enable.",
+    "project": "mobileFT_distill",
+    "run_name": "a1_lamp_1ep_seed0"
+  }
+}
