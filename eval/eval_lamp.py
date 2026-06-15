@@ -46,6 +46,10 @@ RESULTS_DIR = os.environ.get(
     "RESULTS_DIR",
     "/home/ange00008/projects/mobileFT_distill/results",
 )
+USER_STATS_DIR = os.environ.get(
+    "USER_STATS_DIR",
+    "/home/ange00008/projects/mobileFT_distill/data/lamp_user_stats",
+)
 # Absolute repo path (home-mounted) so git provenance works even when Condor runs a
 # copy of this script from the scratch sandbox, where __file__ isn't in the repo.
 PROJECT_ROOT = os.environ.get(
@@ -378,14 +382,21 @@ def load_split(task: str, split: str):
 
 
 # --- Model loading -----------------------------------------------------------
-def load_model(model_dir: str, adapter: str | None):
-    """Load SmolLM3-3B in bf16, optionally with a LoRA adapter merged in.
+def load_model(model_dir: str, adapter: str | None, base_adapter: str | None = None):
+    """Load SmolLM3-3B in bf16, optionally with a stacked pair of LoRA adapters.
 
-    For the baseline `adapter='none'` we just load the frozen base model. When an
-    adapter is given we attach it, count its trainable LoRA parameters (an
-    efficiency proxy — the on-device "weight cost" of personalization), then
-    merge_and_unload() to fold the adapter into the base weights so inference runs
-    at full speed with no PEFT overhead.
+    The two-adapter case (`base_adapter` set) is the User-LoRA stacking pattern:
+    Task-LoRA is loaded first, merged into the frozen base, then a fresh
+    per-user LoRA is loaded on top. This must match train/train.py's
+    base-adapter plumbing exactly so train- and inference-time graphs are
+    identical. The intermediate merge is required — PEFT can't stack two
+    distinct LoraConfig adapters from disk without it.
+
+    `adapter_params` counts only the *outer* (user) LoRA's parameters — the
+    base adapter has been merged into the frozen weights and contributes
+    nothing to the on-device weight cost at inference. When only the base is
+    given (smoke test of the base-adapter path with `--adapter none`), we
+    instead count the base's params so the field stays informative.
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -396,16 +407,32 @@ def load_model(model_dir: str, adapter: str | None):
     model = AutoModelForCausalLM.from_pretrained(
         model_dir, dtype=torch.bfloat16, device_map=device
     )
-    adapter_params = 0
-    if adapter and adapter.lower() != "none":
-        from peft import PeftModel
 
+    from peft import PeftModel
+
+    adapter_params = 0
+    has_base = bool(base_adapter) and base_adapter.lower() != "none"
+    has_user = bool(adapter) and adapter.lower() != "none"
+
+    if has_base:
+        print(f"Loading + merging base adapter from {base_adapter}...", flush=True)
+        model = PeftModel.from_pretrained(model, base_adapter)
+        base_params = sum(
+            p.numel() for n, p in model.named_parameters() if "lora_" in n
+        )
+        model = model.merge_and_unload()
+        # If no outer adapter, report the base's param count for context.
+        if not has_user:
+            adapter_params = base_params
+
+    if has_user:
         print(f"Loading LoRA adapter from {adapter}...", flush=True)
         model = PeftModel.from_pretrained(model, adapter)
         adapter_params = sum(
             p.numel() for n, p in model.named_parameters() if "lora_" in n
         )
         model = model.merge_and_unload()
+
     model.eval()
     return tokenizer, model, device, adapter_params
 
@@ -415,6 +442,18 @@ def main():
     parser.add_argument("--task", required=True, choices=list(TASKS.keys()))
     parser.add_argument("--split", default="dev", choices=["dev", "test"])
     parser.add_argument("--adapter", default="none", help="LoRA checkpoint path, or 'none'")
+    parser.add_argument(
+        "--base-adapter",
+        default="none",
+        help="optional pre-existing LoRA adapter to merge into the base before "
+        "attaching --adapter on top (User-LoRA stacking pattern). 'none' disables.",
+    )
+    parser.add_argument(
+        "--user-records",
+        default=None,
+        help="user fingerprint (e.g. u00000011); filter questions to those "
+        "records via data/lamp_user_stats/<task>_user_records.json. Default: no filter.",
+    )
     parser.add_argument("--k", type=int, default=4, help="BM25 profile entries to retrieve")
     parser.add_argument("--no-profile", action="store_true", help="non-personalized floor")
     parser.add_argument("--seed", type=int, default=0)
@@ -449,9 +488,21 @@ def main():
     # added after a smoke re-run silently clobbered a full baseline's results.
     # Default is refuse; `--overwrite` is the explicit opt-in.
     adapter_tag = derive_adapter_tag(args.adapter)
+    base_adapter_tag = derive_adapter_tag(args.base_adapter)
+    has_base = args.base_adapter.lower() != "none"
+    has_user = args.adapter.lower() != "none"
+    if has_base and has_user:
+        stacked_tag = f"{base_adapter_tag}_{adapter_tag}"
+    elif has_base:
+        # Base-only mode (smoke-test the merge path): the base IS effectively
+        # the lone adapter; reuse its tag so the stem describes what ran.
+        stacked_tag = base_adapter_tag
+    else:
+        stacked_tag = adapter_tag
     profile_tag = "noprofile" if args.no_profile else f"bm25k{args.k}"
     limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
-    stem = f"{args.task}_{args.split}_{adapter_tag}_{profile_tag}_seed{args.seed}{limit_tag}"
+    user_tag = f"_user{args.user_records}" if args.user_records else ""
+    stem = f"{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{user_tag}{limit_tag}"
     out_path = Path(RESULTS_DIR) / f"{stem}.json"
     pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
     if not args.overwrite and (out_path.exists() or pred_path.exists()):
@@ -485,11 +536,42 @@ def main():
         sys.exit(1)
 
     questions, golds = load_split(args.task, args.split)
+    n_total_records = len(questions)
+
+    # Optional per-user filter: keep only records belonging to one fingerprinted
+    # user. Used by the User-LoRA experiments which evaluate on one user's 21/25
+    # records, not the full 1500/1800 split. The fingerprint-to-record-id mapping
+    # is precomputed by data/lamp_user_stats.py.
+    n_filtered_records = None
+    if args.user_records:
+        records_json = Path(USER_STATS_DIR) / f"{args.task}_user_records.json"
+        if not records_json.exists():
+            print(f"ERROR: --user-records set but {records_json} missing — "
+                  f"run data/lamp_user_stats.py first.", file=sys.stderr)
+            sys.exit(1)
+        user_map = json.loads(records_json.read_text())
+        if args.user_records not in user_map:
+            print(f"ERROR: user {args.user_records!r} not in {records_json}.",
+                  file=sys.stderr)
+            sys.exit(1)
+        wanted_ids = set(user_map[args.user_records].get(args.split, []))
+        if not wanted_ids:
+            print(f"ERROR: user {args.user_records} has 0 records in split "
+                  f"{args.split}.", file=sys.stderr)
+            sys.exit(1)
+        questions = [q for q in questions if str(q["id"]) in wanted_ids]
+        n_filtered_records = len(questions)
+        print(f"[filter] user={args.user_records} {args.split}: "
+              f"{n_filtered_records}/{n_total_records} records kept",
+              flush=True)
+
     if args.limit > 0:
         questions = questions[: args.limit]
     print(f"{args.task}/{args.split}: {len(questions)} examples", flush=True)
 
-    tokenizer, model, device, adapter_params = load_model(args.model_dir, args.adapter)
+    tokenizer, model, device, adapter_params = load_model(
+        args.model_dir, args.adapter, args.base_adapter
+    )
     max_new = args.max_new_tokens or TASKS[args.task]["max_new_tokens"]
 
     ids, preds, gold_list = [], [], []
@@ -555,6 +637,12 @@ def main():
         "split": args.split,
         "adapter": args.adapter,
         "adapter_name": adapter_tag,
+        "base_adapter": args.base_adapter,
+        "base_adapter_name": base_adapter_tag,
+        "stacked_adapter_name": stacked_tag,
+        "user_fingerprint": args.user_records,
+        "n_total_records": n_total_records,
+        "n_filtered_records": n_filtered_records,
         "no_profile": args.no_profile,
         "retriever": "none" if args.no_profile else "bm25",
         "k": 0 if args.no_profile else args.k,

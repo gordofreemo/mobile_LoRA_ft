@@ -11,6 +11,18 @@ request_memory        = 16G
 gpus_minimum_memory     = 32000
 gpus_minimum_capability = 8.0
 
+# Opt in to the H200 / RTX 6000 Ada nodes. Their START expression rejects any
+# job without this knob; without it, only older Ampere stock qualifies and an
+# interactive session can sit idle for hours when those are claimed. Value is
+# in seconds, must be <= 3600*8. 600s (10 min) is plenty for a smoke session
+# and signals to the scheduler we're fine being preempted quickly. Does not
+# opt in to `forseti` (experimental RTX 6000) — that node requires the value
+# to be exactly 0, which we don't want for any job that produces useful work.
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
 requirements          = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true

@@ -1,0 +1,52 @@
+# LaMP evaluation on the TEST split — sibling of eval_lamp.sub.
+#
+# Background: the original eval_lamp.sub hardcoded --split dev, and every LaMP
+# benchmark number in results/ to date was measured on dev. We selected the
+# canonical 1-epoch adapter (ckpt-1000) by inspecting dev, so dev is no longer
+# unseen for the headline comparison. This submit file re-runs the same harness
+# on the test split for clean final numbers.
+#
+# Default mode: PROFILE baseline (BM25-retrieved profile in the system prompt,
+# no adapter) on the test split for the three usable LaMP tasks. LaMP-6 is
+# omitted: its public data ships only Avocado file-id placeholders, not text.
+#
+# Smoke-test FIRST in an interactive session before submitting the full sweep:
+#   condor_submit -i condor/interactive.sub
+#   python eval/eval_lamp.py --task LaMP_3 --split test --k 4 --limit 5
+# Then submit this for the full test numbers (bare model + profile):
+#   condor_submit condor/eval_lamp_test.sub
+#
+# For the canonical A1-lamp adapter on test:
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000' condor/eval_lamp_test.sub
+#
+# For the non-personalized floor on test, see eval_lamp_floor_test.sub.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+# Default: bare model. Override with `condor_submit -a 'adapter=<path>'` for an
+# adapter eval. eval_lamp.py treats "none" as "no adapter".
+adapter               = none
+
+arguments             = --task $(task) --split test --k 4 --seed 0 --adapter $(adapter)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_test.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_test.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_test.$(ClusterId).log
+
+should_transfer_files = YES
+# Forward Condor's job IDs into the job environment so each result JSON carries
+# them in `condor_cluster_id` / `condor_proc_id`. This is what links a result
+# back to its runlog file (runlogs/eval_lamp_test.<task>.<cluster>.<proc>.{out,err}).
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Queue one job per task; each lands on its own GPU and writes its own results file.
+queue task in (LaMP_3 LaMP_4 LaMP_7)

@@ -1,0 +1,34 @@
+# Non-personalized FLOOR for LaMP on the TEST split — sibling of
+# eval_lamp_floor.sub. Same eval harness as eval_lamp_test.sub, but with
+# `--no-profile` so the model sees only the task and no user information. This
+# is the bottom of the comparison ladder on test (answers: does the profile
+# help at all when evaluated on a clean held-out split?).
+#
+# Submit alongside the test profile baseline, no editing required:
+#   condor_submit condor/eval_lamp_test.sub        # profile baseline (BM25 k=4) on test
+#   condor_submit condor/eval_lamp_floor_test.sub  # non-personalized floor on test
+#
+# Each task lands its own result file — the harness picks `noprofile` vs `bm25k4`
+# into the filename, so the two runs don't collide in results/.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+arguments             = --task $(task) --split test --no-profile --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_test.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_test.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_test.$(ClusterId).log
+
+should_transfer_files = YES
+# See note in eval_lamp_test.sub: forwards Condor IDs so result JSONs link to runlogs.
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (LaMP_3 LaMP_4 LaMP_7)

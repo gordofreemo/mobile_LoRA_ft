@@ -1,0 +1,58 @@
+# User-LoRA Round 1 training run — single-GPU job.
+#
+# Sister of train_1ep.sub. Same script, same image, same hardware filter; the
+# only difference is the config: train/config/user_lora_lamp4_u00000011.json.
+# That config sets base_adapter = a1_lamp_1ep_seed0/checkpoint-1000, so the
+# Task-LoRA is loaded, merged into the frozen base, and a fresh r=4 LoRA is
+# trained on top using u00000011's bare profile-entry corpus (1100 examples).
+#
+# Schedule (pre-registered, do not change without re-opening the design):
+#   per_device_batch=4, grad_accum=2 (effective_bs=8), 3 epochs.
+#   ~ 1100 examples / 8 = ~138 optimizer steps × 3 epochs = ~412 steps.
+# Outputs go to train/checkpoints/user_lora_lamp4_u00000011_seed0/ — last
+# epoch checkpoint per save_strategy="epoch".
+#
+# Expected wall time: very short (few minutes); the run could fit in
+# condor/interactive.sub's window but submit form is preferred for logs +
+# automatic Condor ID provenance.
+#
+# Smoke first in an interactive session before submitting the real run:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/train.py --config train/config/user_lora_lamp4_u00000011.json --max_steps 5 --no-wandb
+#   # writes to train/checkpoints/user_lora_lamp4_u00000011_seed0_steps5/ — delete after
+# Then submit the real run:
+#   condor_submit condor/train_user_lora.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/user_lora_lamp4_u00000011.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_u00000011.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_u00000011.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_u00000011.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Same GPU selection as train_1ep.sub.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+# Short run; 8 h retirement window is overkill but matches the sibling sub
+# files and keeps the eligible-node pool wide.
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

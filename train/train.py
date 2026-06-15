@@ -32,7 +32,7 @@ from pathlib import Path
 
 import torch
 from datasets import Dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -51,6 +51,16 @@ PROJECT_ROOT = Path(
 def _resolve(path_str: str) -> Path:
     p = Path(path_str)
     return p if p.is_absolute() else PROJECT_ROOT / p
+
+
+def _derive_adapter_tag(adapter_path: str) -> str:
+    """Filename-safe short identifier for an adapter checkpoint dir. Mirrors
+    eval/eval_lamp.py:derive_adapter_tag so train- and eval-time tags line up
+    when a stacked adapter is recorded in provenance."""
+    p = Path(adapter_path.rstrip("/"))
+    if p.name == "final" or p.name.startswith("checkpoint-"):
+        return f"{p.parent.name}_{p.name}"
+    return p.name
 
 
 # --- Chat template + loss mask ----------------------------------------------
@@ -301,6 +311,23 @@ def main():
         torch_dtype=torch.bfloat16,
         device_map="auto",
     )
+
+    # Optional: load a pre-existing LoRA adapter and merge it into the base
+    # before attaching a fresh LoRA on top. This is the User-LoRA pattern —
+    # the Task-LoRA's weights become part of the frozen backbone, then a
+    # small per-user adapter is trained over it. After merge_and_unload the
+    # model is a plain AutoModelForCausalLM again, so the rest of the path
+    # (grad checkpointing + get_peft_model) is identical to the no-stack case.
+    base_adapter_path = cfg.get("base_adapter")
+    base_adapter_tag = None
+    if base_adapter_path:
+        base_adapter_path = str(_resolve(base_adapter_path))
+        base_adapter_tag = _derive_adapter_tag(base_adapter_path)
+        print(f"[model] merging base adapter {base_adapter_tag} from "
+              f"{base_adapter_path}", flush=True)
+        model = PeftModel.from_pretrained(model, base_adapter_path)
+        model = model.merge_and_unload()
+
     # PEFT + gradient checkpointing requires inputs to require grads so the
     # backward pass can reach the LoRA params through the frozen base.
     if cfg["trainer"].get("gradient_checkpointing", False):
@@ -428,6 +455,8 @@ def main():
         "n_train_examples": len(processed),
         "n_dropped_truncated": dropped_truncated,
         "global_step": trainer.state.global_step,
+        "base_adapter_path": base_adapter_path,
+        "base_adapter_tag": base_adapter_tag,
         **metric_summary,
         **provenance,
     }

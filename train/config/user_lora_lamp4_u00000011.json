@@ -1,0 +1,53 @@
+{
+  "_doc": "User-LoRA Round 1 — single-user existence proof on LaMP_4 / u00000011. Stacked on top of A1-lamp ckpt-1000 (merged into base via train.py's base_adapter plumbing), then a fresh r=4 LoRA is trained on u00000011's snapshot-record profile (1100 article→headline pairs, bare framing). Pinned design at experiments/2026-06-14-user-lora-round1-plan.md — do not modify the schedule without re-opening the design.",
+
+  "condition": "user_lora_lamp4_u00000011",
+  "seed": 0,
+  "model_name_or_path": "data/models/SmolLM3-3B",
+  "base_adapter": "train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000",
+  "dataset_path": "data/lamp_user_train_LaMP_4_u00000011_bare.jsonl",
+  "output_dir": "train/checkpoints/user_lora_lamp4_u00000011_seed0",
+
+  "lora": {
+    "r": 4,
+    "lora_alpha": 8,
+    "lora_dropout": 0.05,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+
+  "data": {
+    "max_seq_length": 2048
+  },
+
+  "trainer": {
+    "num_train_epochs": 3,
+    "per_device_train_batch_size": 4,
+    "gradient_accumulation_steps": 2,
+    "learning_rate": 3e-4,
+    "weight_decay": 0.0,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_epsilon": 1e-8,
+    "max_grad_norm": 1.0,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.03,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "gradient_checkpointing_kwargs": {"use_reentrant": false},
+    "save_strategy": "epoch",
+    "save_total_limit": null,
+    "logging_steps": 10,
+    "optim": "adamw_torch",
+    "report_to": "none",
+    "remove_unused_columns": false,
+    "dataloader_num_workers": 2
+  },
+
+  "wandb": {
+    "_doc": "Disabled — report_to above is 'none'. Flip report_to to 'wandb' and run `wandb login` once on the login node to re-enable.",
+    "project": "mobileFT_distill",
+    "run_name": "user_lora_lamp4_u00000011_seed0"
+  }
+}
