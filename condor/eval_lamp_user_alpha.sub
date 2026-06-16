@@ -1,0 +1,83 @@
+# LaMP eval — User-LoRA Round 3 / variant α, single-user 2×2 sweep.
+#
+# Eight jobs covering 4 conditions × 2 splits for the pre-registered eval-only
+# redundancy test on u00000011 (LaMP_4). See
+# experiments/2026-06-16-user-lora-round3-alpha-plan.md.
+#
+# All four cells use --no-profile (no BM25 in system slot). The α territory is
+# the right column of the 2×2 cell map (eval without BM25); the with-BM25
+# column (C1/C2/C3/C3') is already on disk from Rounds 1 + 2-B and re-used
+# unchanged for paired-compare in Step 7.
+#
+#   C1-α  (base + no BM25):                       adapter=none,        base=none
+#   C2-α  (A1-lamp + no BM25):                    adapter=ckpt-1000,   base=none
+#   α-bare (A1-lamp + User-LoRA-bare + no BM25):  adapter=user-lora-bare-final, base=ckpt-1000
+#   α-B    (A1-lamp + User-LoRA-B + no BM25):     adapter=user-lora-B-final,    base=ckpt-1000
+#
+# Each × {dev (21 records), test (25 records)}.
+#
+# eval_lamp.py refuses to overwrite by default, so re-submitting after a partial
+# sweep is safe — only missing combinations re-run.
+#
+# Submit (all eight):
+#   condor_submit condor/eval_lamp_user_alpha.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+# Macros driven by the queue block. eval_lamp.py treats "none" as "no adapter".
+adapter      = none
+base_adapter = none
+split        = dev
+
+# --no-profile drops BM25 from the system slot entirely (eval_lamp.py emits
+# [{"role": "user", ...}] only — same shape as bare User-LoRA training).
+# --user-records pins the LaMP_4 question set to u00000011's 21 dev / 25 test
+# IDs via data/lamp_user_stats/LaMP_4_user_records.json.
+arguments    = --task LaMP_4 --split $(split) --no-profile --seed 0 --adapter $(adapter) --base-adapter $(base_adapter) --user-records u00000011
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_alpha.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_alpha.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_alpha.$(ClusterId).log
+
+should_transfer_files = YES
+# LAMP_DIR points at the TIME-BASED split (data/lamp_time/), not the default
+# user-based split (data/lamp/). The --user-records IDs were extracted from
+# the time-based split; pointing at the wrong dir → 0 records kept silently.
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Opt in to H200 / RTX 6000 Ada (eval is short; 10 min retirement tag is fine).
+# Without these knobs the job sits idle when older Ampere stock is claimed —
+# same lesson as condor/interactive.sub and condor/train_user_lora.sub.
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+# Avoid the 16 GB V100 (loki) per the project-wide GPU filter.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Eight (adapter, base_adapter, split) combinations. Paths are absolute because
+# eval_lamp.py forwards --adapter / --base-adapter straight to PeftModel
+# without PROJECT_ROOT resolution; the Docker container's CWD is the Condor
+# scratch dir, so relative paths fail (PeftModel falls through to HF Hub repo
+# lookup, which rejects slashes). Same Round-1 lesson as eval_lamp_user.sub.
+queue adapter, base_adapter, split from (
+  none, none, dev
+  none, none, test
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, dev
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, test
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, dev
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, test
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, dev
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, test
+)
