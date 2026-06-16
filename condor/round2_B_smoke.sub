@@ -1,0 +1,32 @@
+# Round-2 variant B smoke — runs in the project Docker image because the
+# tokenizer step requires transformers (not installed on the login node).
+#
+# CPU-only. Validates the variant-B JSONL against the canonical
+# build_dataset.py retrieval+format (byte-match, strict-prior dates,
+# no-self), then tokenizes all 1100 rows with SmolLM3-3B's chat template
+# (enable_thinking=False) and emits the T3-sized max_seq_length.
+#
+# Output:
+#   data/lamp_user_train_LaMP_4_u00000011_bm25k4.smoke.json
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = data/lamp_user_stats/round2_B_smoke.py
+arguments             =
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/round2_B_smoke.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/round2_B_smoke.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/round2_B_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Tokenizer load + 1100 chat-template applies + per-row BM25 spot-checks.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
