@@ -29,7 +29,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **Q1** — Does fine-tuning on LaMP improve over zero-shot at all for a 3B model? | **ANSWERED: YES** — see `experiments/2026-05-31-a1-lamp.md`, `experiments/2026-06-02-a1-lamp-1ep-pareto.md`, and `experiments/2026-06-13-lamp-test-split-correction.md`. A1-lamp ckpt-1000 gives +0.11 / +0.07 / +0.13 over the BM25 baseline on LaMP-3/4/7 (test; dev results within ±0.01). |
 | **Q2** — Does adding synthetic preference-conditional data on top of LaMP improve further? | **DROPPED** with the 2026-06-02 pivot. |
 | **Q3** — Does a general Task-LoRA generalize as well as domain-specific ones? | **DROPPED** with the 2026-06-02 pivot. |
-| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — the active research question. |
+| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — Round 1 (pre-registered existence proof on u00000011 / LaMP_4) executed 2026-06-15 and **failed the pre-registered gate**: test mean Δ=+0.003, paired t-test p=0.93, well below the +0.05 MDE. See `experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`. Q4 itself stays open — Round-2 fallbacks named in the design (B = retrain with BM25 context exposed; α = eval without BM25 in system; also: fewer epochs, higher rank, record-level framing) have not been run. |
 
 ---
 
@@ -41,7 +41,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **A1-lamp** | LaMP-{3,4,7} training splits (user-based), profile in system at train + inference | **Done, canonical adapter = `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/`** |
 | ~~**A1-full**~~ | ~~LaMP + synthetic preference-conditional data~~ | **DROPPED 2026-06-02** |
 | ~~**A2**~~ | ~~Domain-specific corpora + domain synthetic data~~ | **DROPPED 2026-06-02** |
-| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | Not yet started — design open (see "Open design decisions" below) |
+| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **Round 1 done 2026-06-15 — null result.** u00000011 / LaMP_4, profile-entry framing, r=4, 3 epochs. Test paired Δ=+0.003 (n=25, p=0.93). Final adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/` retained for provenance. Round 2 (B/α/epochs/rank/framing axes) is the next open scope. |
 
 ---
 
@@ -269,31 +269,62 @@ ordered user history meaningfully personalize beyond the Task-LoRA alone?
 The A1-lamp ckpt-1000 above is the frozen Task-LoRA foundation; per-user
 LoRAs sit on top.
 
-Prerequisites:
+### Round 1 — DONE 2026-06-15, null result
 
-1. ~~Acquire the LaMP time-based splits.~~ **Done 2026-06-10** — see `data/lamp_time/`.
-2. ~~Characterise per-user data volume to size the experiment.~~ **Done 2026-06-12** —
-   see `experiments/2026-06-12-lamp-time-split-per-user-counts.md`. Headline:
-   record-level fitting works on LaMP_4 only; profile-entry-level fitting
-   opens LaMP_3 (~175 examples/user) and keeps LaMP_4 viable; LaMP_7 is stuck
-   at 1-2 examples/user regardless.
-3. **Decide the per-user training-data framing** — records-as-examples vs.
-   profile-entries-as-(input,gold)-pairs. This is the **next open decision**;
-   it inverts the per-task viability ranking and gates the user-pool choice.
-4. **Pick the target task and the candidate user(s).** The CSVs at
-   `data/lamp_user_stats/<task>_users.csv` (sorted unseen-first, then by
-   `n_train` desc) are the candidate pool. No heuristic auto-pick — inspect
-   manually and freeze the choice in the experiment log.
-5. **Decide User-LoRA hyperparameters** — rank, target modules, training
-   data volume per user, epochs, stopping criterion. Per-user dev split is
-   small (often single-digit records); early stopping signal may be noisy.
-6. **Build per-user training scaffolding** — adapt `train/build_dataset.py`
-   to emit per-user JSONL (filtered by user fingerprint and framing
-   choice from step 3), adapt `train/train.py` and the existing config/sub
-   files to accept a user identifier and stack a second LoRA on top of
-   A1-lamp ckpt-1000.
+Pre-registered single-user existence proof on u00000011 (LaMP_4). Full
+writeup: `experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`.
+Design: `experiments/2026-06-14-user-lora-round1-plan.md` + memory
+`project-user-lora-round1-design`.
 
-A1-full and A2 ablations from the original plan are dropped.
+**Headline:** the pre-registered gate (mean paired ROUGE-1 Δ > 0 AND paired
+t-test p < 0.05 on test, MDE ≈ +0.05) **fails on both splits**:
+
+| | n | mean Δ (C3 − C2) | t p-value | Wilcoxon p | 95% bootstrap CI | gate |
+|---|---|---|---|---|---|---|
+| **test (primary)** | 25 | +0.0032 | 0.925 | 0.812 | [−0.058, +0.072] | **FAIL** |
+| dev (transparency) | 21 | +0.0295 | 0.150 | 0.139 | [−0.007, +0.068] | FAIL |
+
+C1 = base + BM25, C2 = A1-lamp ckpt-1000 + BM25, C3 = A1-lamp + User-LoRA + BM25.
+Training loss collapse at epoch boundaries (1.93 → 1.10 → 0.64) is consistent
+with memorization of the 1100 profile entries that doesn't transfer to later
+headlines. Result was reported honestly per pre-registration discipline; no
+post-hoc loosening.
+
+Scaffolding shipped as a side-effect (kept on disk): per-user data builder
+(`train/build_user_dataset.py`), per-user dataset
+(`data/lamp_user_train_LaMP_4_u00000011_bare.jsonl`), train.py
+`base_adapter` plumbing, eval_lamp.py `--base-adapter` + `--user-records`
+flags, `eval/paired_compare.py`, and the three new Condor sub files
+(`condor/build_user_dataset.sub`, `condor/train_user_lora.sub`,
+`condor/eval_lamp_user.sub`, `condor/paired_compare.sub`). Two latent
+scaffolding bugs caught + fixed during eval (no result contamination):
+`LAMP_DIR` defaulted to `data/lamp/` (user-based) instead of
+`data/lamp_time/`; `--adapter` / `--base-adapter` paths weren't resolved
+against `PROJECT_ROOT`, so they had to be passed absolute in the Condor
+queue block.
+
+### Round 2 — open scope
+
+Round 1's null doesn't close Q4. The pre-registered design named two
+specific Round-2 fallbacks, and the result invites others:
+
+- **B**: retrain the User-LoRA with BM25 context exposed during training, so
+  the train-time and eval-time prompt shapes match.
+- **α**: evaluate without BM25 in the system slot so the User-LoRA's
+  contribution is not redundant with retrieval.
+- **Fewer epochs** (e.g. 1, with frequent saves and Pareto sweep, mirroring
+  the A1-lamp 1-epoch follow-up) to bound the memorization regime visible
+  in the Round-1 loss curve.
+- **Higher rank** (r=8 or 16) for more usable capacity per user.
+- **Record-level framing** on LaMP_4 — the 241-example per-user train
+  records, instead of the 1100-example profile-entry framing — to avoid
+  memorizing historical articles unrelated to the test items.
+- **Different user(s)**. u00000011 was a power-user pick (only user with
+  n_dev > 20); a median user makes the bar higher, not lower.
+
+Each of these is a separate pre-registered experiment, separate writeup.
+
+A1-full and A2 ablations from the original plan remain dropped.
 
 ---
 

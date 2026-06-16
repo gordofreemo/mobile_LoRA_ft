@@ -1,0 +1,53 @@
+# Paired comparison — User-LoRA Round 1.
+#
+# CPU-only job (scipy + rouge_score only; no model). Runs eval/paired_compare.py
+# on the two pre-registered comparisons:
+#   1. C2 vs C3 on TEST — pre-registered primary gate (mean_diff > 0 AND
+#      paired t-test p < 0.05). Pass/fail recorded in the result JSON as
+#      `passes_registered_gate`.
+#   2. C2 vs C3 on DEV — transparency, not used for selection.
+#
+# Submit:
+#   condor_submit condor/paired_compare.sub
+#
+# Outputs:
+#   results/paired_compare_c2_a1lamp_bm25_vs_c3_a1lamp_userlora_bm25_LaMP_4_{dev,test}.json
+#   results/paired_compare_c2_a1lamp_bm25_vs_c3_a1lamp_userlora_bm25_LaMP_4_{dev,test}.pairs.jsonl
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare.py
+
+# Macros expand from the queue block at the bottom.
+pred_a   =
+pred_b   =
+split    =
+
+arguments = --pred-a $(pred_a) --pred-b $(pred_b) --label-a c2_a1lamp_bm25 --label-b c3_a1lamp_userlora_bm25 --task LaMP_4 --split $(split) --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only; paired statistics on n=21/25 finishes in milliseconds.
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+# Short job; opt-in tag keeps the eligible pool wide.
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue pred_a, pred_b, split from (
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, dev
+)
