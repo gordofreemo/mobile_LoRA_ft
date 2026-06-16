@@ -1,0 +1,92 @@
+# Paired comparison — User-LoRA Round 3 / variant α.
+#
+# CPU-only job (scipy + rouge_score; no model). Runs eval/paired_compare.py on
+# the pre-registered Round-3-α comparisons (see
+# experiments/2026-06-16-user-lora-round3-alpha-plan.md § Step 6).
+#
+# Pre-registered primary gate (D2):
+#     passes_registered_gate := (mean_diff > 0) AND (paired_t_p_value < 0.05)
+# evaluated on the PRIMARY-TEST comparison only (α-bare vs C2-α). The other
+# eleven jobs are pre-registered descriptives — reported for transparency and
+# used to disambiguate the Round-4 axis per D9c matrix. No post-hoc
+# threshold relaxation.
+#
+# Comparison convention: pred-a is "baseline", pred-b is "treatment";
+# mean_diff = mean(b - a) > 0 ⇒ treatment beats baseline.
+#
+# Labels (Condor + filesystem-safe; Greek α replaced by 'alpha'):
+#   c1_alpha       = C1-α   (base, --no-profile)
+#   c2_alpha       = C2-α   (A1-lamp ckpt-1000, --no-profile)
+#   alpha_bare     = α-bare (A1-lamp + Round-1 User-LoRA, --no-profile)
+#   alpha_B        = α-B    (A1-lamp + Round-2-B User-LoRA, --no-profile)
+#   c2_a1lamp_bm25 = C2 with BM25 (Round-1 reused file; label matches Round-1/2-B convention)
+#
+# Comparisons (12 jobs):
+#   PRIMARY GATE
+#     1) c2_alpha vs alpha_bare — test   ← the adjudicated gate
+#     2) c2_alpha vs alpha_bare — dev    ← transparency
+#   PRE-REGISTERED DESCRIPTIVES
+#     3) c2_a1lamp_bm25 vs alpha_bare — test  (α-bare vs Round-1 C2-with-BM25)
+#     4) c2_a1lamp_bm25 vs alpha_bare — dev
+#     5) c2_alpha vs alpha_B — test           (α-B vs C2-α)
+#     6) c2_alpha vs alpha_B — dev
+#     7) alpha_bare vs alpha_B — test         (α-B vs α-bare — train-shape mismatch axis)
+#     8) alpha_bare vs alpha_B — dev
+#     9) c1_alpha vs alpha_bare — test        (α-bare vs C1-α)
+#    10) c1_alpha vs alpha_bare — dev
+#    11) c1_alpha vs c2_alpha — test          (Task-LoRA alone vs floor, in α condition)
+#    12) c1_alpha vs c2_alpha — dev
+#
+# Submit (all 12):
+#   condor_submit condor/paired_compare_alpha.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare.py
+
+pred_a   =
+pred_b   =
+label_a  =
+label_b  =
+split    =
+
+arguments = --pred-a $(pred_a) --pred-b $(pred_b) --label-a $(label_a) --label-b $(label_b) --task LaMP_4 --split $(split) --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_alpha.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_alpha.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_alpha.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Tiny CPU job; statistics on n=21/25 finish in milliseconds.
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Twelve (pred_a, pred_b, label_a, label_b, split) tuples. Job 1 is the
+# pre-registered primary gate; jobs 2-12 are descriptive. Order matches the
+# §Step 6 list above.
+queue pred_a, pred_b, label_a, label_b, split from (
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c2_alpha, alpha_bare, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c2_alpha, alpha_bare, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c2_a1lamp_bm25, alpha_bare, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c2_a1lamp_bm25, alpha_bare, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_bm25k4_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c2_alpha, alpha_B, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_bm25k4_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c2_alpha, alpha_B, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_bm25k4_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, alpha_bare, alpha_B, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_bm25k4_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, alpha_bare, alpha_B, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_base_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c1_alpha, alpha_bare, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_base_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_noprofile_seed0_useru00000011.predictions.jsonl, c1_alpha, alpha_bare, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_base_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_noprofile_seed0_useru00000011.predictions.jsonl, c1_alpha, c2_alpha, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_base_noprofile_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_noprofile_seed0_useru00000011.predictions.jsonl, c1_alpha, c2_alpha, dev
+)
