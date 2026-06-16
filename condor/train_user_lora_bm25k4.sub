@@ -1,0 +1,59 @@
+# User-LoRA Round 2 / variant B training run — single-GPU job.
+#
+# Mirrors condor/train_user_lora.sub (Round 1). Same script, same image, same
+# hardware filter; the only difference is the config:
+# train/config/user_lora_lamp4_u00000011_bm25k4.json. That config sets:
+#   - base_adapter         = a1_lamp_1ep_seed0/checkpoint-1000 (same as R1)
+#   - dataset_path         = data/lamp_user_train_LaMP_4_u00000011_bm25k4.jsonl
+#   - output_dir           = train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0
+#   - data.max_seq_length  = 512 (T3-pinned from smoke; see
+#                            data/lamp_user_train_LaMP_4_u00000011_bm25k4.smoke.json)
+# Everything else (LoRA r/alpha, optimizer, schedule, seed) is identical to
+# Round 1 — the "same axes" pin per
+# experiments/2026-06-16-user-lora-round2-B-plan.md.
+#
+# Schedule (pre-registered, do not change without re-opening the design):
+#   per_device_batch=4, grad_accum=2 (effective_bs=8), 3 epochs.
+#   1100 examples / 8 = ~138 optimizer steps × 3 epochs ≈ 412 steps.
+# Outputs: last-epoch checkpoint at
+# train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/.
+#
+# Wall-time estimate: variant-B per-step sequence length is bounded at 512
+# (vs Round 1's 2048 ceiling — but Round 1's actual max was much smaller).
+# Round 1 took ~400 s; expect a similar few-minute range.
+#
+# If OOM despite the shorter sequence (unlikely): drop
+# per_device_train_batch_size to 2 and bump gradient_accumulation_steps to 4
+# (effective_bs preserved). Per the plan, surface that deviation to the user
+# before retrying.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/user_lora_lamp4_u00000011_bm25k4.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_u00000011_bm25k4.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_u00000011_bm25k4.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_u00000011_bm25k4.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Same GPU selection as Round 1's train_user_lora.sub.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
