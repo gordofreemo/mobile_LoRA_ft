@@ -1,0 +1,37 @@
+# Per-user LaMP training corpus — variant B (BM25-in-system at train time).
+#
+# Round 2 / variant B: each profile entry's system slot is populated by BM25
+# top-4 retrieval over the user's own strictly-prior profile entries
+# (decision A1b in experiments/2026-06-16-user-lora-round2-B-plan.md). This
+# closes the train/eval prompt-shape mismatch that Round 1 surfaced.
+#
+# Mirrors condor/build_user_dataset.sub but with --bm25-k 4 in the arguments
+# line and bm25k4-suffixed runlog filenames so runlogs from the two builds
+# don't collide.
+#
+# Expected runtime: a few minutes (1100 entries × O(N) BM25 retrieval each).
+# Output artifacts:
+#   data/lamp_user_train_LaMP_4_u00000011_bm25k4.jsonl
+#   data/lamp_user_train_LaMP_4_u00000011_bm25k4.meta.json
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_user_dataset.py
+arguments             = --task LaMP_4 --user u00000011 --bm25-k 4
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_bm25k4.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_bm25k4.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_bm25k4.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — streaming JSON read + per-entry JSONL write + per-entry BM25.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
