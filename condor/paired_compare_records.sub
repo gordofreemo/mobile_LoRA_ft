@@ -1,0 +1,78 @@
+# Paired comparison — User-LoRA Round 4 (records framing).
+#
+# CPU-only job (scipy + rouge_score; no model). Runs eval/paired_compare.py on
+# the pre-registered Round-4 comparisons (see
+# experiments/2026-06-17-user-lora-round4-plan.md § Step 9).
+#
+# Pre-registered primary gate (decision 4):
+#     passes_registered_gate := (mean_diff > 0) AND (paired_t_p_value < 0.05)
+# evaluated on the PRIMARY-TEST row only. The other seven rows are reported
+# for transparency / pre-registered descriptives. mean_diff is computed as
+# (label_b − label_a), so label_a is the baseline cell and label_b is
+# C3-R4 (the new R4 cell) in every row.
+#
+# Comparisons (8 rows; order: primary first, then descriptives):
+#   Primary test:        C2  vs  C3-R4  → primary gate
+#   Primary dev:         C2  vs  C3-R4  → transparency (Rounds-1/2/3 parity)
+#   Descriptive test:    R1-C3   vs  C3-R4  → did records-framing beat bare-trained profile framing?
+#   Descriptive dev:     R1-C3   vs  C3-R4  → transparency
+#   Descriptive test:    R2B-C3' vs  C3-R4  → cleanest framing-axis comparison (both BM25-trained)
+#   Descriptive dev:     R2B-C3' vs  C3-R4  → transparency
+#   Descriptive test:    C1      vs  C3-R4  → full stack vs no-personalization floor
+#   Descriptive dev:     C1      vs  C3-R4  → transparency
+#
+# Submit:
+#   condor_submit condor/paired_compare_records.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare.py
+
+pred_a   =
+pred_b   =
+label_a  =
+label_b  =
+split    =
+
+arguments = --pred-a $(pred_a) --pred-b $(pred_b) --label-a $(label_a) --label-b $(label_b) --task LaMP_4 --split $(split) --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_records.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_records.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_records.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Tiny CPU job; statistics on n=21/25 finish in milliseconds.
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Eight (pred_a, pred_b, label_a, label_b, split) tuples — order:
+#   1. primary test (THE gate)
+#   2. primary dev
+#   3. descriptive R1-C3 → C3-R4 test
+#   4. descriptive R1-C3 → C3-R4 dev
+#   5. descriptive R2B-C3' → C3-R4 test
+#   6. descriptive R2B-C3' → C3-R4 dev
+#   7. descriptive C1 → C3-R4 test
+#   8. descriptive C1 → C3-R4 dev
+queue pred_a, pred_b, label_a, label_b, split from (
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c2_a1lamp_bm25, c3_r4_a1lamp_userlora_records_bm25, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c2_a1lamp_bm25, c3_r4_a1lamp_userlora_records_bm25, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c3_round1, c3_r4_a1lamp_userlora_records_bm25, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c3_round1, c3_r4_a1lamp_userlora_records_bm25, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c3prime_round2_B, c3_r4_a1lamp_userlora_records_bm25, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c3prime_round2_B, c3_r4_a1lamp_userlora_records_bm25, dev
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_base_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c1_base_bm25, c3_r4_a1lamp_userlora_records_bm25, test
+  /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_base_bm25k4_seed0_useru00000011.predictions.jsonl, /home/ange00008/projects/mobileFT_distill/results/LaMP_4_dev_a1_lamp_1ep_seed0_checkpoint-1000_user_lora_lamp4_u00000011_records_bm25k4_seed0_final_bm25k4_seed0_useru00000011.predictions.jsonl, c1_base_bm25, c3_r4_a1lamp_userlora_records_bm25, dev
+)
