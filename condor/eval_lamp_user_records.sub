@@ -1,0 +1,62 @@
+# LaMP eval — User-LoRA Round 4 (records framing), single-user single-condition sweep.
+#
+# Two jobs covering C3-R4 × {dev, test} for the pre-registered Round-4
+# experiment on u00000011 (LaMP_4). See
+# experiments/2026-06-17-user-lora-round4-plan.md.
+#
+#   C3-R4 (A1-lamp + User-LoRA-R4 + BM25):
+#       adapter      = train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final
+#       base_adapter = train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000
+#
+# C1 (base + BM25), C2 (A1-lamp + BM25), R1-C3 (A1-lamp + R1-User-LoRA + BM25),
+# and R2B-C3' (A1-lamp + R2B-User-LoRA + BM25) are NOT re-run. Their predictions
+# are deterministic at seed=0 and re-used as-is for the paired-compare in
+# Stage C.
+#
+# Each × {dev (21 records), test (25 records)}.
+#
+# Submit (both):
+#   condor_submit condor/eval_lamp_user_records.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+# Macros driven by the queue block.
+adapter      = /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final
+base_adapter = /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000
+split        = dev
+
+# --user-records pins the LaMP_4 question set to u00000011's 21 dev / 25 test
+# IDs via data/lamp_user_stats/LaMP_4_user_records.json.
+arguments    = --task LaMP_4 --split $(split) --k 4 --seed 0 --adapter $(adapter) --base-adapter $(base_adapter) --user-records u00000011
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_records.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_records.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_records.$(ClusterId).log
+
+should_transfer_files = YES
+# LAMP_DIR points at the TIME-BASED split (data/lamp_time/), not the default
+# user-based split (data/lamp/). Per the Round-1 scaffolding-bug lesson.
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Two (split) variants — adapter/base_adapter pinned above.
+queue split from (
+  dev
+  test
+)

@@ -1,0 +1,46 @@
+# LaMP eval — Round 4 (records framing) SMOKE (--limit 5 on C3-R4 / dev only).
+#
+# One job. Exercises the maximum plumbing path for the R4 sweep:
+#   base + A1-lamp + User-LoRA-R4 stacked + BM25 + --user-records.
+# Output filename gets a `_limit5` suffix so it cannot collide with the full
+# R4 run's outputs (eval_lamp.py:503-505).
+#
+# See experiments/2026-06-17-user-lora-round4-plan.md Step 7.
+#
+# Submit:
+#   condor_submit condor/eval_lamp_user_records_smoke.sub
+#
+# After passing acceptance (5/21 filter on dev, well-formed predictions, gold
+# strings byte-match C2 on the same 5 dev IDs, adapter_params shows both
+# Task-LoRA + User-LoRA loaded), submit the full sweep:
+#   condor_submit condor/eval_lamp_user_records.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+arguments    = --task LaMP_4 --split dev --k 4 --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final --base-adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000 --user-records u00000011 --limit 5
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_records_smoke.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_records_smoke.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_records_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
