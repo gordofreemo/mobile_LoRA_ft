@@ -2,35 +2,50 @@
 """
 Build a single-user training corpus for User-LoRA fine-tuning.
 
-This is the per-user companion to `train/build_dataset.py`. For one user on
-one LaMP task, the user's `profile` (a chronological list of the user's past
-interactions) on their **latest** time-split train record is used as the
-User-LoRA training corpus. Two framings are supported via `--bm25-k`:
+This is the per-user companion to `train/build_dataset.py`. Two
+training-data *framings* are supported via `--framing`:
 
-  --bm25-k 0  (default; the Round-1 path):
-      "bare" profile-entry framing. system="", user=text, assistant=title.
-      No retrieval at train time.
+  --framing profile  (default; Round 1 + Round 2 paths):
+      Uses the user's `profile` (a chronological list of past interactions)
+      from their **latest** time-split train record as the training corpus.
+      LaMP_4 profile entries are (article_body, user_headline) pairs. For
+      u00000011 specifically the snapshot record's profile is ~1100 entries.
 
-  --bm25-k K  (K>0; the Round-2 variant-B path):
-      Each profile entry e_j is emitted with a system slot populated by BM25
-      top-K retrieval over the user's own strictly-prior profile entries.
-      Matches the prompt shape eval_lamp.py uses at inference, so train and
-      eval see the same input structure.
+      Sub-modes via `--bm25-k`:
+        --bm25-k 0  (Round 1):
+            "bare" profile-entry framing. system="", user=text, assistant=title.
+            No retrieval at train time.
+        --bm25-k K  (K>0; Round 2 variant B):
+            Each profile entry e_j is emitted with a system slot populated by
+            BM25 top-K retrieval over the user's own strictly-prior profile
+            entries (matches eval_lamp.py's inference prompt shape).
 
-LaMP_4 profile entries are (article_body, user_headline) pairs. For
-u00000011 specifically the snapshot record's profile is ~1100 entries.
+  --framing records  (Round 4 path, requires --bm25-k K>0):
+      Uses the user's time-split train *records* — one (input, gold) pair per
+      LaMP_4 train-period record (241 for u00000011, disjoint from 21 dev /
+      25 test). For each record: user = record.input byte-for-byte (e.g.,
+      "Generate a headline for the following article: ..."), assistant =
+      train_outputs[id].output, system = SYSTEM_PREAMBLE + BM25 top-K over
+      the snapshot profile (built once outside the per-record loop because
+      this user's profile is identical across their 241 train records).
+      Same shape as the eval-time task; the User-LoRA's training distribution
+      matches the eval distribution.
 
 Per the pinned designs (see
-experiments/2026-06-14-user-lora-round1-plan.md and
-experiments/2026-06-16-user-lora-round2-B-plan.md):
-  - profile-entry framing, not record framing
-  - target = `title` (the user's headline) for LaMP_4
+experiments/2026-06-14-user-lora-round1-plan.md,
+experiments/2026-06-16-user-lora-round2-B-plan.md, and
+experiments/2026-06-17-user-lora-round4-plan.md):
+  - profile framing: target = `title` (the user's headline) for LaMP_4
   - Round 2 / variant B: BM25 retrieval pool is strictly-prior by ISO date
     (decision A1b). Entries missing a `date` field are dropped from the
     training set; entries with equal date strings are not retrievable for
     each other (strict-prior tie-breaking). Query string = e_j's raw `text`
     field (decision Q.i / 9a). System slot byte-matches build_dataset.py's
     formatting (same TASKS lambda, same SYSTEM_PREAMBLE).
+  - Round 4 / records framing: no strict-prior date filter (records have no
+    `date` field; A1-lamp didn't filter either). Query = record.input.
+    Retrieval pool = full profile (identical across the user's records;
+    fingerprint-asserted at build time).
 
 The BM25 / tokenize / SYSTEM_PREAMBLE / TASKS format blocks are duplicated
 from `train/build_dataset.py` rather than imported so the script stays
@@ -42,13 +57,15 @@ Output format matches `train/train.py`'s `build_example` (flat dict with
 `system`/`user`/`assistant` strings).
 
 Output:
-    data/lamp_user_train_<task>_<user>_bare.jsonl       (when --bm25-k 0)
-    data/lamp_user_train_<task>_<user>_bm25k<K>.jsonl   (when --bm25-k K>0)
+    data/lamp_user_train_<task>_<user>_bare.jsonl            (profile, --bm25-k 0)
+    data/lamp_user_train_<task>_<user>_bm25k<K>.jsonl        (profile, --bm25-k K>0)
+    data/lamp_user_train_<task>_<user>_records_bm25k<K>.jsonl (records, --bm25-k K>0)
     (with matching .meta.json sidecar)
 
 Usage (CPU-only):
     python train/build_user_dataset.py --task LaMP_4 --user u00000011
     python train/build_user_dataset.py --task LaMP_4 --user u00000011 --bm25-k 4
+    python train/build_user_dataset.py --task LaMP_4 --user u00000011 --framing records --bm25-k 4
 """
 
 import argparse
@@ -333,6 +350,137 @@ def emit_bm25_records(profile: list, task: str, k: int, out_f) -> dict:
     }
 
 
+def find_train_records(task: str, train_ids: set) -> list:
+    """Stream the time-split train_questions file once; return ALL records
+    whose ID is in `train_ids`. Used by the Round-4 records-framing path.
+
+    Each returned dict has the full record shape (id, input, profile, ...).
+    Order is the stream order, which is the file order. The 241 records for
+    u00000011 are a tiny fraction of the file so total memory pressure is
+    bounded.
+    """
+    q_path = TIME_SPLIT_DIR / task / "train_questions.json"
+    found = {}
+    n_seen = 0
+    t0 = time.time()
+    for r in stream_json_array(str(q_path)):
+        rid = str(r.get("id"))
+        if rid not in train_ids:
+            continue
+        if rid in found:
+            raise RuntimeError(
+                f"Duplicate train record id {rid} in {q_path}; corpus invariant broken."
+            )
+        found[rid] = r
+        n_seen += 1
+        if n_seen % 50 == 0:
+            print(f"  scanned: {n_seen}/{len(train_ids)} train records found",
+                  flush=True)
+        if n_seen == len(train_ids):
+            # Early-exit: we've found every record we need; no point scanning
+            # the rest of the 863 MB file.
+            break
+    if n_seen != len(train_ids):
+        missing = train_ids - set(found)
+        raise RuntimeError(
+            f"Found {n_seen}/{len(train_ids)} train records; "
+            f"{len(missing)} missing (e.g. {sorted(list(missing))[:5]}). "
+            f"User records JSON and time-split train_questions disagree."
+        )
+    print(f"  done: {n_seen} train records scanned in {time.time()-t0:.0f}s",
+          flush=True)
+    return list(found.values())
+
+
+def emit_record_bm25(
+    records: list, outputs_by_id: dict, task: str, k: int, out_f
+) -> dict:
+    """Round-4 records-framing emission: one JSONL line per train-period
+    record. user = record.input verbatim; assistant = outputs_by_id[record.id];
+    system = SYSTEM_PREAMBLE + BM25 top-K over the snapshot profile (built
+    once outside the loop because this user's 241 records all share the same
+    profile — fingerprint-asserted below).
+
+    Pre-asserts:
+      - All record IDs are present in outputs_by_id (else fail listing missing).
+      - All records share the same profile (len + profile[0].id fingerprint),
+        so a single BM25 index serves the per-record loop.
+
+    Returns a stats dict for the meta sidecar.
+    """
+    if k <= 0:
+        raise ValueError("emit_record_bm25 requires k>0 (records framing).")
+
+    # --- pre-asserts -------------------------------------------------------
+    missing_outputs = [str(r.get("id")) for r in records
+                       if str(r.get("id")) not in outputs_by_id]
+    if missing_outputs:
+        raise RuntimeError(
+            f"{len(missing_outputs)} train records missing from outputs: "
+            f"e.g. {missing_outputs[:5]}"
+        )
+
+    # Profile-equality fingerprint across all records (cheap: len + first-entry id).
+    first_profile = records[0].get("profile", []) or []
+    fp = (
+        len(first_profile),
+        str(first_profile[0].get("id", "")) if first_profile else "",
+    )
+    for r in records[1:]:
+        prof = r.get("profile", []) or []
+        rfp = (
+            len(prof),
+            str(prof[0].get("id", "")) if prof else "",
+        )
+        if rfp != fp:
+            raise RuntimeError(
+                f"Profile fingerprint mismatch: record {r.get('id')} has "
+                f"(len={rfp[0]}, profile[0].id={rfp[1]}) vs reference "
+                f"(len={fp[0]}, profile[0].id={fp[1]}). Records-framing "
+                f"assumes a stable per-user profile — re-open the design "
+                f"if this user's profile drifts across records."
+            )
+
+    # --- build BM25 once over the shared profile --------------------------
+    profile = first_profile
+    profile_tokens = [tokenize(TASKS[task]["index_field"](e)) for e in profile]
+    bm25 = BM25(profile_tokens)
+
+    # --- per-record loop --------------------------------------------------
+    n_written = 0
+    n_skipped_empty = 0
+
+    for r in records:
+        rid = str(r.get("id"))
+        user_text = str(r.get("input", "")).strip()
+        gold = str(outputs_by_id.get(rid, "")).strip()
+        if not user_text or not gold:
+            n_skipped_empty += 1
+            continue
+
+        top = bm25.top_k(tokenize(user_text), k)
+        retrieved = [profile[t] for t in top]
+        lines = "\n".join(TASKS[task]["format"](it) for it in retrieved)
+        system = SYSTEM_PREAMBLE + lines
+
+        rec = {
+            "task": task,
+            "id": rid,
+            "system": system,
+            "user": user_text,
+            "assistant": gold,
+        }
+        out_f.write(json.dumps(rec) + "\n")
+        n_written += 1
+
+    return {
+        "n_written": n_written,
+        "n_skipped_empty": n_skipped_empty,
+        "profile_size": len(profile),
+        "n_train_records_resolved": len(records),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -341,27 +489,41 @@ def main():
     parser.add_argument("--task", required=True, choices=sorted(PROFILE_FRAMING))
     parser.add_argument("--user", required=True,
                         help="user fingerprint, e.g. u00000011")
+    parser.add_argument("--framing", choices=["profile", "records"],
+                        default="profile",
+                        help="training-example unit: profile-entry pairs "
+                             "(Rounds 1+2; default) or train-period record "
+                             "(input, gold) pairs (Round 4, requires --bm25-k>0)")
     parser.add_argument("--bm25-k", type=int, default=0,
-                        help="BM25 top-k retrieval over strictly-prior profile "
-                             "entries into the system slot at train time "
-                             "(0 = bare framing, default = Round 1 behaviour)")
+                        help="BM25 top-k retrieval over the user's profile "
+                             "into the system slot at train time. "
+                             "profile framing: 0 = bare (Round 1), K>0 = "
+                             "strictly-prior pool (Round 2 / variant B). "
+                             "records framing: K>0 required, full profile pool.")
     parser.add_argument("--overwrite", action="store_true",
                         help="overwrite existing JSONL / meta (default: refuse)")
     args = parser.parse_args()
     if args.bm25_k < 0:
         sys.exit("ERROR: --bm25-k must be >= 0")
+    if args.framing == "records" and args.bm25_k <= 0:
+        sys.exit("ERROR: --framing records requires --bm25-k > 0 "
+                 "(bare records framing is not a Round-4 axis; re-open the "
+                 "design if you want it).")
 
     provenance = collect_provenance()
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
         f"[run] build_user_dataset task={args.task} user={args.user} "
-        f"bm25_k={args.bm25_k} commit={commit_short} "
+        f"framing={args.framing} bm25_k={args.bm25_k} commit={commit_short} "
         f"dirty={provenance.get('git_dirty')} "
         f"host={provenance.get('hostname')}",
         flush=True,
     )
 
-    suffix = "bare" if args.bm25_k == 0 else f"bm25k{args.bm25_k}"
+    if args.framing == "records":
+        suffix = f"records_bm25k{args.bm25_k}"
+    else:
+        suffix = "bare" if args.bm25_k == 0 else f"bm25k{args.bm25_k}"
     out_path = DATA_OUT_DIR / f"lamp_user_train_{args.task}_{args.user}_{suffix}.jsonl"
     meta_path = DATA_OUT_DIR / f"lamp_user_train_{args.task}_{args.user}_{suffix}.meta.json"
 
@@ -381,10 +543,72 @@ def main():
     if args.user not in users:
         sys.exit(f"ERROR: user {args.user} not in {records_json}.")
     train_ids = set(users[args.user]["train"])
+    dev_ids = set(users[args.user]["dev"])
+    test_ids = set(users[args.user]["test"])
     print(f"[user] {args.user}: {len(train_ids)} train records, "
-          f"{len(users[args.user]['dev'])} dev, "
-          f"{len(users[args.user]['test'])} test", flush=True)
+          f"{len(dev_ids)} dev, "
+          f"{len(test_ids)} test", flush=True)
 
+    DATA_OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # =========================================================================
+    # records framing (Round 4)
+    # =========================================================================
+    if args.framing == "records":
+        # Plan §"Why this exists" + decision #5: disjoint splits asserted up-front.
+        if train_ids & dev_ids or train_ids & test_ids:
+            sys.exit(
+                f"ERROR: train/dev/test IDs not disjoint for {args.user}: "
+                f"train∩dev={len(train_ids & dev_ids)}, "
+                f"train∩test={len(train_ids & test_ids)}"
+            )
+        # Load outputs (~1.5 MB for LaMP_4 → safe to read whole).
+        out_path_in = TIME_SPLIT_DIR / args.task / "train_outputs.json"
+        print(f"[load] {out_path_in}", flush=True)
+        out_doc = json.loads(out_path_in.read_text())
+        outputs_by_id = {str(g["id"]): g["output"] for g in out_doc.get("golds", [])}
+        print(f"[load] {len(outputs_by_id)} train outputs loaded", flush=True)
+
+        # Stream the 863 MB train_questions file; early-exit after finding all 241.
+        print(f"[scan] streaming {TIME_SPLIT_DIR / args.task / 'train_questions.json'} "
+              f"for {len(train_ids)} train records ...", flush=True)
+        records = find_train_records(args.task, train_ids)
+
+        with out_path.open("w") as f:
+            stats = emit_record_bm25(records, outputs_by_id, args.task,
+                                     args.bm25_k, f)
+        n_written = stats["n_written"]
+        n_skipped_empty = stats["n_skipped_empty"]
+        print(f"[write] {n_written} examples "
+              f"({n_skipped_empty} skipped empty input/gold) -> {out_path}",
+              flush=True)
+
+        meta = {
+            "schema_version": 1,
+            "task": args.task,
+            "user_fingerprint": args.user,
+            "framing": "records_bm25",
+            "bm25_k": args.bm25_k,
+            "n_user_train_records": len(train_ids),
+            "n_user_dev_records": len(dev_ids),
+            "n_user_test_records": len(test_ids),
+            "n_train_records_resolved": stats["n_train_records_resolved"],
+            "profile_size": stats["profile_size"],
+            "n_examples": n_written,
+            "n_skipped_empty": n_skipped_empty,
+            "output_jsonl": str(out_path),
+            "user_records_json": str(records_json),
+            "outputs_json": str(out_path_in),
+            "command": "python " + " ".join(sys.argv),
+            **provenance,
+        }
+        meta_path.write_text(json.dumps(meta, indent=2))
+        print(f"[meta] -> {meta_path}", flush=True)
+        return
+
+    # =========================================================================
+    # profile framing (Rounds 1 + 2, unchanged)
+    # =========================================================================
     # --- Find the user's latest (largest-profile) train record -------------
     print(f"[scan] streaming {TIME_SPLIT_DIR / args.task / 'train_questions.json'} ...",
           flush=True)
@@ -393,7 +617,6 @@ def main():
     # --- Emit one JSONL line per profile entry -----------------------------
     input_field, target_field = PROFILE_FRAMING[args.task]
     profile = snapshot.get("profile", [])
-    DATA_OUT_DIR.mkdir(parents=True, exist_ok=True)
     if args.bm25_k > 0:
         with out_path.open("w") as f:
             stats = emit_bm25_records(profile, args.task, args.bm25_k, f)

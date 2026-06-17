@@ -29,7 +29,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **Q1** — Does fine-tuning on LaMP improve over zero-shot at all for a 3B model? | **ANSWERED: YES** — see `experiments/2026-05-31-a1-lamp.md`, `experiments/2026-06-02-a1-lamp-1ep-pareto.md`, and `experiments/2026-06-13-lamp-test-split-correction.md`. A1-lamp ckpt-1000 gives +0.11 / +0.07 / +0.13 over the BM25 baseline on LaMP-3/4/7 (test; dev results within ±0.01). |
 | **Q2** — Does adding synthetic preference-conditional data on top of LaMP improve further? | **DROPPED** with the 2026-06-02 pivot. |
 | **Q3** — Does a general Task-LoRA generalize as well as domain-specific ones? | **DROPPED** with the 2026-06-02 pivot. |
-| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — Rounds 1 and 2-B both failed the pre-registered gate on test. Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (`experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round2-B.md`) — empirically downweighted the train/eval shape-mismatch hypothesis. Round 3 α (eval-only redundancy test, no retrain) pinned 2026-06-16, pre-execution: `experiments/2026-06-16-user-lora-round3-alpha-plan.md`. |
+| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — Rounds 1, 2-B, and 3-α all failed the pre-registered gate on test. Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (`experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round2-B.md`) — empirically downweighted the train/eval shape-mismatch hypothesis. Round 3-α (eval-only no-profile redundancy test): Δ=+0.010, p=0.73 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round3-alpha.md`) — refuted the BM25/User-LoRA redundancy hypothesis (BM25 contributed ~0.003 at inference, so wasn't masking anything). Round 4 (record-level framing — 241 train-period (input,gold) record pairs instead of 1100 profile entries) pinned 2026-06-17, pre-execution: `experiments/2026-06-17-user-lora-round4-plan.md`. |
 
 ---
 
@@ -41,7 +41,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **A1-lamp** | LaMP-{3,4,7} training splits (user-based), profile in system at train + inference | **Done, canonical adapter = `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/`** |
 | ~~**A1-full**~~ | ~~LaMP + synthetic preference-conditional data~~ | **DROPPED 2026-06-02** |
 | ~~**A2**~~ | ~~Domain-specific corpora + domain synthetic data~~ | **DROPPED 2026-06-02** |
-| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **Rounds 1 + 2-B done — both null on test.** Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (adapter `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`). **Round 3 α pinned 2026-06-16, pre-execution**: eval-only redundancy test (no retrain), reuses both User-LoRA adapters; plan at `experiments/2026-06-16-user-lora-round3-alpha-plan.md`. |
+| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **Rounds 1, 2-B, and 3-α done — all null on test.** Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (adapter `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`). Round 3-α (eval-only, --no-profile system slot, reused both adapters): Δ=+0.010, p=0.73 — refuted the BM25/User-LoRA redundancy hypothesis. **Round 4 pinned 2026-06-17, pre-execution**: record-level framing (241 (input,gold) record pairs vs 1100 profile entries), BM25-train + BM25-eval, single-axis change vs R2-B; plan at `experiments/2026-06-17-user-lora-round4-plan.md`, expected adapter `train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final/`. |
 
 ---
 
@@ -327,37 +327,86 @@ as the most-supported next axis.
 Adapter retained on disk:
 `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`.
 
-### Round 3 — variant α pinned 2026-06-16, pre-execution
+### Round 3 — variant α done 2026-06-16, null result
 
 Plan: `experiments/2026-06-16-user-lora-round3-alpha-plan.md` (9 design axes
-pre-registered via /grill_me; see also memory
-`project-user-lora-round3-alpha-design`).
+pre-registered via /grill_me; memory `project-user-lora-round3-alpha-design`).
+Writeup: `experiments/2026-06-16-user-lora-lamp4-u00000011-round3-alpha.md`.
 
-**Hypothesis:** the User-LoRA's contribution is redundant with the
-BM25-retrieved profile context at inference. Removing BM25 from the eval
-system slot should hurt C2 substantially but hurt User-LoRA conditions less
-(or even invert the gap).
+**Headline:** the pre-registered gate (α-bare vs C2-α paired-t on test
+ROUGE-1) **fails on test** for the third round running on essentially the
+same point estimate as Round 1:
 
-**Design:** eval-only on u00000011 / LaMP_4 — no retraining. Reuses Round-1
-and Round-2-B User-LoRA adapters as-is plus A1-lamp ckpt-1000.
+| | n | mean Δ (α-bare − C2-α) | t p-value | Wilcoxon p | 95% bootstrap CI | gate |
+|---|---|---|---|---|---|---|
+| **test (primary)** | 25 | +0.0098 | 0.732 | 0.449 | [−0.046, +0.061] | **FAIL** |
+| dev (transparency) | 21 | +0.0475 | 0.039 | 0.057 | [+0.007, +0.090] | FAIL (gate is test-only) |
 
-- **Primary gate (adjudicated):** α-bare vs C2-α paired-t on test ROUGE-1, mean Δ > 0 AND p < 0.05, MDE ≈ +0.05 (identical to Rounds 1+2).
-- **Cells:** α-bare, α-B, C2-α, C1-α (all four; 4 cells × {dev, test} = 8 new eval files).
-- **Descriptives (pre-reg, not gates):** α-bare vs R1-C2-with-BM25; α-B vs C2-α; α-B vs α-bare; α-bare vs C1-α; C2-α vs C1-α.
-- **Honest-null disposition:** matrix-driven Round-4 axis selection (record-level framing / epoch reduction / higher rank, with multi-user replication parked until a positive within-user signal appears).
+C1-α=base+no-profile, C2-α=A1-lamp+no-profile, α-bare=A1-lamp+R1-User-LoRA+no-profile,
+α-B=A1-lamp+R2B-User-LoRA+no-profile. The **redundancy hypothesis as posed**
+is partly refuted by C2's own no-BM25 evaluation: C2-α (0.1875 test) ≈
+C2-with-BM25 (0.1906 test) — BM25 at inference contributes ~0.003 ROUGE-1
+for this user, so cannot have been masking the User-LoRA. The Task-LoRA
+absorbed the personalization signal at training time. The User-LoRA does
+add a small consistent lift on top (+0.010 test, +0.047 dev) below the +0.05
+MDE the experiment was powered to detect. The dev/test asymmetry observed
+in R1 and R2-B is now a robust three-round pattern (dev Δ +0.030 / +0.043 /
++0.047 vs test Δ +0.003 / −0.004 / +0.010) — deferred to R5 as a diagnostic
+target if R4 also nulls.
+
+### Round 4 — pinned 2026-06-17, pre-execution
+
+Plan: `experiments/2026-06-17-user-lora-round4-plan.md` (7 design axes
+pre-registered via /grill_me; memory `project-user-lora-round4-design`).
+
+**Hypothesis:** training the User-LoRA on the user's 241 LaMP_4 train-period
+(article → headline) record pairs — same shape as the eval task — instead
+of the 1100 profile-entry pairs yields a User-LoRA whose contribution
+generalizes to the user's later articles. Single-axis change vs R2-B:
+training-data framing only.
+
+**Why this axis:** R3-α's writeup mapped its observed pattern to matrix row 5
+(mixed / inconclusive), whose default prescription was higher rank. The user
+overrode to record-level framing on documented grounds: (1) R1's loss
+trajectory (1.93 → 1.10 → 0.64) is a textbook memorization signature for r=4
+over 1100 own-history pairs (higher rank widens the same regime); (2)
+profile entries are *consumed* content while train-period records are the
+user's *task-shaped* (article → headline) work matching the eval task; (3)
+241 records vs 1100 entries gives ~5× less memorization headroom and harder
+per-example pressure. Higher rank stays parked as R5 default if R4 also nulls
+in the no-clear-pattern row.
+
+**Design:** retrain the User-LoRA on top of A1-lamp ckpt-1000. New cell
+C3-R4 = A1-lamp + R4-User-LoRA (BM25-trained, record framing) + BM25 eval,
+on {dev, test} = 2 new eval files. Cells C1, C2, R1-C3, R2B-C3' reused on
+disk for the primary gate + descriptives.
+
+- **Primary gate (adjudicated):** C3-R4 vs C2 paired-t on test ROUGE-1,
+  mean Δ > 0 AND p < 0.05, MDE ≈ +0.05 (identical to Rounds 1+2+3).
+- **Descriptives (pre-reg, not gates):** C3-R4 vs C2 on dev; R1-C3 → C3-R4
+  on {test, dev}; R2B-C3' → C3-R4 on {test, dev} (cleanest framing-axis
+  comparison — both BM25-trained); C1 → C3-R4 on {test, dev}.
+- **Pre-reg commit structure:** 3 commits at data-flow boundaries —
+  Stage A (build_user_dataset.py `--framing` flag + new training config +
+  build/train condor subs), Stage B (eval sub + eval-smoke sub),
+  Stage C (paired-compare sub).
+- **Honest-null disposition:** 5-row matrix evaluated top-down (gate
+  passes → multi-user replication / dev-test asymmetry continues →
+  diagnostic / framing buys nothing → higher rank r=8 / framing hurt →
+  epoch-reduction Pareto sweep / full collapse → halt-and-debug stack).
 
 ### Other Round-1-named axes (still parked)
 
-The Round-1 design named several fallbacks beyond B and α. After R2-B's null
-and R3-α being the next round, these remain open for future rounds:
+The Round-1 design named several fallbacks. After R3-α's null and Round 4's
+axis selection, these remain open for future rounds:
 
-- **Fewer epochs** with Pareto sweep — bounds the memorization regime visible in the Round-1 loss curve.
-- **Higher rank** (r=8 or 16) — more usable capacity per user.
-- **Record-level framing** on LaMP_4 — 241-example per-user train records instead of 1100-example profile-entry framing.
-- **Different user(s)** — u00000011 is a power-user pick; a median user makes the bar higher.
+- **Fewer epochs** with Pareto sweep — R5 axis if R4 framing hurts (matrix row 4).
+- **Higher rank** (r=8 or 16) — R5 axis if R4 framing buys nothing (matrix row 3).
+- **Different user(s)** / multi-user replication — R5 axis only if R4 gate passes (matrix row 1).
+- **Dev/test asymmetry diagnostic** — R5 axis if R4 continues the asymmetry pattern (matrix row 2).
 
-The R3-α plan's §"What success / failure would mean" matrix maps observed α
-patterns onto these axes, so the Round-4 choice is determined by R3-α's
+The R4 plan's §"What success / failure would mean" matrix maps observed R4
+patterns onto these axes, so the Round-5 choice is determined by R4's
 result rather than picked post-hoc.
 
 A1-full and A2 ablations from the original plan remain dropped.
