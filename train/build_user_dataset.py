@@ -89,11 +89,12 @@ USER_RECORDS_DIR = PROJECT_ROOT / "data" / "lamp_user_stats"
 TIME_SPLIT_DIR = PROJECT_ROOT / "data" / "lamp_time"
 DATA_OUT_DIR = PROJECT_ROOT / "data"
 
-# Per-task: (input_field, target_field) on profile entries. Only LaMP_4 has a
-# usable (text, title) shape; LaMP_3 would need (text, score) and LaMP_7 has
-# no profile-level target at all — they're not supported here.
+# Per-task: (input_field, target_field) on profile entries. LaMP_4 has (text,
+# title); LaMP_3 has (text, score). LaMP_7 has no profile-level target at all,
+# so it's not supported here.
 PROFILE_FRAMING = {
     "LaMP_4": ("text", "title"),
+    "LaMP_3": ("text", "score"),
 }
 
 # -----------------------------------------------------------------------------
@@ -113,6 +114,10 @@ def trim(text: str, n: int = ENTRY_CHARS) -> str:
 
 
 TASKS = {
+    "LaMP_3": {
+        "index_field": lambda it: it.get("text", ""),
+        "format": lambda it: f'- Review: "{trim(it.get("text", ""))}" — the user rated it {it.get("score", "?")}/5',
+    },
     "LaMP_4": {
         "index_field": lambda it: it.get("text", ""),
         "format": lambda it: f'- Article: "{trim(it.get("text", ""))}" — the user\'s headline: "{trim(it.get("title", ""), TITLE_CHARS)}"',
@@ -123,6 +128,20 @@ SYSTEM_PREAMBLE = (
     "The following are examples of this user's past activity. "
     "Use them to match this user's preferences and writing style.\n\n"
 )
+
+
+def wrap_user_text(task: str, profile_entry: dict) -> str:
+    # LaMP_3 needs the eval-time question wrapper around the review text so
+    # the User-LoRA's training distribution matches the eval-time `input`
+    # shape byte-for-byte. LaMP_4 stays bare (raw article text).
+    if task == "LaMP_3":
+        text = str(profile_entry.get("text", "")).strip()
+        return (
+            "What is the score of the following review on a scale of 1 to 5? "
+            "just answer with 1, 2, 3, 4, or 5 without further explanation. "
+            f"review: {text}"
+        )
+    return str(profile_entry.get("text", "")).strip()
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -285,7 +304,7 @@ def emit_bm25_records(profile: list, task: str, k: int, out_f) -> dict:
 
     Returns a stats dict for the meta sidecar.
     """
-    input_field, target_field = PROFILE_FRAMING[task]
+    target_field = PROFILE_FRAMING[task][1]
 
     # Tokenize each profile entry once for BM25 (avoid re-tokenizing per query).
     profile_tokens = [tokenize(TASKS[task]["index_field"](e)) for e in profile]
@@ -302,7 +321,7 @@ def emit_bm25_records(profile: list, task: str, k: int, out_f) -> dict:
     for j in eligible:
         e_j = profile[j]
         d_j = str(e_j["date"])
-        user_text = str(e_j.get(input_field, "")).strip()
+        user_text = wrap_user_text(task, e_j)
         gold = str(e_j.get(target_field, "")).strip()
         if not user_text or not gold:
             n_skipped_empty += 1
@@ -639,7 +658,7 @@ def main():
         framing = "profile_entries_bare"
         with out_path.open("w") as f:
             for entry in profile:
-                user_text = str(entry.get(input_field, "")).strip()
+                user_text = wrap_user_text(args.task, entry)
                 gold = str(entry.get(target_field, "")).strip()
                 if not user_text or not gold:
                     n_skipped_empty += 1
