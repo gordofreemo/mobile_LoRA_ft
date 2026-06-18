@@ -1,0 +1,56 @@
+# Paired comparison — User-LoRA Round 5 (LaMP-3 multi-user).
+#
+# CPU-only job. Runs eval/paired_compare.py on the consolidated
+# C2 vs C3 prediction files from Step 9:
+#   pred-a: results/LaMP_3_test_round5_C2.predictions.jsonl  (100 lines)
+#   pred-b: results/LaMP_3_test_round5_C3.predictions.jsonl  (100 lines)
+#
+# Pre-registered primary gate (plan §"Design recap" row 7):
+#   passes_registered_gate := (mean_diff < 0) AND (paired_t_p_value < 0.05)
+# evaluated on the C2 vs C3 paired test-set MAE. MDE −0.05; OPPU's published
+# −0.071. NOT relaxable on a near miss ([[feedback-research-collaboration]]).
+#
+# Comparison convention: pred-a is "baseline" (C2 = A1-lamp + BM25), pred-b
+# is "treatment" (C3 = A1-lamp + User-LoRA + BM25). mean_diff = mean(b - a)
+# = mean(MAE_C3 - MAE_C2). For MAE (lower-is-better), improvement is
+# mean_diff < 0 — paired_compare.py's gate-direction logic inverts
+# automatically for metrics in eval/paired_compare.py:LOWER_IS_BETTER.
+#
+# Descriptives reported alongside (transparency, NOT gating):
+#   Wilcoxon signed-rank p, 95% percentile-bootstrap CI (10k resamples,
+#   seed=0), wins/ties/losses.
+#
+# Plan reference: experiments/2026-06-18-user-lora-round5-lamp3-plan.md §Step 10.
+#
+# Submit:
+#   condor_submit condor/paired_compare_lamp3.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare.py
+
+arguments = --pred-a results/LaMP_3_test_round5_C2.predictions.jsonl --pred-b results/LaMP_3_test_round5_C3.predictions.jsonl --label-a c2_a1lamp_bm25 --label-b c3_a1lamp_userlora_bm25_round5 --task LaMP_3 --split test --metric mae --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp3.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp3.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp3.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Tiny CPU job; statistics on n=100 finish in milliseconds (10k bootstrap
+# resamples are the dominant cost, still sub-second).
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
