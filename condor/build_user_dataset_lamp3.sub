@@ -1,0 +1,159 @@
+# Per-user LaMP-3 training corpus build for User-LoRA Round 5 multi-user.
+#
+# 100 parallel CPU procs — one per user from the pre-registered top-100 pool
+# (data/lamp_user_stats/LaMP_3_top100_users.json). Each proc invokes
+# train/build_user_dataset.py for its assigned user fingerprint, emitting:
+#     data/lamp_user_train_LaMP_3_<user>_bm25k4.jsonl
+#     data/lamp_user_train_LaMP_3_<user>_bm25k4.meta.json
+#
+# Plan reference: experiments/2026-06-18-user-lora-round5-lamp3-plan.md §Step 4.
+#
+# Architectural deviation from plan-text (transparent):
+#   The plan said "single CPU Condor job ... iterates ... sequential". We use a
+#   100-proc parallel queue block instead. Reasons:
+#     1. Sequential per-LaMP-3-user is ~2 min/user (3.2 GB train_questions.json
+#        scan with no early-exit) -> ~200 min total; the plan's 5s/user math
+#        was a LaMP_4 carryover. Parallel finishes in ~2-3 min wall time.
+#     2. Project convention: every other per-user step uses queue blocks
+#        (eval_lamp_user_alpha.sub, eval_lamp_user_records.sub, etc.). Matches
+#        the established idiom rather than introducing a one-off wrapper.
+#     3. No build_user_dataset.py modification — keeps the Step-2 pre-reg
+#        artifact untouched.
+#   NFS cost: 100 parallel readers of a 3.2 GB file, mitigated by per-node page
+#   caching; bounded total read traffic given the file is read sequentially.
+#
+# The 100 fingerprints in the queue block are embedded inline (rather than
+# read from the top-100 JSON) so this sub file is a self-contained pre-reg
+# artifact verifiable at commit time. Generated from
+# data/lamp_user_stats/LaMP_3_top100_users.json at commit 23864c07 (the
+# Step-3 output).
+#
+# Submit (after committing this file):
+#   condor_submit condor/build_user_dataset_lamp3.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_user_dataset.py
+arguments             = --task LaMP_3 --user $(user) --bm25-k 4 --overwrite
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_lamp3.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_lamp3.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_lamp3.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — streaming JSON read + per-entry JSONL write. Matches the
+# build_user_dataset.sub allocation; per-user memory bounded by streaming.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# 100 fingerprints — top-100 LaMP-3 users by profile_size, eligibility filter
+# (n_test>=1 AND seen_by_a1_lamp==0). Generated from
+# data/lamp_user_stats/LaMP_3_top100_users.json (Step 3 output, commit 23864c07).
+queue user from (
+  u00012502
+  u00014279
+  u00000758
+  u00007895
+  u00002309
+  u00015061
+  u00012195
+  u00008287
+  u00002294
+  u00003976
+  u00011267
+  u00005854
+  u00016935
+  u00012944
+  u00003131
+  u00011745
+  u00004577
+  u00011099
+  u00018331
+  u00011655
+  u00003997
+  u00003151
+  u00017011
+  u00009601
+  u00004654
+  u00001267
+  u00010695
+  u00004219
+  u00019617
+  u00009710
+  u00004746
+  u00015515
+  u00002421
+  u00009704
+  u00007195
+  u00019598
+  u00009492
+  u00013218
+  u00000303
+  u00008474
+  u00013354
+  u00008467
+  u00018966
+  u00017623
+  u00010474
+  u00012620
+  u00013776
+  u00017757
+  u00012364
+  u00016746
+  u00015526
+  u00016789
+  u00001339
+  u00005020
+  u00012534
+  u00010269
+  u00013840
+  u00005355
+  u00019089
+  u00015995
+  u00007656
+  u00003161
+  u00015757
+  u00000506
+  u00017403
+  u00018839
+  u00008614
+  u00018961
+  u00005816
+  u00011077
+  u00018181
+  u00016057
+  u00016732
+  u00000145
+  u00012879
+  u00010442
+  u00012602
+  u00001965
+  u00011288
+  u00001646
+  u00005394
+  u00006012
+  u00005228
+  u00009262
+  u00013401
+  u00010547
+  u00015546
+  u00017070
+  u00011202
+  u00003907
+  u00004868
+  u00008160
+  u00001751
+  u00009406
+  u00005301
+  u00011400
+  u00002533
+  u00019583
+  u00008075
+  u00010694
+)
