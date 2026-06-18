@@ -29,7 +29,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **Q1** — Does fine-tuning on LaMP improve over zero-shot at all for a 3B model? | **ANSWERED: YES** — see `experiments/2026-05-31-a1-lamp.md`, `experiments/2026-06-02-a1-lamp-1ep-pareto.md`, and `experiments/2026-06-13-lamp-test-split-correction.md`. A1-lamp ckpt-1000 gives +0.11 / +0.07 / +0.13 over the BM25 baseline on LaMP-3/4/7 (test; dev results within ±0.01). |
 | **Q2** — Does adding synthetic preference-conditional data on top of LaMP improve further? | **DROPPED** with the 2026-06-02 pivot. |
 | **Q3** — Does a general Task-LoRA generalize as well as domain-specific ones? | **DROPPED** with the 2026-06-02 pivot. |
-| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — Rounds 1, 2-B, and 3-α all failed the pre-registered gate on test. Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (`experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round2-B.md`) — empirically downweighted the train/eval shape-mismatch hypothesis. Round 3-α (eval-only no-profile redundancy test): Δ=+0.010, p=0.73 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round3-alpha.md`) — refuted the BM25/User-LoRA redundancy hypothesis (BM25 contributed ~0.003 at inference, so wasn't masking anything). Round 4 (record-level framing — 241 train-period (input,gold) record pairs instead of 1100 profile entries) pinned 2026-06-17, pre-execution: `experiments/2026-06-17-user-lora-round4-plan.md`. |
+| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — Rounds 1, 2-B, 3-α, and 4 all failed the pre-registered gate on test. Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (`experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round2-B.md`) — empirically downweighted the train/eval shape-mismatch hypothesis. Round 3-α (eval-only no-profile redundancy test): Δ=+0.010, p=0.73 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round3-alpha.md`) — refuted the BM25/User-LoRA redundancy hypothesis (BM25 contributed ~0.003 at inference, so wasn't masking anything). Round 4 (record-level framing — 241 train-period (input,gold) record pairs instead of 1100 profile entries, BM25-train + BM25-eval, single-axis change vs R2-B), executed 2026-06-17: Δ=−0.018, p=0.43 — widest negative point estimate of the four rounds; records framing inert vs R2-B (test Δ=−0.014 p=0.68; dev Δ=−0.003 p=0.90). dev/test split asymmetry now a robust 4-round pattern (dev Δ +0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018). Matrix→R5 = **dev/test asymmetry diagnostic on u00000011** (the matrix's pre-committed axis); writeup: `experiments/2026-06-17-user-lora-lamp4-u00000011-round4.md`. **R5 axis explicitly overridden 2026-06-18** in `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`: R5 is now LaMP-3 multi-user (K=100, OPPU recipe) on the grounds that OPPU literature comparison shows our LaMP-4 +0.010 lift is in their published range — the nulls are power-limited at n=25, not methodological. Asymmetry diagnostic parked at R6+ candidate set (returns to front if R5 nulls). |
 
 ---
 
@@ -41,7 +41,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **A1-lamp** | LaMP-{3,4,7} training splits (user-based), profile in system at train + inference | **Done, canonical adapter = `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/`** |
 | ~~**A1-full**~~ | ~~LaMP + synthetic preference-conditional data~~ | **DROPPED 2026-06-02** |
 | ~~**A2**~~ | ~~Domain-specific corpora + domain synthetic data~~ | **DROPPED 2026-06-02** |
-| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **Rounds 1, 2-B, and 3-α done — all null on test.** Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (adapter `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`). Round 3-α (eval-only, --no-profile system slot, reused both adapters): Δ=+0.010, p=0.73 — refuted the BM25/User-LoRA redundancy hypothesis. **Round 4 pinned 2026-06-17, pre-execution**: record-level framing (241 (input,gold) record pairs vs 1100 profile entries), BM25-train + BM25-eval, single-axis change vs R2-B; plan at `experiments/2026-06-17-user-lora-round4-plan.md`, expected adapter `train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final/`. |
+| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **Rounds 1, 2-B, 3-α, and 4 done — all null on test.** Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (adapter `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`). Round 3-α (eval-only, --no-profile system slot, reused both adapters): Δ=+0.010, p=0.73 — refuted the BM25/User-LoRA redundancy hypothesis. Round 4 (record-level framing — 241 (input,gold) record pairs vs 1100 profile entries — BM25-train + BM25-eval, single-axis change vs R2-B), executed 2026-06-17: Δ=−0.018, p=0.43; R2B-C3' → C3-R4 framing-axis test Δ=−0.014, p=0.68 (records framing inert vs R2-B). Adapter `train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final/`. **R5 axis was pre-committed by R4's matrix Row 2 to dev/test asymmetry diagnostic on u00000011, then explicitly overridden 2026-06-18** in `experiments/2026-06-18-user-lora-round5-lamp3-plan.md` to **LaMP-3 multi-user (K=100 users, OPPU recipe r=8 q+v only LR=1e-5 L2=1e-2)**, on the grounds that OPPU literature comparison reframes the four LaMP-4 nulls as power-limited at n=25 rather than methodologically broken. Asymmetry diagnostic is parked at R6+ candidate set, not deprecated. |
 
 ---
 
@@ -262,12 +262,31 @@ BFCL is split-independent (its own gold set, not LaMP's dev/test partition) — 
 
 Baseline result files: `results/LaMP_{3,4,7}_test_base_{bm25k4,noprofile}_seed0.{json,predictions.jsonl}` and `results/bfcl_ast_base_seed0.{json,predictions.jsonl}`. The corresponding `_dev_*` baseline files also still exist on disk.
 
-**Next milestone:** User-LoRA experiments on the LaMP time-based split (the
-2026-06-02 pivot — see "Project direction update" at the top of this file).
-The active research question is Q4: does an additional per-user LoRA on time-
-ordered user history meaningfully personalize beyond the Task-LoRA alone?
-The A1-lamp ckpt-1000 above is the frozen Task-LoRA foundation; per-user
-LoRAs sit on top.
+**Next milestone:** LaMP-3 multi-user User-LoRA replication of OPPU
+(Round 5). Plan at `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`,
+pinned 2026-06-18, pre-execution. K=100 unseen-by-A1-lamp test-pool users
+on LaMP-3 (OPPU's strongest-effect task at −0.071 MAE over RAG); OPPU's
+recipe r=8 with q+v only, LR=1e-5, AdamW + L2 weight_decay=1e-2; 3 epochs;
+between-user paired-t on per-user MAE with MDE −0.05; primary gate on test;
+stack (not merge) the User-LoRA over A1-lamp ckpt-1000.
+
+**R5 is an explicit override of R4's matrix-pre-committed R5 axis** (dev/test
+asymmetry diagnostic on u00000011). Grounds for the override are documented
+in the plan's "Why this round exists" + "Explicit override" sections: the
+OPPU literature comparison done in the 2026-06-18 session reframes the four
+LaMP-4 nulls as power-limited at n=25 with effect sizes consistent with
+OPPU's reported range (their LaMP-4 OPPU lift over RAG is +0.003 R-1 — our
++0.010 is within noise of theirs); LaMP-3 multi-user is where OPPU reports
+their largest detectable effect and where our infrastructure already has
+Task-LoRA + eval scaffolding in place. The asymmetry diagnostic is parked
+at R6+ candidate set (front of queue if R5 nulls), not deprecated. Multi-
+user, higher rank, and epoch-Pareto axes also stay parked at R6+ behind
+R5's outcome.
+
+The A1-lamp ckpt-1000 remains the frozen Task-LoRA foundation; the four
+LaMP-4 User-LoRA adapters from R1 / R2-B / R4 (plus R1 reused in R3-α)
+sit on top and are kept on disk for future re-analysis if the asymmetry
+diagnostic returns to front of queue.
 
 ### Round 1 — DONE 2026-06-15, null result
 
@@ -354,60 +373,99 @@ in R1 and R2-B is now a robust three-round pattern (dev Δ +0.030 / +0.043 /
 +0.047 vs test Δ +0.003 / −0.004 / +0.010) — deferred to R5 as a diagnostic
 target if R4 also nulls.
 
-### Round 4 — pinned 2026-06-17, pre-execution
+### Round 4 — DONE 2026-06-17, null result
 
-Plan: `experiments/2026-06-17-user-lora-round4-plan.md` (7 design axes
-pre-registered via /grill_me; memory `project-user-lora-round4-design`).
+Pre-registered single-axis follow-up to R2-B per
+`experiments/2026-06-17-user-lora-round4-plan.md` (7 design axes pre-reg via
+/grill_me; memory `project-user-lora-round4-design`). Full writeup:
+`experiments/2026-06-17-user-lora-lamp4-u00000011-round4.md`.
 
-**Hypothesis:** training the User-LoRA on the user's 241 LaMP_4 train-period
-(article → headline) record pairs — same shape as the eval task — instead
-of the 1100 profile-entry pairs yields a User-LoRA whose contribution
-generalizes to the user's later articles. Single-axis change vs R2-B:
-training-data framing only.
+**Single-axis change vs R2-B:** training-data framing — 241 LaMP_4
+train-period (input, gold) record pairs instead of the 1100 profile-entry
+(text, title) pairs. BM25-train + BM25-eval otherwise identical to R2-B.
+A1-lamp ckpt-1000 base, $r=4$, $\alpha=8$, 3 epochs, seed=0.
 
-**Why this axis:** R3-α's writeup mapped its observed pattern to matrix row 5
-(mixed / inconclusive), whose default prescription was higher rank. The user
-overrode to record-level framing on documented grounds: (1) R1's loss
-trajectory (1.93 → 1.10 → 0.64) is a textbook memorization signature for r=4
-over 1100 own-history pairs (higher rank widens the same regime); (2)
-profile entries are *consumed* content while train-period records are the
-user's *task-shaped* (article → headline) work matching the eval task; (3)
-241 records vs 1100 entries gives ~5× less memorization headroom and harder
-per-example pressure. Higher rank stays parked as R5 default if R4 also nulls
-in the no-clear-pattern row.
+**Headline:** the pre-registered gate (C3-R4 vs C2 paired-t on test ROUGE-1,
+mean Δ > 0 AND p < 0.05, MDE ≈ +0.05) **fails on test** for the fourth
+round running, on the widest negative point estimate of the four:
 
-**Design:** retrain the User-LoRA on top of A1-lamp ckpt-1000. New cell
-C3-R4 = A1-lamp + R4-User-LoRA (BM25-trained, record framing) + BM25 eval,
-on {dev, test} = 2 new eval files. Cells C1, C2, R1-C3, R2B-C3' reused on
-disk for the primary gate + descriptives.
+| | n | mean Δ (C3-R4 − C2) | t p-value | Wilcoxon p | 95% bootstrap CI | gate |
+|---|---|---|---|---|---|---|
+| **test (primary)** | 25 | −0.0178 | 0.429 | 0.506 | [−0.0598, +0.0237] | **FAIL** |
+| dev (transparency) | 21 | +0.0396 | 0.041 | 0.033 | [+0.0037, +0.0736] | FAIL (gate is test-only) |
 
-- **Primary gate (adjudicated):** C3-R4 vs C2 paired-t on test ROUGE-1,
-  mean Δ > 0 AND p < 0.05, MDE ≈ +0.05 (identical to Rounds 1+2+3).
-- **Descriptives (pre-reg, not gates):** C3-R4 vs C2 on dev; R1-C3 → C3-R4
-  on {test, dev}; R2B-C3' → C3-R4 on {test, dev} (cleanest framing-axis
-  comparison — both BM25-trained); C1 → C3-R4 on {test, dev}.
-- **Pre-reg commit structure:** 3 commits at data-flow boundaries —
-  Stage A (build_user_dataset.py `--framing` flag + new training config +
-  build/train condor subs), Stage B (eval sub + eval-smoke sub),
-  Stage C (paired-compare sub).
-- **Honest-null disposition:** 5-row matrix evaluated top-down (gate
-  passes → multi-user replication / dev-test asymmetry continues →
-  diagnostic / framing buys nothing → higher rank r=8 / framing hurt →
-  epoch-reduction Pareto sweep / full collapse → halt-and-debug stack).
+C1 = base + BM25, C2 = A1-lamp + BM25, C3-R4 = A1-lamp + R4 User-LoRA
+(records, BM25-trained) + BM25 eval. Per-record wins (test): C3-R4 8 /
+ties 3 / C2 14. Cell ROUGE-1 means on test: C1 0.144, C2 0.191, R1-C3
+0.194, R2B-C3' 0.187, **C3-R4 0.173** (lowest of the User-LoRA-stacked
+cells).
 
-### Other Round-1-named axes (still parked)
+The **cleanest single-axis descriptive R2B-C3' → C3-R4** (both BM25-trained,
+only the training-data framing differs) finds the framing change essentially
+inert on dev (Δ=−0.003, p=0.90) and a slight regression on test (Δ=−0.014,
+p=0.68). Records framing changed the User-LoRA's behavior basically not at
+all. The plan's structural argument was correct about the training
+dynamics (R4 loss trajectory 1.71 → 1.11 → 0.79 vs R1's 1.93 → 1.10 → 0.64
+— smaller memorization crater consistent with ~5× fewer training examples)
+but the smaller crater did not, on this user, translate into measurably
+better test transfer.
 
-The Round-1 design named several fallbacks. After R3-α's null and Round 4's
-axis selection, these remain open for future rounds:
+The dev/test asymmetry pattern is now four rounds wide: dev Δ
++0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018 across
+R1/R2-B/R3-α/R4. Adapter retained on disk:
+`train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final/`.
 
-- **Fewer epochs** with Pareto sweep — R5 axis if R4 framing hurts (matrix row 4).
-- **Higher rank** (r=8 or 16) — R5 axis if R4 framing buys nothing (matrix row 3).
-- **Different user(s)** / multi-user replication — R5 axis only if R4 gate passes (matrix row 1).
-- **Dev/test asymmetry diagnostic** — R5 axis if R4 continues the asymmetry pattern (matrix row 2).
+**R5 axis selection (matrix Row 2 fired, mechanical):** gate fails on test
+AND dev Δ > +0.02 AND dev paired-t p < 0.10 — all three numeric thresholds
+met. **R5 = dev/test asymmetry diagnostic on u00000011.** Per-record
+date / length / topic analysis of why this user's test records systematically
+underperform their dev records under personalization. The C1 → C3-R4
+descriptive shows the same asymmetry at the whole-stack level (dev Δ +0.069
+p=0.008 vs test Δ +0.029 p=0.37), so the pattern is a property of the data,
+not the adapter — Row 2 was reserved exactly for triggering a data-side
+investigation. Higher rank, epoch-reduction Pareto, and multi-user
+replication remain parked at R5 rows 3 / 4 / 1 behind the asymmetry
+diagnostic.
 
-The R4 plan's §"What success / failure would mean" matrix maps observed R4
-patterns onto these axes, so the Round-5 choice is determined by R4's
-result rather than picked post-hoc.
+### Round 5 axis (override of R4 matrix-pre-commit) + R6+ candidate queue
+
+R4's matrix Row 2 fired and pre-committed R5 to the dev/test asymmetry
+diagnostic on u00000011. **2026-06-18 /grill_me explicitly overrode** that
+pre-commit on documented grounds (OPPU literature comparison done in that
+session — see "Next milestone" above). R5 is now:
+
+- **LaMP-3 multi-user User-LoRA (K=100, OPPU recipe)** *(SELECTED via
+  override)* — see `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`.
+  Tests whether OPPU's per-user PEFT methodology replicates on our
+  SmolLM3-3B infrastructure on LaMP-3 (their strongest-effect task) at the
+  user count and recipe that produces their published −0.071 MAE lift.
+  Primary gate: between-user paired-t on per-user MAE, mean Δ < 0 AND p <
+  0.05, MDE −0.05.
+
+R6+ candidate queue (parked, not pre-committed — drafted via /grill_me
+after R5's outcome):
+
+- **Dev/test asymmetry diagnostic on u00000011** — the R4-pre-committed
+  axis, parked at R6 candidate set. Returns to front of queue if R5 nulls
+  (the LaMP-4 four-round dev/test Δ gap +0.030/+0.043/+0.047/+0.040 dev vs
+  +0.003/−0.004/+0.010/−0.018 test is still real and unexplained).
+- **K=200 multi-user expansion on LaMP-3** — if R5 near-misses.
+- **Larger base model (Llama-3-8B if accessible)** — if R5 is flat-null at
+  K=100 (evidence the base model size is the bottleneck, since OPPU used
+  Llama-2-7B).
+- **Stack-vs-merge ablation** — known difference from OPPU's pipeline
+  preserved in R5; worth isolating if R5 nulls and recipe is implicated.
+- **Scale to LaMP-1 or LaMP-2M** — if R5 passes (OPPU's largest reported
+  lifts: +0.106 acc on LaMP-1, +0.050 acc on LaMP-2M); requires new task
+  pipeline.
+- **Original R1-parked axes** (multi-user on LaMP-4, higher rank, fewer
+  epochs) — empirically downweighted by the four-round LaMP-4 null but
+  still available.
+
+The override discipline: the override is documented in three places (R5
+plan, R5 memory, R4 memory entry in MEMORY.md). The override is not silent
+and cannot be re-litigated without a new explicit /grill_me of the override
+itself.
 
 A1-full and A2 ablations from the original plan remain dropped.
 
