@@ -1,5 +1,23 @@
 # Research Project — On-Device LLM Personalization via PEFT
 
+## Project direction update (2026-06-19) — Phase 2 complete
+
+**Phase 2 / User-LoRA is COMPLETE. Q4 is ANSWERED YES.** Round 5 (LaMP-3 multi-user, K=100, OPPU recipe) confirms that an additional per-user LoRA on time-ordered user history meaningfully personalizes beyond the Task-LoRA + BM25 baseline. Headline result: mean ΔMAE −0.050 (at the pre-registered MDE), accuracy 0.680 → 0.730 (+5 net flips), C3 head-to-head wins 7 vs C2 wins 2, ties 91, RMSE 0.616 → 0.575, all with zero overhead at inference (MPT, MGT, latency identical between C2 and C3). Effect size lies in OPPU's published range (−0.071 on LaMP-3). Full numbers + provenance in `experiments/2026-06-18-user-lora-lamp3-round5-multi.md`; the gate output JSON at `results/paired_compare_c2_a1lamp_bm25_vs_c3_a1lamp_userlora_bm25_round5_LaMP_3_test.json`.
+
+**No further User-LoRA rounds planned.** R6+ candidate axes (K=200, recipe ablation, dev/test asymmetry diagnostic) are deferred indefinitely.
+
+**Next milestone: TBD.** A fresh session should treat the User-LoRA work as closed and ask the project lead for the next research thrust before proposing follow-up experiments.
+
+Frozen artifacts that survive Phase 2:
+- A1-lamp Task-LoRA: `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/`
+- 100 per-user User-LoRA adapters: `train/checkpoints/user_lora_lamp3_<fp>_seed0/final/` (one per user in `data/lamp_user_stats/LaMP_3_top100_users.json`)
+- 4 single-user LaMP-4 User-LoRAs from R1 / R2-B / R4 (kept on disk for re-analysis)
+- All 200 R5 eval predictions and the consolidated `results/LaMP_3_test_round5_C{2,3}.predictions.jsonl`
+
+The 2026-06-02 update below is the prior direction; sections under it that describe how Phase 2 was scoped and tracked remain useful for understanding what was done, but the "active work" framing is superseded by this paragraph.
+
+---
+
 ## Project direction update (2026-06-02)
 
 The project's ML scope has been **narrowed**. The original plan (cluster-side synthetic data generation feeding A1-full and A2 ablations, with on-device User-LoRA deferred to a future phase) is no longer active. **Now:**
@@ -18,7 +36,7 @@ Hard constraints from the original spec all still hold (no KD, no base-weight mo
 Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-stage LoRA pipeline, both trained on the cluster:
 
 1. **Task-LoRA (DONE).** Trained on LaMP-{3,4,7}, BM25-retrieved profile pinned in the system prompt. The model learns "use a user-profile cue in the system slot to personalize". Canonical adapter: A1-lamp ckpt-1000.
-2. **User-LoRA (ACTIVE WORK).** A separate small LoRA per user, fine-tuned on that user's early-period interactions (from LaMP's **time-based** split, not the user-based split used for the Task-LoRA training). Evaluated on the user's later-period interactions. Sits on top of the frozen Task-LoRA at inference. This validates the on-device personalization story without requiring on-device hardware.
+2. **User-LoRA (DONE — Phase 2 closed 2026-06-19).** A separate small LoRA per user, fine-tuned on that user's early-period interactions (from LaMP's **time-based** split, not the user-based split used for the Task-LoRA training). Evaluated on the user's later-period interactions. Sits on top of the frozen Task-LoRA at inference. Validated the on-device personalization story on the cluster without requiring on-device hardware — see the 2026-06-19 direction update at the top for the Round-5 headline result.
 
 ---
 
@@ -29,7 +47,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **Q1** — Does fine-tuning on LaMP improve over zero-shot at all for a 3B model? | **ANSWERED: YES** — see `experiments/2026-05-31-a1-lamp.md`, `experiments/2026-06-02-a1-lamp-1ep-pareto.md`, and `experiments/2026-06-13-lamp-test-split-correction.md`. A1-lamp ckpt-1000 gives +0.11 / +0.07 / +0.13 over the BM25 baseline on LaMP-3/4/7 (test; dev results within ±0.01). |
 | **Q2** — Does adding synthetic preference-conditional data on top of LaMP improve further? | **DROPPED** with the 2026-06-02 pivot. |
 | **Q3** — Does a general Task-LoRA generalize as well as domain-specific ones? | **DROPPED** with the 2026-06-02 pivot. |
-| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **OPEN** — Rounds 1, 2-B, 3-α, and 4 all failed the pre-registered gate on test. Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (`experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round2-B.md`) — empirically downweighted the train/eval shape-mismatch hypothesis. Round 3-α (eval-only no-profile redundancy test): Δ=+0.010, p=0.73 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round3-alpha.md`) — refuted the BM25/User-LoRA redundancy hypothesis (BM25 contributed ~0.003 at inference, so wasn't masking anything). Round 4 (record-level framing — 241 train-period (input,gold) record pairs instead of 1100 profile entries, BM25-train + BM25-eval, single-axis change vs R2-B), executed 2026-06-17: Δ=−0.018, p=0.43 — widest negative point estimate of the four rounds; records framing inert vs R2-B (test Δ=−0.014 p=0.68; dev Δ=−0.003 p=0.90). dev/test split asymmetry now a robust 4-round pattern (dev Δ +0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018). Matrix→R5 = **dev/test asymmetry diagnostic on u00000011** (the matrix's pre-committed axis); writeup: `experiments/2026-06-17-user-lora-lamp4-u00000011-round4.md`. **R5 axis explicitly overridden 2026-06-18** in `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`: R5 is now LaMP-3 multi-user (K=100, OPPU recipe) on the grounds that OPPU literature comparison shows our LaMP-4 +0.010 lift is in their published range — the nulls are power-limited at n=25, not methodological. Asymmetry diagnostic parked at R6+ candidate set (returns to front if R5 nulls). |
+| **Q4** *(new)* — Does an additional per-user LoRA on time-ordered user history meaningfully personalize beyond the Task-LoRA alone? | **ANSWERED YES** (2026-06-19, closing the User-LoRA phase). Round 5 (LaMP-3 multi-user, K=100, OPPU recipe) confirms the hypothesis: mean ΔMAE −0.050 (at MDE), accuracy 0.680 → 0.730, RMSE 0.616 → 0.575, all at zero inference-time overhead (MPT/MGT/latency identical). See `experiments/2026-06-18-user-lora-lamp3-round5-multi.md`. Historical record of the prior LaMP-4 single-user rounds (which did not produce a positive signal at n=25) follows: Rounds 1, 2-B, 3-α, and 4 all failed the pre-registered gate on test. Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (`experiments/2026-06-15-user-lora-lamp4-u00000011-round1.md`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round2-B.md`) — empirically downweighted the train/eval shape-mismatch hypothesis. Round 3-α (eval-only no-profile redundancy test): Δ=+0.010, p=0.73 (`experiments/2026-06-16-user-lora-lamp4-u00000011-round3-alpha.md`) — refuted the BM25/User-LoRA redundancy hypothesis (BM25 contributed ~0.003 at inference, so wasn't masking anything). Round 4 (record-level framing — 241 train-period (input,gold) record pairs instead of 1100 profile entries, BM25-train + BM25-eval, single-axis change vs R2-B), executed 2026-06-17: Δ=−0.018, p=0.43 — widest negative point estimate of the four rounds; records framing inert vs R2-B (test Δ=−0.014 p=0.68; dev Δ=−0.003 p=0.90). dev/test split asymmetry now a robust 4-round pattern (dev Δ +0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018). Matrix→R5 = **dev/test asymmetry diagnostic on u00000011** (the matrix's pre-committed axis); writeup: `experiments/2026-06-17-user-lora-lamp4-u00000011-round4.md`. **R5 axis explicitly overridden 2026-06-18** in `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`: R5 is now LaMP-3 multi-user (K=100, OPPU recipe) on the grounds that OPPU literature comparison shows our LaMP-4 +0.010 lift is in their published range — the nulls are power-limited at n=25, not methodological. Asymmetry diagnostic parked at R6+ candidate set (returns to front if R5 nulls). |
 
 ---
 
@@ -41,7 +59,7 @@ Fine-tuning **SmolLM3-3B** for personalized instruction following using a two-st
 | **A1-lamp** | LaMP-{3,4,7} training splits (user-based), profile in system at train + inference | **Done, canonical adapter = `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/`** |
 | ~~**A1-full**~~ | ~~LaMP + synthetic preference-conditional data~~ | **DROPPED 2026-06-02** |
 | ~~**A2**~~ | ~~Domain-specific corpora + domain synthetic data~~ | **DROPPED 2026-06-02** |
-| **U** *(new, active)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **Rounds 1, 2-B, 3-α, and 4 done — all null on test.** Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (adapter `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`). Round 3-α (eval-only, --no-profile system slot, reused both adapters): Δ=+0.010, p=0.73 — refuted the BM25/User-LoRA redundancy hypothesis. Round 4 (record-level framing — 241 (input,gold) record pairs vs 1100 profile entries — BM25-train + BM25-eval, single-axis change vs R2-B), executed 2026-06-17: Δ=−0.018, p=0.43; R2B-C3' → C3-R4 framing-axis test Δ=−0.014, p=0.68 (records framing inert vs R2-B). Adapter `train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final/`. **R5 axis was pre-committed by R4's matrix Row 2 to dev/test asymmetry diagnostic on u00000011, then explicitly overridden 2026-06-18** in `experiments/2026-06-18-user-lora-round5-lamp3-plan.md` to **LaMP-3 multi-user (K=100 users, OPPU recipe r=8 q+v only LR=1e-5 L2=1e-2)**, on the grounds that OPPU literature comparison reframes the four LaMP-4 nulls as power-limited at n=25 rather than methodologically broken. Asymmetry diagnostic is parked at R6+ candidate set, not deprecated. |
+| **U** *(closed 2026-06-19)* | Per-user fine-tune on LaMP time-split early-period interactions, stacked on top of A1-lamp ckpt-1000 | **DONE — Q4 confirmed by Round 5 (LaMP-3 multi-user, K=100, OPPU recipe).** Mean ΔMAE −0.050 (at MDE), accuracy 0.680 → 0.730, RMSE 0.616 → 0.575, zero inference overhead. 100 per-user adapters at `train/checkpoints/user_lora_lamp3_<fp>_seed0/final/`. Writeup `experiments/2026-06-18-user-lora-lamp3-round5-multi.md`. Historical record of the prior LaMP-4 single-user rounds (kept for re-analysis): Round 1 (bare train, BM25 eval): Δ=+0.003, p=0.93 (adapter `train/checkpoints/user_lora_lamp4_u00000011_seed0/final/`). Round 2-B (BM25 train, BM25 eval): Δ=−0.004, p=0.89 (adapter `train/checkpoints/user_lora_lamp4_u00000011_bm25k4_seed0/final/`). Round 3-α (eval-only, --no-profile system slot, reused both adapters): Δ=+0.010, p=0.73 — refuted the BM25/User-LoRA redundancy hypothesis. Round 4 (record-level framing — 241 (input,gold) record pairs vs 1100 profile entries — BM25-train + BM25-eval, single-axis change vs R2-B), executed 2026-06-17: Δ=−0.018, p=0.43; R2B-C3' → C3-R4 framing-axis test Δ=−0.014, p=0.68 (records framing inert vs R2-B). Adapter `train/checkpoints/user_lora_lamp4_u00000011_records_bm25k4_seed0/final/`. R5 axis was pre-committed by R4's matrix Row 2 to a dev/test asymmetry diagnostic on u00000011, then explicitly overridden 2026-06-18 to LaMP-3 multi-user (K=100 users, OPPU recipe r=8 q+v only LR=1e-5 L2=1e-2). The asymmetry diagnostic and other R6+ candidate axes (K=200, recipe ablation) are shelved as of 2026-06-19. |
 
 ---
 
@@ -120,7 +138,7 @@ Download from the LaMP benchmark. Use subtasks: **LaMP-3, LaMP-4, LaMP-6, LaMP-7
 - LaMP-6: personalized email subject generation
 - LaMP-7: personalized tweet paraphrasing
 
-### LaMP time-based splits (for User-LoRA, ACTIVE)
+### LaMP time-based splits (for User-LoRA, Phase 2)
 The LaMP benchmark publishes both a *user-based* split (the corpus already at `data/lamp/`, used for the A1-lamp Task-LoRA — users are disjoint across train / dev / test) and a *time-based* split (same users in every split, but each user's interactions are partitioned chronologically — earlier ones in train, later in dev/test). The time-based split is the one needed for per-user User-LoRA experiments.
 
 **Downloaded 2026-06-10** to `data/lamp_time/LaMP_{3,4,7}/` via the updated `data/download_lamp.py --split-type time` (LaMP_6 dropped from the active task list per the Avocado-placeholder issue). All 18 files are non-empty and JSON-parseable; time-split test_outputs are present (not withheld as on user-split test); profile entries carry a `date` field for the chronological partition.
@@ -262,31 +280,17 @@ BFCL is split-independent (its own gold set, not LaMP's dev/test partition) — 
 
 Baseline result files: `results/LaMP_{3,4,7}_test_base_{bm25k4,noprofile}_seed0.{json,predictions.jsonl}` and `results/bfcl_ast_base_seed0.{json,predictions.jsonl}`. The corresponding `_dev_*` baseline files also still exist on disk.
 
-**Next milestone:** LaMP-3 multi-user User-LoRA replication of OPPU
-(Round 5). Plan at `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`,
-pinned 2026-06-18, pre-execution. K=100 unseen-by-A1-lamp test-pool users
-on LaMP-3 (OPPU's strongest-effect task at −0.071 MAE over RAG); OPPU's
-recipe r=8 with q+v only, LR=1e-5, AdamW + L2 weight_decay=1e-2; 3 epochs;
-between-user paired-t on per-user MAE with MDE −0.05; primary gate on test;
-stack (not merge) the User-LoRA over A1-lamp ckpt-1000.
+**Next milestone:** TBD (awaiting next direction from the project lead).
+Phase 2 / User-LoRA closed 2026-06-19 — see the top-of-file direction
+update for the rationale and the headline R5 numbers. Fresh sessions
+should ask before proposing follow-up User-LoRA experiments; the
+relevant R6+ candidate axes (K=200, recipe ablation, dev/test asymmetry
+diagnostic on u00000011) are shelved.
 
-**R5 is an explicit override of R4's matrix-pre-committed R5 axis** (dev/test
-asymmetry diagnostic on u00000011). Grounds for the override are documented
-in the plan's "Why this round exists" + "Explicit override" sections: the
-OPPU literature comparison done in the 2026-06-18 session reframes the four
-LaMP-4 nulls as power-limited at n=25 with effect sizes consistent with
-OPPU's reported range (their LaMP-4 OPPU lift over RAG is +0.003 R-1 — our
-+0.010 is within noise of theirs); LaMP-3 multi-user is where OPPU reports
-their largest detectable effect and where our infrastructure already has
-Task-LoRA + eval scaffolding in place. The asymmetry diagnostic is parked
-at R6+ candidate set (front of queue if R5 nulls), not deprecated. Multi-
-user, higher rank, and epoch-Pareto axes also stay parked at R6+ behind
-R5's outcome.
-
-The A1-lamp ckpt-1000 remains the frozen Task-LoRA foundation; the four
-LaMP-4 User-LoRA adapters from R1 / R2-B / R4 (plus R1 reused in R3-α)
-sit on top and are kept on disk for future re-analysis if the asymmetry
-diagnostic returns to front of queue.
+The A1-lamp ckpt-1000 remains the frozen Task-LoRA foundation. On-disk
+adapters preserved for any future re-analysis:
+- 100 LaMP-3 multi-user User-LoRAs from R5: `train/checkpoints/user_lora_lamp3_<fp>_seed0/final/`
+- 4 single-user LaMP-4 User-LoRAs from R1 / R2-B / R4 (R3-α reused R1's adapter)
 
 ### Round 1 — DONE 2026-06-15, null result
 
@@ -427,46 +431,31 @@ investigation. Higher rank, epoch-reduction Pareto, and multi-user
 replication remain parked at R5 rows 3 / 4 / 1 behind the asymmetry
 diagnostic.
 
-### Round 5 axis (override of R4 matrix-pre-commit) + R6+ candidate queue
+### Round 5 — DONE 2026-06-18, Q4 confirmed, phase closed 2026-06-19
 
-R4's matrix Row 2 fired and pre-committed R5 to the dev/test asymmetry
-diagnostic on u00000011. **2026-06-18 /grill_me explicitly overrode** that
-pre-commit on documented grounds (OPPU literature comparison done in that
-session — see "Next milestone" above). R5 is now:
+Multi-user LaMP-3 (K=100) replication of OPPU's per-user PEFT recipe
+(r=8 on q+v only, LR=1e-5, AdamW + L2 weight_decay=1e-2, 3 epochs).
+Stacked on top of A1-lamp ckpt-1000 via `train.py`'s `base_adapter`
+plumbing. Plan: `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`.
+Writeup: `experiments/2026-06-18-user-lora-lamp3-round5-multi.md`.
 
-- **LaMP-3 multi-user User-LoRA (K=100, OPPU recipe)** *(SELECTED via
-  override)* — see `experiments/2026-06-18-user-lora-round5-lamp3-plan.md`.
-  Tests whether OPPU's per-user PEFT methodology replicates on our
-  SmolLM3-3B infrastructure on LaMP-3 (their strongest-effect task) at the
-  user count and recipe that produces their published −0.071 MAE lift.
-  Primary gate: between-user paired-t on per-user MAE, mean Δ < 0 AND p <
-  0.05, MDE −0.05.
+R5 was an explicit override of R4's matrix-pre-committed dev/test
+asymmetry diagnostic, on the grounds that the OPPU literature comparison
+showed our LaMP-4 +0.010 lift was in OPPU's published range and the
+LaMP-4 nulls were power-limited at n=25 rather than methodologically
+broken.
 
-R6+ candidate queue (parked, not pre-committed — drafted via /grill_me
-after R5's outcome):
+**Headline (test, n=100 paired):**
+- Mean ΔMAE −0.050 (at the pre-registered MDE)
+- Accuracy 0.680 → 0.730 (+5 net flips wrong→right)
+- RMSE 0.616 → 0.575
+- C3 head-to-head wins 7 vs C2 wins 2, ties 91
+- Zero inference overhead (MPT/MGT/latency identical between C2 and C3)
+- Effect size in OPPU's published range (their LaMP-3 lift −0.071)
 
-- **Dev/test asymmetry diagnostic on u00000011** — the R4-pre-committed
-  axis, parked at R6 candidate set. Returns to front of queue if R5 nulls
-  (the LaMP-4 four-round dev/test Δ gap +0.030/+0.043/+0.047/+0.040 dev vs
-  +0.003/−0.004/+0.010/−0.018 test is still real and unexplained).
-- **K=200 multi-user expansion on LaMP-3** — if R5 near-misses.
-- **Larger base model (Llama-3-8B if accessible)** — if R5 is flat-null at
-  K=100 (evidence the base model size is the bottleneck, since OPPU used
-  Llama-2-7B).
-- **Stack-vs-merge ablation** — known difference from OPPU's pipeline
-  preserved in R5; worth isolating if R5 nulls and recipe is implicated.
-- **Scale to LaMP-1 or LaMP-2M** — if R5 passes (OPPU's largest reported
-  lifts: +0.106 acc on LaMP-1, +0.050 acc on LaMP-2M); requires new task
-  pipeline.
-- **Original R1-parked axes** (multi-user on LaMP-4, higher rank, fewer
-  epochs) — empirically downweighted by the four-round LaMP-4 null but
-  still available.
-
-The override discipline: the override is documented in three places (R5
-plan, R5 memory, R4 memory entry in MEMORY.md). The override is not silent
-and cannot be re-litigated without a new explicit /grill_me of the override
-itself.
-
+**Phase closed 2026-06-19.** Project decision: R5 results confirm Q4.
+No further User-LoRA rounds planned. R6+ candidate axes (K=200, recipe
+ablation, dev/test asymmetry diagnostic on u00000011) are shelved.
 A1-full and A2 ablations from the original plan remain dropped.
 
 ---
