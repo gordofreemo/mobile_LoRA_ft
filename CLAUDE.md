@@ -1,5 +1,159 @@
 # Research Project — On-Device LLM Personalization via PEFT
 
+## Project direction update (2026-06-21) — Phase 3 OPEN: on-device deployment
+
+**New active phase. The "no on-device/mobile code" hard constraint is lifted
+for this phase** (it remains the historical framing for Phases 1–2). Goal:
+actually deploy SmolLM3 on the testbed iPhone and measure real training +
+inference metrics. First milestone — **base SmolLM3-3B running inference
+on-device — is DONE (2026-06-21).** What follows is the runbook so a future
+session can rebuild, deploy, and read metrics off the phone without
+re-deriving the environment.
+
+### Runtime decision (verified against official sources only)
+
+- **Runtime = MLX** (`mlx-swift` on device, `mlx-lm` on the Mac).
+- Apple's "standard" on-device LLM framework is **Foundation Models**; the
+  thing announced as "Common AI" / **Core AI** is a *provider inside it*
+  (WWDC26 session 339 lists providers: System Language Model, Private Cloud
+  Compute, Core AI = ship-your-own-local-model, MLX = HF mlx-community models,
+  + Anthropic/Google packages).
+- Apple's **adapter-training toolkit is Apple-model-only** (rank-32 LoRA bound
+  to a specific OS's system model) — it **cannot** adapt SmolLM3, so it is not
+  a path for our Task-LoRA/User-LoRA stack.
+- **SmolLM3 is first-class in MLX**: `mlx_lm/models/smollm3.py` (Python) and
+  `Libraries/MLXLLM/Models/SmolLM3.swift` (Swift, in `ml-explore/mlx-swift-lm`)
+  both exist (confirmed by reading source, not blogs).
+- MLX is also the only credible **on-device training** route (the later
+  training-metrics goal): `mlx_lm.lora`, the `LoRATrainingExample` app, and the
+  Apple paper **arXiv:2510.03425** (Song & Tang, memory-efficient backprop for
+  on-device fine-tuning) all use MLX. llama.cpp/ExecuTorch rejected.
+- **Model delivery = download from HF on-device** (project-lead decision). The
+  app pulls **`mlx-community/SmolLM3-3B-4bit`** (public MLX 4-bit conversion of
+  `HuggingFaceTB/SmolLM3-3B`; identical to a local conversion for the *base*
+  model) into its sandbox on first generation. We publish our own HF repo only
+  once we fuse the Task-LoRA.
+
+### Host / device / signing facts
+
+- Mac: Apple **M3, 16 GB**. **Full Xcode 26.5** at `/Applications/Xcode.app`,
+  but active dev dir is CommandLineTools — **prefix every Xcode/devicectl
+  command** with `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+- Signing: **Apple Development: andrew.geyko@icloud.com**, team **`JGW9U9Y36Y`**
+  (free personal team; bundle IDs auto-disambiguated via
+  `DISAMBIGUATOR=${DEVELOPMENT_TEAM}` in `Configuration/Build.xcconfig`).
+- Testbed: **iPhone 17 Pro** (`iPhone18,1`), iOS **26.5.1**, Developer Mode on.
+  UDID **`00008150-000674C60A3B401C`**. List: `xcrun devicectl list devices`.
+
+### Local MLX toolchain (Mac-side convert / sanity-check)
+
+- venv **`.venv-mlx/`** (Python **3.11** — 3.14 too new for MLX wheels),
+  `mlx-lm` (mlx 0.31.2). Gitignored.
+- Convert + quantize (done; output gitignored under `data/models/*`):
+  `.venv-mlx/bin/python -m mlx_lm convert --hf-path HuggingFaceTB/SmolLM3-3B --mlx-path data/models/SmolLM3-3B-mlx-4bit -q --q-bits 4`
+- Sanity generate: `.venv-mlx/bin/python -m mlx_lm generate --model data/models/SmolLM3-3B-mlx-4bit --prompt "..." --max-tokens 60`
+  (SmolLM3 has **thinking mode on by default** — emits `<think>…</think>`).
+
+### iOS app: location, edits, build, deploy
+
+- Repo cloned at **`ios/mlx-swift-examples/`** (gitignored; from
+  `ml-explore/mlx-swift-examples`). LLM libs come from the SPM package
+  `ml-explore/mlx-swift-lm`, not vendored.
+- **Edited file:** `ios/mlx-swift-examples/Applications/LLMEval/ViewModels/LLMEvaluator.swift`
+  - `modelConfiguration = ModelConfiguration(id: "mlx-community/SmolLM3-3B-4bit", …)`.
+  - Added `appendBenchRecord(...)` → appends one flat-JSON line per generation
+    to `Documents/bench_metrics.jsonl` (model, prompt_tokens, gen_tokens,
+    ttft_ms, gen_tps, prompt_tps, gen_time_s, peak_mem_bytes, max_tokens,
+    thinking, truncated, device_model, os_version, timestamp_utc) + a
+    `hardwareModelIdentifier()` helper.
+- **Build (device, signed)** — `-skipMacroValidation` is **required** (else
+  fails on `MLXHuggingFaceMacros … must be enabled`):
+  ```
+  export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+  cd ios/mlx-swift-examples
+  xcodebuild -project mlx-swift-examples.xcodeproj -scheme LLMEval \
+    -configuration Debug -destination 'id=00008150-000674C60A3B401C' \
+    -derivedDataPath ./build -allowProvisioningUpdates -skipMacroValidation \
+    DEVELOPMENT_TEAM=JGW9U9Y36Y build
+  ```
+  Output app: `build/Build/Products/Debug-iphoneos/LLMEval.app`,
+  bundle id **`mlx.LLMEvalJGW9U9Y36Y`**.
+- **Install + launch:**
+  ```
+  xcrun devicectl device install app --device 00008150-000674C60A3B401C build/Build/Products/Debug-iphoneos/LLMEval.app
+  xcrun devicectl device process launch --device 00008150-000674C60A3B401C mlx.LLMEvalJGW9U9Y36Y
+  ```
+  First generation downloads ~1.73 GB from HF (Wi-Fi, one-time; the app data
+  container — and the model — **persists across reinstalls** of the same
+  bundle id). The app UI requires a **human tap** to start generation.
+
+### Reading metrics off the device (the "hook")
+
+No live device console works here (macOS `log stream` has no `--device`,
+`log collect --device` needs **root**, `idevicesyslog` not installed). Working
+path = pull the JSONL from the app container (no sudo); accumulates one line
+per run:
+```
+xcrun devicectl device copy from --device 00008150-000674C60A3B401C \
+  --domain-type appDataContainer --domain-identifier mlx.LLMEvalJGW9U9Y36Y \
+  --source Documents/bench_metrics.jsonl --destination /tmp/devpull/bench_metrics.jsonl
+```
+
+### ACTIVE NEXT TASK — base-inference characterization benchmark
+
+**Design is LOCKED and pre-registered** (2026-06-21, via /grill_me):
+`experiments/2026-06-21-ondevice-base-inference-plan.md`. **Implementation not
+yet started — this is where a fresh session should pick up.** The plan turns the
+current single on-device record (n=1: gen 37.5 tok/s, prompt 438 tok/s, TTFT
+144 ms, peak 1.82 GB) into a reproducible characterization with error bars +
+scaling curves, built as a reusable rig (the same rig later measures base vs.
+Task-LoRA and on-device training).
+
+Locked design in one breath: an **in-app benchmark loop in `LLMEvaluator.swift`,
+auto-started by a `--benchmark` launch arg** so the whole run is **one
+Mac-driven `devicectl process launch --console` command, zero per-gen taps**
+(verified devicectl passes launch args; one Face-ID unlock needed). **Star grid**
+(not cross-product): prefill curve prompt∈{64,256,512,1024,2048}@gen64, decode
+curve gen∈{128,512,1024,2048}@prompt256, 5 measured + 1 warmup per cell, forced
+fixed length (EOS suppressed) + ~5 natural-EOS runs on a real LaMP-3 prompt.
+**Thinking OFF throughout** (matches training/all prior eval; keeps base-vs-LoRA
+apples-to-apples). Thermal: per-run `thermal_state`, nominal-gated inter-cell
+cooldown, + one dedicated ~5-min sustained stress run with per-segment tps.
+Device: plugged, airplane ON, LPM OFF, brightness low, battery>50%, all logged.
+Cold-start a first-class metric (`cold`/`model_load_ms`, ~3 separate cold-only
+launches). Flat-JSON schema extended (thermal/battery/cold/warmup/forced/cell/
+session-id/app_build…; stress = one flat record per segment). Aggregator =
+tracked `eval/bench_aggregate.py` → per-cell mean±std(n), descriptive only.
+Outputs → `results/ondevice/…jsonl` + `results/ondevice_base_smollm3_4bit_…json`
++ `experiments/2026-06-21-ondevice-base-inference.md`.
+
+**Implementation order:** (1) Swift harness first (loop + launch-arg auto-start +
+idle-timer disable + schema + `app_build`; rebuild with `-skipMacroValidation`),
+(2) `eval/bench_aggregate.py`, (3) run/pull/aggregate/write results log, (4)
+check in the harness `.patch` (closes the version-control loose end below).
+**Two impl-time verifications vs `mlx-swift-lm` source:** how to suppress EOS for
+forced length, and where the lazy container load exposes a point to time
+`model_load_ms`. Full rationale for every choice is in the plan file.
+
+### Loose ends / next steps (Phase 3)
+
+- **Version control (will be closed by the active task above):**
+  `ios/mlx-swift-examples/` and `.venv-mlx/` are gitignored, so the Swift edits
+  are **untracked** (live on this Mac only, lost on a fresh clone). TODO: check
+  in the patched `LLMEvaluator.swift` (or a `.patch`) under a tracked path, or
+  build our own checked-in app target. The benchmark plan folds this in as step
+  4 (track the harness `.patch` + bake `app_build` provenance).
+- **Task-LoRA on-device:** fuse `a1_lamp_1ep_seed0/checkpoint-1000` into
+  SmolLM3, convert to MLX, publish an HF repo, swap the `modelConfiguration`
+  id; measure base vs. Task-LoRA. (Adapter must be pulled from the cluster
+  first — it is **not** on this Mac.) The benchmark rig is built to be reused
+  verbatim for this comparison.
+- **Characterize:** sweep prompt/generation length for a tok/s-vs-context
+  curve; watch thermal throttling on sustained runs. **← this is exactly the
+  active next task, now fully designed in the plan file.**
+- **On-device training metrics:** via `LoRATrainingExample` / `mlx_lm.lora`
+  (the reason MLX was chosen over llama.cpp).
+
 ## Project direction update (2026-06-19) — Phase 2 complete
 
 **Phase 2 / User-LoRA is COMPLETE. Q4 is ANSWERED YES.** Round 5 (LaMP-3 multi-user, K=100, OPPU recipe) confirms that an additional per-user LoRA on time-ordered user history meaningfully personalizes beyond the Task-LoRA + BM25 baseline. Headline result: mean ΔMAE −0.050 (at the pre-registered MDE), accuracy 0.680 → 0.730 (+5 net flips), C3 head-to-head wins 7 vs C2 wins 2, ties 91, RMSE 0.616 → 0.575, all with zero overhead at inference (MPT, MGT, latency identical between C2 and C3). Effect size lies in OPPU's published range (−0.071 on LaMP-3). Full numbers + provenance in `experiments/2026-06-18-user-lora-lamp3-round5-multi.md`; the gate output JSON at `results/paired_compare_c2_a1lamp_bm25_vs_c3_a1lamp_userlora_bm25_round5_LaMP_3_test.json`.
