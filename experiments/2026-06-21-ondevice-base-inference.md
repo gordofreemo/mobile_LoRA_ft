@@ -2,10 +2,11 @@
 
 **Date:** 2026-06-21 · **Phase 3** · descriptive characterization (no hypothesis test)
 **Design (pre-registered, locked):** `experiments/2026-06-21-ondevice-base-inference-plan.md`
-**Harness:** `app_build` `smollm3-ondevice-bench-h1` (prefill/decode/cold) +
-`smollm3-ondevice-bench-h2` (realistic/stress/cold) — identical measurement code,
-h2 only adds the `--benchmark-tail` launch mode. Tracked at
-`ios/patches/ondevice-benchmark-harness.patch`.
+**Harness:** `app_build` `smollm3-ondevice-bench-h1` (prefill/decode + the in-grid
+cold record) and `smollm3-ondevice-bench-h2` (realistic/stress + the 3 dedicated
+cold-only launches) — identical measurement code; h2 only adds the
+`--benchmark-tail` launch mode. Source vendored in-repo via git subtree at
+`ios/mlx-swift-examples/Applications/LLMEval/Benchmark/` (see `ios/README.md`).
 
 ## Hypothesis
 
@@ -22,9 +23,13 @@ on-device and later on-device-training measurements.
   Low Power Mode OFF + brightness low + battery 100%, unlocked. `battery_level /
   charging / low_power_mode / thermal_state` logged per run.
 - **Regime:** thinking OFF throughout (decision 9). Greedy (temperature 0).
+- **Seed:** N/A — argmax decoding is deterministic and tok/s is sampler-independent.
 - **Forced fixed length:** EOS suppressed by driving `TokenIterator` directly and
   ignoring the stop-token set until `maxTokens` (the EOS check lives in MLXLMCommon's
   loop wrapper, not in `TokenIterator.next()`).
+- **Grid (star, not cross-product):** prefill prompt∈{64,256,512,1024,2048}@gen 64;
+  decode gen∈{128,512,1024,2048}@prompt 256; 5 measured + 1 discarded warmup per cell;
+  realistic tier n=5 natural-EOS; stress = 5 min forced decode, per-256-token segments.
 
 Verbatim launch commands (Mac-driven, one command each; one Face-ID unlock):
 
@@ -64,10 +69,14 @@ Aggregate: `results/ondevice_base_smollm3_4bit_2026-06-21.json`.
 
 5 measured + 1 discarded warmup per cell. Primary numbers = nominal-thermal runs.
 
-### Cold start (n=5 separate launches)
+### Cold start (n=5 launches)
 - **Model load: 1362 ± 114 ms** (1.73 GB weights, disk → unified memory).
 - **Cold TTFT: 380 ± 6 ms** (vs warm ~150–180 ms — the delta is first-token Metal
   shader compile). → **app-launch-to-first-answer ≈ 1.7 s.**
+- The 5 cold samples = 1 harness-validation launch + the in-grid `--benchmark` cold
+  record + 3 dedicated `--benchmark-cold` launches. The validation sample preceded
+  airplane mode; radio state does not materially affect weight-load / shader-compile
+  timing, so it's pooled.
 
 ### Prefill curve (clean — all cells nominal; gen fixed 64)
 | prompt_tok | gen tok/s | prefill tok/s | TTFT (ms) | peak_mem (MB)* |
@@ -83,9 +92,14 @@ grows 64 → 2048. Prefill throughput 624–743 tok/s. TTFT scales ~linearly wit
 length (176 ms → 3.4 s); at the realistic LaMP-3 prompt size (~210 tok) it's well
 under 400 ms.
 
-### Realistic tier (real LaMP-3 BM25-k4 prompt, natural EOS, n=5)
+### Realistic tier (LaMP-3-shaped prompt, natural EOS, n=5)
 - **35.0 ± 1.2 tok/s**, 1-token answers (a rating digit), TTFT 363 ± 1 ms,
-  peak ~1.96 GB. This is the true deployment number for LaMP-3 rating prediction.
+  peak ~1.96 GB. This is the deployment-shape number for LaMP-3 rating prediction.
+- **Prompt:** a *representative* LaMP-3 prompt (~210 tok) embedded in the harness
+  (`realisticInput()`) — the BM25-k4 system layout + per-entry format from
+  `eval/eval_lamp.py` (4 review→rating examples) + a rating question. Illustrative
+  content, **not a verbatim test-set instance** (content is ~irrelevant to per-token
+  cost; the point is the role/length shape).
 
 ### Decode-length curve (prompt fixed 256) — **thermally confounded, see caveat**
 | gen_tok | gen tok/s | n nominal | thermal |
@@ -141,3 +155,30 @@ prefill table + realistic tier + cold start** (clean, reproducible); the stress
 decay curve is the sustained-load stress test. The Task-LoRA, being rank-4 adapters
 fused into the same 4-bit weights, is expected to land within noise of these base
 numbers — which this baseline is now precise enough to test.
+
+## Files & provenance (on disk)
+
+All committed to `main` in this repo (paths relative to repo root):
+
+| What | Path |
+|---|---|
+| **Raw telemetry** (one flat-JSON line per generation) | `results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl` |
+| **Aggregate** (per-cell mean±std/min/max, cold summary, stress decay) | `results/ondevice_base_smollm3_4bit_2026-06-21.json` |
+| Aggregator (stdlib only) | `eval/bench_aggregate.py` |
+| Harness source (ours) | `ios/mlx-swift-examples/Applications/LLMEval/Benchmark/{BenchmarkSupport,LLMEvaluator+Benchmark}.swift` + edits to `LLMEvaluator.swift`, `ContentView.swift`, `project.pbxproj` |
+| iOS vendoring / build-run docs | `ios/README.md` (git subtree, upstream base `378f244`) |
+| Pre-registered design | `experiments/2026-06-21-ondevice-base-inference-plan.md` |
+
+**Raw JSONL = 89 records** (88 this session + 1 legacy n=1 line with no `cell`, which
+the aggregator ignores). Slice it by `cell` ∈ {cold, prefill, decode, realistic,
+stress}, `app_build` (h1/h2), `bench_session_id` (6 sessions), `warmup`, `forced`.
+Stress = one record per segment (`cell="stress"`, `segment_idx`, `cumulative_tokens`,
+`gen_tps` = that segment's rate). Re-aggregate any time:
+`python eval/bench_aggregate.py results/ondevice/bench_metrics_*.jsonl --out <path>`.
+
+**Commit anchor:** raw results + aggregator + this writeup are in `d40784f`; the
+harness in `029b138`; vendored upstream in `b58dfd5`/`aab3d01` (all on `main`).
+Caveat: the bench records carry device/run provenance (`device_model`, `os_version`,
+`app_build`, `bench_session_id`, thermal/battery state, `timestamp_utc`) but — unlike
+the cluster eval scripts — do **not** embed a `git_commit` field; the commit anchor is
+recorded here instead (and baking `git_commit` into the record is a noted h3 item).
