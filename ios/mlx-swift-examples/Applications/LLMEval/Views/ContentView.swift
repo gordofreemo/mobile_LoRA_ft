@@ -80,6 +80,13 @@ struct ContentView: View {
 
         }
         .task {
+            // Launch-arg benchmark mode (decision 2): run the characterization
+            // sweep instead of the UI, then exit. The harness times its own cold
+            // model load, so we must NOT pre-load here.
+            if let mode = LLMEvaluator.benchmarkLaunchMode {
+                await llm.runBenchmark(mode: mode)
+                return
+            }
             do {
                 // pre-load the weights on launch to speed up the first generation
                 _ = try await llm.load()

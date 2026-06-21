@@ -299,6 +299,8 @@
 			membershipExceptions = (
 				LLMEval/AppIcon.icon,
 				LLMEval/AssetCatalog.xcassets,
+				LLMEval/Benchmark/BenchmarkSupport.swift,
+				"LLMEval/Benchmark/LLMEvaluator+Benchmark.swift",
 				LLMEval/LLMEvalApp.swift,
 				LLMEval/Models/CarKeysStory.md,
 				LLMEval/Models/LongPrompt.md,

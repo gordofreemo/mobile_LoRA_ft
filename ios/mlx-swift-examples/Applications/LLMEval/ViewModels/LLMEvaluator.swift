@@ -7,8 +7,13 @@ import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
 import Metal
+import OSLog
 import SwiftUI
 import Tokenizers
+
+/// Structured metrics log for on-device benchmarking. Stream off the device with:
+///   log stream --device --predicate 'subsystem == "mobile.lora.bench"'
+private let benchLog = Logger(subsystem: "mobile.lora.bench", category: "inference")
 
 @Observable
 @MainActor
@@ -46,8 +51,14 @@ class LLMEvaluator {
     private var generationTimer: Timer?
     private var firstTokenTime: TimeInterval = 0
 
-    /// This controls which model loads.
-    var modelConfiguration = LLMRegistry.qwen3_8b_4bit
+    /// This controls which model loads. Our SmolLM3-3B foundation model,
+    /// downloaded on-device from the Hugging Face Hub (MLX 4-bit conversion of
+    /// HuggingFaceTB/SmolLM3-3B). Swap this id for our own fused Task-LoRA repo
+    /// once that is published.
+    var modelConfiguration = ModelConfiguration(
+        id: "mlx-community/SmolLM3-3B-4bit",
+        defaultPrompt: "Why is the sky blue?"
+    )
 
     /// Parameters controlling the generation output (max tokens and temperature).
     var generateParameters: GenerateParameters {
@@ -333,6 +344,19 @@ class LLMEvaluator {
                     if self.totalTokens >= parameters.maxTokens ?? Int.max {
                         self.wasTruncated = true
                     }
+
+                    // Append a single structured metrics record per generation to a
+                    // JSONL file in the app container. Pull off-device with:
+                    //   xcrun devicectl device copy from --domain-type appDataContainer \
+                    //     --domain-identifier mlx.LLMEvalJGW9U9Y36Y \
+                    //     --source Documents/bench_metrics.jsonl --destination .
+                    self.appendBenchRecord(
+                        promptTokens: promptTokenCount,
+                        genTokens: self.totalTokens,
+                        ttftMs: self.timeToFirstToken,
+                        genTps: generateTps,
+                        genTimeS: generateTime,
+                        peakMemBytes: Memory.snapshot().peakMemory)
                 }
 
                 // Handle tool call if one was made
@@ -378,6 +402,74 @@ class LLMEvaluator {
             prompt = ""
             running = false
         }
+    }
+
+    /// Hardware model identifier, e.g. "iPhone18,1".
+    private static func hardwareModelIdentifier() -> String {
+        var sysinfo = utsname()
+        uname(&sysinfo)
+        let mirror = Mirror(reflecting: sysinfo.machine)
+        let id = mirror.children.compactMap { ($0.value as? Int8) }
+            .filter { $0 != 0 }.map { String(UnicodeScalar(UInt8($0))) }.joined()
+        return id.isEmpty ? "unknown" : id
+    }
+
+    /// Append one flat JSON metrics record (one line) to Documents/bench_metrics.jsonl.
+    /// Mirrors the project's results-JSONL convention: every field is a scalar.
+    private func appendBenchRecord(
+        promptTokens: Int, genTokens: Int, ttftMs: Double, genTps: Double,
+        genTimeS: Double, peakMemBytes: Int
+    ) {
+        let record: [String: Any] = [
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "model": modelName,
+            "prompt_tokens": promptTokens,
+            "gen_tokens": genTokens,
+            "ttft_ms": ttftMs,
+            "gen_tps": genTps,
+            "gen_time_s": genTimeS,
+            "prompt_tps": genTimeS > 0 ? Double(promptTokens) / max(ttftMs / 1000.0, 1e-9) : 0,
+            "peak_mem_bytes": peakMemBytes,
+            "max_tokens": maxTokens,
+            "thinking": enableThinking,
+            "truncated": wasTruncated,
+            "device_model": Self.hardwareModelIdentifier(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let line = String(data: data, encoding: .utf8)
+        else {
+            benchLog.error("failed to serialize bench record")
+            return
+        }
+        appendBenchLine(line)
+    }
+
+    /// Append one JSON line (newline added) to Documents/bench_metrics.jsonl.
+    /// Shared by the UI generate() path and the launch-arg benchmark harness.
+    func appendBenchLine(_ json: String) {
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent("bench_metrics.jsonl")
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            benchLog.error(
+                "failed to write bench record: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Structured log helper for the benchmark harness (visible to the extension).
+    func benchLogLine(_ message: String) {
+        benchLog.log("\(message, privacy: .public)")
     }
 
     func cancelGeneration() {
