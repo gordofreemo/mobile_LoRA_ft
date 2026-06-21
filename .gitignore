@@ -14,4 +14,8 @@ train/config/user_lora_lamp3_oppu_u*.json
 
 # On-device phase (2026-06) — large external/build artifacts
 .venv-mlx/
-ios/mlx-swift-examples/
+# mlx-swift-examples is vendored via git subtree (see ios/README.md); track the
+# source, ignore only build output + Xcode per-user state.
+ios/mlx-swift-examples/build/
+ios/mlx-swift-examples/**/xcuserdata/
+ios/mlx-swift-examples/**/*.xcuserstate

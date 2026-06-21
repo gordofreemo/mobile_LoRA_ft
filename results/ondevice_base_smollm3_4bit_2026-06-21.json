@@ -1,0 +1,640 @@
+{
+  "generated_utc": "2026-06-21T15:35:45.027362+00:00",
+  "source_files": [
+    "results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl"
+  ],
+  "n_records": 89,
+  "app_builds": [
+    "smollm3-ondevice-bench-h1",
+    "smollm3-ondevice-bench-h2"
+  ],
+  "bench_session_ids": [
+    "14B57E5B-78D8-4673-BA99-067E515CA5ED",
+    "1630E18E-AD48-4D29-B86A-F134B72168CE",
+    "3A935611-E748-4EDE-865F-80D05A1921A0",
+    "DD38A1B0-1DBE-44E6-BE66-88B8BE1743F0",
+    "EF002EAD-5725-48C8-B3B8-5362EFBAF360",
+    "FD42E1D4-6473-43E2-9522-248D6E0562E8"
+  ],
+  "device_model": "iPhone18,1",
+  "os_version": "Version 26.5.1 (Build 23F81)",
+  "model": "SmolLM3-3B-4bit",
+  "grid_cells": [
+    {
+      "cell": "prefill",
+      "target_prompt_tokens": 64,
+      "target_gen_tokens": 64,
+      "n_total": 5,
+      "n_nominal": 5,
+      "n_non_nominal": 0,
+      "thermal_states": {
+        "nominal": 5
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 120.0,
+      "measured_gen_tokens_mean": 64.0,
+      "gen_tps": {
+        "mean": 38.762085877341434,
+        "std": 0.09925543258546726,
+        "min": 38.59357590974782,
+        "max": 38.84279896593984,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 683.850770950555,
+        "std": 15.506454757930658,
+        "min": 667.9430734195761,
+        "max": 702.8558501442532,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 175.5486249923706,
+        "std": 3.955192973946156,
+        "min": 170.7320213317871,
+        "max": 179.6560287475586,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2060297336.0,
+        "std": 0.0,
+        "min": 2060297336,
+        "max": 2060297336,
+        "n": 5
+      }
+    },
+    {
+      "cell": "prefill",
+      "target_prompt_tokens": 256,
+      "target_gen_tokens": 64,
+      "n_total": 5,
+      "n_nominal": 5,
+      "n_non_nominal": 0,
+      "thermal_states": {
+        "nominal": 5
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 312.0,
+      "measured_gen_tokens_mean": 64.0,
+      "gen_tps": {
+        "mean": 37.476317614376114,
+        "std": 0.40210418522335833,
+        "min": 36.817962378493796,
+        "max": 37.90481232218139,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 730.9051019602646,
+        "std": 27.147310206025463,
+        "min": 693.3657710804338,
+        "max": 762.9201667481402,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 427.3443937301636,
+        "std": 16.039326670999447,
+        "min": 408.9549779891968,
+        "max": 449.97894763946533,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2107139364.0,
+        "std": 0.0,
+        "min": 2107139364,
+        "max": 2107139364,
+        "n": 5
+      }
+    },
+    {
+      "cell": "prefill",
+      "target_prompt_tokens": 512,
+      "target_gen_tokens": 64,
+      "n_total": 5,
+      "n_nominal": 5,
+      "n_non_nominal": 0,
+      "thermal_states": {
+        "nominal": 5
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 568.0,
+      "measured_gen_tokens_mean": 64.0,
+      "gen_tps": {
+        "mean": 35.843349433708156,
+        "std": 1.0731193287872516,
+        "min": 34.52114710039768,
+        "max": 36.83506157840033,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 742.6379932920545,
+        "std": 19.950542740453738,
+        "min": 725.8220640200761,
+        "max": 773.2857591947114,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 765.2751684188843,
+        "std": 20.20347550654541,
+        "min": 734.5279455184937,
+        "max": 782.5609445571899,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2208116776.0,
+        "std": 0.0,
+        "min": 2208116776,
+        "max": 2208116776,
+        "n": 5
+      }
+    },
+    {
+      "cell": "prefill",
+      "target_prompt_tokens": 1024,
+      "target_gen_tokens": 64,
+      "n_total": 5,
+      "n_nominal": 5,
+      "n_non_nominal": 0,
+      "thermal_states": {
+        "nominal": 5
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 1080.0,
+      "measured_gen_tokens_mean": 64.0,
+      "gen_tps": {
+        "mean": 34.466715230871685,
+        "std": 0.2713180141414803,
+        "min": 34.08679314405006,
+        "max": 34.72808275007499,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 642.004679746842,
+        "std": 27.549429093327763,
+        "min": 618.4968453215257,
+        "max": 687.3525729204214,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 1684.6237897872925,
+        "std": 69.73737530393014,
+        "min": 1571.2460279464722,
+        "max": 1746.1689710617065,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2208117028.0,
+        "std": 0.0,
+        "min": 2208117028,
+        "max": 2208117028,
+        "n": 5
+      }
+    },
+    {
+      "cell": "prefill",
+      "target_prompt_tokens": 2048,
+      "target_gen_tokens": 64,
+      "n_total": 5,
+      "n_nominal": 5,
+      "n_non_nominal": 0,
+      "thermal_states": {
+        "nominal": 5
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 2104.0,
+      "measured_gen_tokens_mean": 64.0,
+      "gen_tps": {
+        "mean": 32.00939627604809,
+        "std": 0.7784628596416466,
+        "min": 31.135143762093502,
+        "max": 33.07165406099596,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 624.4385115245761,
+        "std": 18.955939735299342,
+        "min": 603.4345419166015,
+        "max": 650.44209914323,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 3371.893358230591,
+        "std": 101.5782496995402,
+        "min": 3234.7229719161987,
+        "max": 3486.707925796509,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2302492964.0,
+        "std": 0.0,
+        "min": 2302492964,
+        "max": 2302492964,
+        "n": 5
+      }
+    },
+    {
+      "cell": "decode",
+      "target_prompt_tokens": 256,
+      "target_gen_tokens": 128,
+      "n_total": 5,
+      "n_nominal": 2,
+      "n_non_nominal": 3,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 3
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 312.0,
+      "measured_gen_tokens_mean": 128.0,
+      "gen_tps": {
+        "mean": 28.508450435702677,
+        "std": 0.10457433204183834,
+        "min": 28.43450521637784,
+        "max": 28.582395655027515,
+        "n": 2
+      },
+      "prompt_tps": {
+        "mean": 389.05353894273264,
+        "std": 6.121559807449701,
+        "min": 384.7249424914459,
+        "max": 393.3821353940193,
+        "n": 2
+      },
+      "ttft_ms": {
+        "mean": 802.045464515686,
+        "std": 12.619777968525934,
+        "min": 793.1219339370728,
+        "max": 810.9689950942993,
+        "n": 2
+      },
+      "peak_mem_bytes": {
+        "mean": 2302492964.0,
+        "std": 0.0,
+        "min": 2302492964,
+        "max": 2302492964,
+        "n": 2
+      }
+    },
+    {
+      "cell": "decode",
+      "target_prompt_tokens": 256,
+      "target_gen_tokens": 512,
+      "n_total": 5,
+      "n_nominal": 2,
+      "n_non_nominal": 3,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 3
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 312.0,
+      "measured_gen_tokens_mean": 512.0,
+      "gen_tps": {
+        "mean": 29.92713734305812,
+        "std": 8.077359089900671,
+        "min": 24.215581956510558,
+        "max": 35.63869272960569,
+        "n": 2
+      },
+      "prompt_tps": {
+        "mean": 608.3038991085673,
+        "std": 159.09463174077692,
+        "min": 495.8070061542874,
+        "max": 720.8007920628472,
+        "n": 2
+      },
+      "ttft_ms": {
+        "mean": 531.064510345459,
+        "std": 138.89359056849892,
+        "min": 432.8519105911255,
+        "max": 629.2771100997925,
+        "n": 2
+      },
+      "peak_mem_bytes": {
+        "mean": 2302492964.0,
+        "std": 0.0,
+        "min": 2302492964,
+        "max": 2302492964,
+        "n": 2
+      }
+    },
+    {
+      "cell": "decode",
+      "target_prompt_tokens": 256,
+      "target_gen_tokens": 1024,
+      "n_total": 5,
+      "n_nominal": 0,
+      "n_non_nominal": 5,
+      "thermal_states": {
+        "fair": 2,
+        "serious": 3
+      },
+      "primary_is_nominal": false,
+      "measured_prompt_tokens_mean": 312.0,
+      "measured_gen_tokens_mean": 1024.0,
+      "gen_tps": {
+        "mean": 20.55858686410999,
+        "std": 1.8624552874758233,
+        "min": 19.587802617550537,
+        "max": 23.885409777748517,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 383.1601859262252,
+        "std": 113.85741154611368,
+        "min": 330.6380748639862,
+        "max": 586.8202052579267,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 857.6006174087524,
+        "std": 182.2355223963259,
+        "min": 531.6790342330933,
+        "max": 943.6299800872803,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2302492964.0,
+        "std": 0.0,
+        "min": 2302492964,
+        "max": 2302492964,
+        "n": 5
+      }
+    },
+    {
+      "cell": "decode",
+      "target_prompt_tokens": 256,
+      "target_gen_tokens": 2048,
+      "n_total": 4,
+      "n_nominal": 0,
+      "n_non_nominal": 4,
+      "thermal_states": {
+        "serious": 4
+      },
+      "primary_is_nominal": false,
+      "measured_prompt_tokens_mean": 312.0,
+      "measured_gen_tokens_mean": 2048.0,
+      "gen_tps": {
+        "mean": 15.40970170518743,
+        "std": 0.37166376534398987,
+        "min": 14.865335225790867,
+        "max": 15.660782919201317,
+        "n": 4
+      },
+      "prompt_tps": {
+        "mean": 270.94400310373055,
+        "std": 4.79334642707065,
+        "min": 265.9592796340451,
+        "max": 277.4564031498788,
+        "n": 4
+      },
+      "ttft_ms": {
+        "mean": 1151.7977118492126,
+        "std": 20.21951769244061,
+        "min": 1124.5009899139404,
+        "max": 1173.111915588379,
+        "n": 4
+      },
+      "peak_mem_bytes": {
+        "mean": 2302492964.0,
+        "std": 0.0,
+        "min": 2302492964,
+        "max": 2302492964,
+        "n": 4
+      }
+    },
+    {
+      "cell": "realistic",
+      "target_prompt_tokens": null,
+      "target_gen_tokens": null,
+      "n_total": 5,
+      "n_nominal": 5,
+      "n_non_nominal": 0,
+      "thermal_states": {
+        "nominal": 5
+      },
+      "primary_is_nominal": true,
+      "measured_prompt_tokens_mean": 270.0,
+      "measured_gen_tokens_mean": 1.0,
+      "gen_tps": {
+        "mean": 34.96661424518779,
+        "std": 1.2248832485477148,
+        "min": 34.21966223382557,
+        "max": 37.14567595093654,
+        "n": 5
+      },
+      "prompt_tps": {
+        "mean": 744.3802109821196,
+        "std": 2.527457732168136,
+        "min": 741.837762345871,
+        "max": 747.8334094949297,
+        "n": 5
+      },
+      "ttft_ms": {
+        "mean": 362.72120475769043,
+        "std": 1.229955988505249,
+        "min": 361.04297637939453,
+        "max": 363.96098136901855,
+        "n": 5
+      },
+      "peak_mem_bytes": {
+        "mean": 2060297336.0,
+        "std": 0.0,
+        "min": 2060297336,
+        "max": 2060297336,
+        "n": 5
+      }
+    }
+  ],
+  "cold": {
+    "n": 5,
+    "model_load_ms": {
+      "mean": 1361.8556022644043,
+      "std": 113.6966633039115,
+      "min": 1210.14404296875,
+      "max": 1458.0399990081787,
+      "n": 5
+    },
+    "ttft_ms": {
+      "mean": 380.30900955200195,
+      "std": 6.354644196103905,
+      "min": 370.2040910720825,
+      "max": 387.1229887008667,
+      "n": 5
+    },
+    "gen_tps": {
+      "mean": 38.58578539288972,
+      "std": 0.2661460351112173,
+      "min": 38.337768253951026,
+      "max": 38.98141765722274,
+      "n": 5
+    },
+    "peak_mem_bytes": {
+      "mean": 2060297336.0,
+      "std": 0.0,
+      "min": 2060297336,
+      "max": 2060297336,
+      "n": 5
+    },
+    "thermal_states": {
+      "nominal": 2,
+      "fair": 3
+    }
+  },
+  "stress": {
+    "n_segments": 24,
+    "total_tokens": 6144,
+    "first_segment_tps": 37.83004518007556,
+    "last_segment_tps": 17.89404320972301,
+    "min_segment_tps": 17.89404320972301,
+    "max_segment_tps": 37.83004518007556,
+    "throttle_drop_pct": 52.69885847467214,
+    "thermal_states": {
+      "nominal": 24
+    },
+    "decay": [
+      {
+        "segment_idx": 1,
+        "cumulative_tokens": 256,
+        "gen_tps": 37.83004518007556,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 2,
+        "cumulative_tokens": 512,
+        "gen_tps": 36.82240426907888,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 3,
+        "cumulative_tokens": 768,
+        "gen_tps": 35.60214499790613,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 4,
+        "cumulative_tokens": 1024,
+        "gen_tps": 34.110388697788075,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 5,
+        "cumulative_tokens": 1280,
+        "gen_tps": 31.19651415704234,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 6,
+        "cumulative_tokens": 1536,
+        "gen_tps": 26.800420373566386,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 7,
+        "cumulative_tokens": 1792,
+        "gen_tps": 21.052484277252713,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 8,
+        "cumulative_tokens": 2048,
+        "gen_tps": 19.2960194924437,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 9,
+        "cumulative_tokens": 2304,
+        "gen_tps": 19.241341055075946,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 10,
+        "cumulative_tokens": 2560,
+        "gen_tps": 19.0884119932708,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 11,
+        "cumulative_tokens": 2816,
+        "gen_tps": 19.002667198397347,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 12,
+        "cumulative_tokens": 3072,
+        "gen_tps": 19.02428183032862,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 13,
+        "cumulative_tokens": 3328,
+        "gen_tps": 19.193436311394393,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 14,
+        "cumulative_tokens": 3584,
+        "gen_tps": 19.529758467567532,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 15,
+        "cumulative_tokens": 3840,
+        "gen_tps": 19.303062957848432,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 16,
+        "cumulative_tokens": 4096,
+        "gen_tps": 18.456778202206216,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 17,
+        "cumulative_tokens": 4352,
+        "gen_tps": 18.198258738364053,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 18,
+        "cumulative_tokens": 4608,
+        "gen_tps": 18.173454234819015,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 19,
+        "cumulative_tokens": 4864,
+        "gen_tps": 18.520140968366082,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 20,
+        "cumulative_tokens": 5120,
+        "gen_tps": 18.470784797410847,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 21,
+        "cumulative_tokens": 5376,
+        "gen_tps": 18.408770359869298,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 22,
+        "cumulative_tokens": 5632,
+        "gen_tps": 18.23415597499462,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 23,
+        "cumulative_tokens": 5888,
+        "gen_tps": 18.10927682112048,
+        "thermal_state": "nominal"
+      },
+      {
+        "segment_idx": 24,
+        "cumulative_tokens": 6144,
+        "gen_tps": 17.89404320972301,
+        "thermal_state": "nominal"
+      }
+    ]
+  }
+}

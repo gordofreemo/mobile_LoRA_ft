@@ -56,9 +56,10 @@ re-deriving the environment.
 
 ### iOS app: location, edits, build, deploy
 
-- Repo cloned at **`ios/mlx-swift-examples/`** (gitignored; from
-  `ml-explore/mlx-swift-examples`). LLM libs come from the SPM package
-  `ml-explore/mlx-swift-lm`, not vendored.
+- **`ios/mlx-swift-examples/`** is **vendored into this repo via `git subtree`**
+  (from `ml-explore/mlx-swift-examples`, base `378f244`; was a gitignored clone until
+  2026-06-21 — see `ios/README.md`). Only `build/` + Xcode user state are gitignored.
+  LLM libs come from the SPM package `ml-explore/mlx-swift-lm`, not vendored.
 - **Edited file:** `ios/mlx-swift-examples/Applications/LLMEval/ViewModels/LLMEvaluator.swift`
   - `modelConfiguration = ModelConfiguration(id: "mlx-community/SmolLM3-3B-4bit", …)`.
   - Added `appendBenchRecord(...)` → appends one flat-JSON line per generation
@@ -99,50 +100,65 @@ xcrun devicectl device copy from --device 00008150-000674C60A3B401C \
   --source Documents/bench_metrics.jsonl --destination /tmp/devpull/bench_metrics.jsonl
 ```
 
-### ACTIVE NEXT TASK — base-inference characterization benchmark
+### Base-inference characterization benchmark — DONE 2026-06-21
 
-**Design is LOCKED and pre-registered** (2026-06-21, via /grill_me):
-`experiments/2026-06-21-ondevice-base-inference-plan.md`. **Implementation not
-yet started — this is where a fresh session should pick up.** The plan turns the
-current single on-device record (n=1: gen 37.5 tok/s, prompt 438 tok/s, TTFT
-144 ms, peak 1.82 GB) into a reproducible characterization with error bars +
-scaling curves, built as a reusable rig (the same rig later measures base vs.
-Task-LoRA and on-device training).
+**Design locked** (`experiments/2026-06-21-ondevice-base-inference-plan.md`),
+**implemented, run, and written up** (`experiments/2026-06-21-ondevice-base-inference.md`).
+The reusable Mac-driven one-command rig now exists and is reused verbatim for the
+base-vs-Task-LoRA comparison next.
 
-Locked design in one breath: an **in-app benchmark loop in `LLMEvaluator.swift`,
-auto-started by a `--benchmark` launch arg** so the whole run is **one
-Mac-driven `devicectl process launch --console` command, zero per-gen taps**
-(verified devicectl passes launch args; one Face-ID unlock needed). **Star grid**
-(not cross-product): prefill curve prompt∈{64,256,512,1024,2048}@gen64, decode
-curve gen∈{128,512,1024,2048}@prompt256, 5 measured + 1 warmup per cell, forced
-fixed length (EOS suppressed) + ~5 natural-EOS runs on a real LaMP-3 prompt.
-**Thinking OFF throughout** (matches training/all prior eval; keeps base-vs-LoRA
-apples-to-apples). Thermal: per-run `thermal_state`, nominal-gated inter-cell
-cooldown, + one dedicated ~5-min sustained stress run with per-segment tps.
-Device: plugged, airplane ON, LPM OFF, brightness low, battery>50%, all logged.
-Cold-start a first-class metric (`cold`/`model_load_ms`, ~3 separate cold-only
-launches). Flat-JSON schema extended (thermal/battery/cold/warmup/forced/cell/
-session-id/app_build…; stress = one flat record per segment). Aggregator =
-tracked `eval/bench_aggregate.py` → per-cell mean±std(n), descriptive only.
-Outputs → `results/ondevice/…jsonl` + `results/ondevice_base_smollm3_4bit_…json`
-+ `experiments/2026-06-21-ondevice-base-inference.md`.
+**Headline (steady-state, cool device, n=5/cell):** decode **~37 tok/s** at
+deployment context sizes (prefill curve gen64: 38.8 tok/s @64-tok prompt →
+32.0 @2048), **prefill 620–740 tok/s**, **cold app-launch→first-answer ≈ 1.7 s**
+(model load 1362±114 ms + cold TTFT 380±6 ms), **realistic LaMP-3 (natural EOS)
+35.0±1.2 tok/s**, **peak ≈ 2.2 GB** (at 2048-tok contexts). The prior n=1 anecdote
+(37.5 tok/s, 1.82 GB) sits inside this distribution.
 
-**Implementation order:** (1) Swift harness first (loop + launch-arg auto-start +
-idle-timer disable + schema + `app_build`; rebuild with `-skipMacroValidation`),
-(2) `eval/bench_aggregate.py`, (3) run/pull/aggregate/write results log, (4)
-check in the harness `.patch` (closes the version-control loose end below).
-**Two impl-time verifications vs `mlx-swift-lm` source:** how to suppress EOS for
-forced length, and where the lazy container load exposes a point to time
-`model_load_ms`. Full rationale for every choice is in the plan file.
+**Two findings that shape the next pass:**
+1. **Sustained decode throttles −53%** (37.8 → 17.9 tok/s over 5 min / 6144 tokens,
+   knee at ~90 s) and **`ProcessInfo.thermalState` stayed `nominal` throughout** —
+   the coarse enum is a useless throttle proxy; trust per-segment tok/s.
+2. **Clean steady-state long-decode curves are unobtainable while plugged** (device
+   never returns to nominal between heavy cells, so the decode-length grid cells for
+   gen≥1024 are thermally confounded). The pre-registered **unplugged-over-Wi-Fi
+   follow-up** is the way to get a clean decode curve — deferred, not blocking.
+
+**Harness (verified vs `mlx-swift-lm` source):** EOS suppression for forced length =
+drive `TokenIterator` directly and ignore the stop-token set to `maxTokens` (the EOS
+check is in MLXLMCommon's loop wrapper, not `TokenIterator.next()`); `model_load_ms`
+brackets the `ModelContainer` load. New launch args: `--benchmark` (cold + prefill +
+decode), `--benchmark-tail` (realistic + 5-min stress, separate launch so the long
+cells don't overrun one `--console` session), `--benchmark-cold` (load+1 gen+exit, ×3
+for cold variance). `app_build` baked in (`smollm3-ondevice-bench-h2`).
+
+**Deliverables:**
+- Swift harness: `ios/mlx-swift-examples/Applications/LLMEval/Benchmark/{BenchmarkSupport,LLMEvaluator+Benchmark}.swift`
+  (+ edits to `LLMEvaluator.swift`, `ContentView.swift`, `project.pbxproj`). The whole
+  `ios/mlx-swift-examples/` tree is now **vendored into this repo via `git subtree`**
+  (upstream base `378f244`) — our harness lives as ordinary tracked files with full
+  history; only `build/` + Xcode user state stay gitignored. See `ios/README.md`.
+  **Closes the version-control loose end below.**
+- Aggregator: `eval/bench_aggregate.py` (stdlib-only, descriptive; nominal=primary,
+  cold + stress-decay segregated).
+- Raw telemetry: `results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl`
+  (89 records). Aggregate: `results/ondevice_base_smollm3_4bit_2026-06-21.json`.
+
+**`peak_mem_bytes` caveat for reuse:** MLX `peakMemory` is a process high-water mark
+(monotonic within a session), so per-cell peaks are confounded by execution order —
+the meaningful number is the session peak (~2.2 GB). Reset-per-run is the h3
+improvement to make for the base-vs-LoRA comparison.
 
 ### Loose ends / next steps (Phase 3)
 
-- **Version control (will be closed by the active task above):**
-  `ios/mlx-swift-examples/` and `.venv-mlx/` are gitignored, so the Swift edits
-  are **untracked** (live on this Mac only, lost on a fresh clone). TODO: check
-  in the patched `LLMEvaluator.swift` (or a `.patch`) under a tracked path, or
-  build our own checked-in app target. The benchmark plan folds this in as step
-  4 (track the harness `.patch` + bake `app_build` provenance).
+- **Version control — CLOSED 2026-06-21 (git subtree):** `ios/mlx-swift-examples/`
+  is **vendored via `git subtree`** at upstream base `378f244`; our LLMEval benchmark
+  harness is committed as normal tracked files (full history, one-clone reproducible).
+  `.gitignore` keeps only `ios/mlx-swift-examples/build/` + Xcode user state ignored.
+  `.venv-mlx/` remains gitignored (rebuildable from the documented `mlx-lm` install).
+  **Workflow** (see `ios/README.md`): edit harness files → ordinary `git commit` (no
+  patch dance). Bump upstream:
+  `git subtree pull --prefix=ios/mlx-swift-examples https://github.com/ml-explore/mlx-swift-examples <tag> --squash`.
+  Bump `BenchConstants.appBuild` whenever harness logic changes (provenance in each record).
 - **Task-LoRA on-device:** fuse `a1_lamp_1ep_seed0/checkpoint-1000` into
   SmolLM3, convert to MLX, publish an HF repo, swap the `modelConfiguration`
   id; measure base vs. Task-LoRA. (Adapter must be pulled from the cluster
