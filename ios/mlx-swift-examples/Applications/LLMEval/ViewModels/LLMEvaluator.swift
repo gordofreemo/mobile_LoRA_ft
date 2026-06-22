@@ -51,12 +51,14 @@ class LLMEvaluator {
     private var generationTimer: Timer?
     private var firstTokenTime: TimeInterval = 0
 
-    /// This controls which model loads. Our SmolLM3-3B foundation model,
-    /// downloaded on-device from the Hugging Face Hub (MLX 4-bit conversion of
-    /// HuggingFaceTB/SmolLM3-3B). Swap this id for our own fused Task-LoRA repo
-    /// once that is published.
+    /// This controls which model loads. Currently the Qwen3-8B 4-bit model
+    /// (`mlx-community/Qwen3-8B-4bit`), downloaded on-device from the Hugging
+    /// Face Hub, for the 7B-class on-device perf characterization (2026-06-22).
+    /// First-class `qwen3` arch in mlx-swift-lm; thinking-off via
+    /// `enable_thinking:false` to match the SmolLM3 benchmark regime. Swap back
+    /// to `mlx-community/SmolLM3-3B-4bit` (or a fused Task-LoRA repo) as needed.
     var modelConfiguration = ModelConfiguration(
-        id: "mlx-community/SmolLM3-3B-4bit",
+        id: "mlx-community/Qwen3-8B-4bit",
         defaultPrompt: "Why is the sky blue?"
     )
 

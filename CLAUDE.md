@@ -87,6 +87,18 @@ Design: `experiments/2026-06-21-ondevice-base-inference-plan.md`. Writeup: `expe
 
 **`peak_mem_bytes` caveat:** MLX `peakMemory` is a process high-water mark (monotonic within a session), so per-cell peaks are confounded by execution order — meaningful number is the session peak (~2.2 GB). Reset-per-run is the h3 improvement for the base-vs-LoRA comparison.
 
+### 7B-class characterization (Qwen3-8B-4bit) — DONE 2026-06-22
+
+Exploratory "does the next size class up fit + run, and at what cost" pass. Reuses the 3B plan verbatim (same grid/regime/harness), only the subject model swapped. Writeup: `experiments/2026-06-22-ondevice-qwen3-8b-inference.md`. Subject = `mlx-community/Qwen3-8B-4bit` (8.2B; first-class `qwen3` arch in `mlx-swift-lm`; `enable_thinking:false` matches the SmolLM3 thinking-off regime). **`peak_mem_bytes` caveat above is RESOLVED here** — harness bumped to **h3** (`app_build` `qwen3-8b-ondevice-bench-h3`): `GPU.resetPeakMemory()` before each measured gen → clean **per-cell** peak; `git_commit`/`git_dirty` now baked into each record. `--benchmark` (`.full`) ran the whole suite (cold+prefill+decode+realistic+stress) in one ~95-min session.
+
+**Headline — feasibility YES:** Qwen3-8B-4bit runs on the iPhone 17 Pro, **no OOM/jetsam**, per-cell peak **4.74 GB (p64) → 5.43 GB (p2048)** under the `increased-memory-limit` entitlement. Cost vs the 3B (clean nominal channel = cold + prefill-64): **decode ~15.5 vs ~37 tok/s (0.40×), prefill ~240 vs ~684 tok/s, cold app-launch→answer ≈ 2.8 vs 1.7 s (load 2043 ms + TTFT 770 ms), peak ~5.0 vs ~2.2 GB** — all tracking the ~2.7× param ratio. Realistic LaMP-3 tier = clean 1-token answers (thinking-off confirmed for Qwen3).
+
+**Two findings:**
+1. **8B heat-soaks the phone fast** — reaches `serious` *within* the prefill sweep; sustained/decode collapses to ~5 tok/s (a 2048-tok answer can take >7 min). Plugged-and-idle it can't recover between cells. 8B deployment is thermally bounded, not throughput-bounded.
+2. **At 8B `ProcessInfo.thermalState` DOES report the throttle** (`serious`) — opposite of the 3B, where the enum lied `nominal`. The load is heavy enough the coarse enum catches it; still trust per-segment tok/s as primary.
+
+Telemetry `results/ondevice/bench_metrics_qwen3-8b-4bit-base_2026-06-22.jsonl` (68 records); aggregate `results/ondevice_base_qwen3_8b_4bit_2026-06-22.json`. Decode/realistic/stress cells are all hot-device (`serious`) — clean steady-state 8B decode curve still needs the deferred unplugged-over-Wi-Fi run. `modelConfiguration` id is currently left at `mlx-community/Qwen3-8B-4bit`; flip the one line in `LLMEvaluator.swift` (both models stay cached on-device) to return to SmolLM3.
+
 ### Phase 3 next steps
 
 - **Task-LoRA on-device:** fuse `a1_lamp_1ep_seed0/checkpoint-1000` into SmolLM3, convert to MLX, publish an HF repo, swap `modelConfiguration` id; measure base vs Task-LoRA with the same rig. (Adapter must be pulled from the cluster first — not on this Mac.)
