@@ -5,9 +5,10 @@ LoRA pipeline: a **Task-LoRA** (LaMP-{3,4,7}, BM25 profile in `system`) plus a
 per-user **User-LoRA** on time-ordered history, stacked at inference. Phases 1 & 2
 ran on the cluster; Phase 3 deploys to a real iPhone.
 
-## Active work (as of 2026-06-22)
+## Active work (as of 2026-06-29)
 
-- **Phase 3 — on-device deployment (PRIMARY).** Base SmolLM3-3B inference on iPhone DONE 2026-06-21; characterization benchmark DONE. Next on-device milestone: fuse A1-lamp ckpt-1000, convert to MLX, swap the `modelConfiguration` id, measure base vs Task-LoRA with the same rig.
+- **Phase 3 — on-device training (PRIMARY).** Naive LoRA training benchmark **DONE 2026-06-29** (writeup `experiments/2026-06-29-ondevice-training-naive.md`). **Headline:** naive (no systems opts) LoRA FT of SmolLM3-3B-4bit **jetsams (uncatchable SIGKILL) on the first backward step at deployment seq lengths**; feasible only to a **256-token ceiling** (cap=512 OOMs), already throttled there (0.41 iter/s, ~8 min/200 steps, 4.1 GB peak; peak grows ~linearly with seq len). Plan's batch-size sweep was replaced by a seq-length-cap sweep at bs=1 (see writeup deviations). Next step: **gradient-checkpointing variant**, re-run the same cap sweep, deltas = optimization payoff. Harness `LLMEvaluator+TrainBenchmark.swift` (`--benchmark-train` cap sweep done; `--benchmark-train-stress` wired, not yet run).
+- **Phase 3 — base-vs-Task-LoRA inference.** Deferred (was next milestone before training track opened). When resumed: fuse A1-lamp ckpt-1000, convert to MLX, swap `modelConfiguration` id, measure with existing inference rig.
 - **Round 6 (LaMP-4 multi-user) reopened from Phase 2.** Status PRE-EXECUTION as of 2026-06-19. Fresh sessions should check `experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md` (design) and `ls results/paired_compare_*round6*.json` (whether the gate output landed) before proposing anything new in this thread.
 
 **The "no on-device/mobile code" hard constraint is LIFTED for Phase 3** (it
