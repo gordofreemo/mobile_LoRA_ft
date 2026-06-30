@@ -1,0 +1,80 @@
+# Llama-family scale comparison — full LaMP test-set eval for Llama-3.1-8B and
+# Llama-3.1-70B Instruct, both `noprofile` and `bm25k4` conditions, all three
+# usable LaMP tasks (3 / 4 / 7). 12 jobs total. See:
+#   experiments/2026-06-22-llama-scale-comparison-plan.md
+#
+# Step 8 of the pre-registered plan. Runs in parallel to Phase 3 (on-device).
+# Submit:
+#   condor_submit condor/eval_lamp_llama.sub
+#
+# Preempt-eligible nodes only (H200 / A100-80GB pool, opted in via
+# max_job_retirement_time). --resume in the args means a requeued job after
+# preemption picks up from the predictions JSONL that was flushed line-by-line.
+# K=100 subset runs (step 9, LaMP-3 only with --user-records) are a separate
+# submit — not in this file.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+# $(model_tag) ∈ {8B, 70B}; the model path is the data/models symlink that
+# points into /scratch. $(cond_tag) ∈ {noprofile, bm25k4} drives the filename
+# tag in the result JSON; $(cond_flag) is the corresponding eval_lamp.py CLI
+# token — `--no-profile` or `--k 4` (the latter is redundant w.r.t. the default
+# but keeps the argument count uniform across queue rows).
+arguments             = --task $(task) --split test --seed 0 --model-dir /home/ange00008/projects/mobileFT_distill/data/models/Llama-3.1-$(model_tag)-Instruct --device-map $(device_map) --resume $(cond_flag)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama.$(model_tag).$(task).$(cond_tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama.$(model_tag).$(task).$(cond_tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama.$(ClusterId).log
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+environment             = "CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 4
+request_memory        = 64G
+
+requirements            = UidDomain == "cs.uni-saarland.de"
+gpus_minimum_memory     = 80000
+# Capability *range*, not just a floor. The cluster has RTX PRO 6000 Blackwell
+# (sm_120 / Capability=12.0) nodes that the ver4 Docker image's PyTorch
+# (2.5.1+cu124) cannot target — its kernels stop at sm_90. A bare
+# `gpus_minimum_capability = 8.0` admits Blackwell and the job dies at the
+# first CUDA call with "no kernel image is available for execution on the
+# device". Cap at < 10.0 to exclude Blackwell while keeping Hopper (9.0),
+# Ada (8.9), and Ampere (8.0+).
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+max_job_retirement_time = 600
++WantGPUHomeMounted     = true
++WantScratchMounted     = true
+
+# --- 8B: single 80GB+ GPU, single-device placement ---------------------------
+model_tag    = 8B
+device_map   = cuda
+request_GPUs = 1
+queue task, cond_tag, cond_flag from (
+    LaMP_3 noprofile --no-profile
+    LaMP_3 bm25k4    --k 4
+    LaMP_4 noprofile --no-profile
+    LaMP_4 bm25k4    --k 4
+    LaMP_7 noprofile --no-profile
+    LaMP_7 bm25k4    --k 4
+)
+
+# --- 70B: 2× 80GB+ GPUs, accelerate device_map="auto" dispatch ---------------
+# ~141 GB bf16 weights don't fit on a single 80GB card; two H200 (141 GB each)
+# or two A100-80GB (160 GB total) are both sufficient.
+model_tag    = 70B
+device_map   = auto
+request_GPUs = 2
+queue task, cond_tag, cond_flag from (
+    LaMP_3 noprofile --no-profile
+    LaMP_3 bm25k4    --k 4
+    LaMP_4 noprofile --no-profile
+    LaMP_4 bm25k4    --k 4
+    LaMP_7 noprofile --no-profile
+    LaMP_7 bm25k4    --k 4
+)

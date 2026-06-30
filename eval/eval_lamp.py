@@ -212,14 +212,14 @@ def build_messages(task: str, question: dict, k: int, no_profile: bool) -> list:
 
 
 def render_prompt(tokenizer, messages: list) -> str:
-    """Apply the chat template with thinking disabled (fall back if unsupported).
+    """Apply the chat template; ask the model not to emit reasoning if it can.
 
-    SmolLM3 is a reasoning model whose template can emit a <think> block by default.
-    For evaluation we want the answer only — reasoning eats the token budget and
-    complicates parsing — so we pass enable_thinking=False. Older transformers /
-    templates that don't accept the kwarg raise TypeError, so we fall back. (As a
-    belt-and-braces measure, clean_output() also strips any <think> block that slips
-    through; verify in the smoke-test output that thinking is actually off.)
+    SmolLM3's template emits a <think> block by default; for eval we want the answer
+    only, so we pass enable_thinking=False. For Llama-3.1 (and most non-reasoning
+    models) the template either ignores the kwarg or raises TypeError — both are
+    handled below, so the call path is uniform across SmolLM3 / Llama-3.1. As a
+    belt-and-braces measure, clean_output() also strips any <think> block that
+    slips through.
     """
     try:
         return tokenizer.apply_chat_template(
@@ -382,15 +382,27 @@ def load_split(task: str, split: str):
 
 
 # --- Model loading -----------------------------------------------------------
-def load_model(model_dir: str, adapter: str | None, base_adapter: str | None = None):
-    """Load SmolLM3-3B in bf16, optionally with a stacked pair of LoRA adapters.
+def load_model(
+    model_dir: str,
+    adapter: str | None,
+    base_adapter: str | None = None,
+    device_map: str = "cuda",
+):
+    """Load a HuggingFace causal-LM in bf16, optionally with stacked LoRA adapters.
+
+    Used for both SmolLM3-3B (cuda single-device) and Llama-3.1-{8B,70B}-Instruct
+    (Llama-70B needs `device_map="auto"` for accelerate-dispatched multi-GPU
+    sharding). The model is loaded with the user-supplied device_map verbatim:
+    "cuda" / "cpu" → single-device placement; "auto" → accelerate dispatch.
 
     The two-adapter case (`base_adapter` set) is the User-LoRA stacking pattern:
     Task-LoRA is loaded first, merged into the frozen base, then a fresh
     per-user LoRA is loaded on top. This must match train/train.py's
     base-adapter plumbing exactly so train- and inference-time graphs are
     identical. The intermediate merge is required — PEFT can't stack two
-    distinct LoraConfig adapters from disk without it.
+    distinct LoraConfig adapters from disk without it. Note: merge_and_unload()
+    is single-device only, so adapters + device_map="auto" is not supported
+    (Llama runs are base-model-only, so this combination shouldn't arise).
 
     `adapter_params` counts only the *outer* (user) LoRA's parameters — the
     base adapter has been merged into the frozen weights and contributes
@@ -402,10 +414,15 @@ def load_model(model_dir: str, adapter: str | None, base_adapter: str | None = N
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Loading model onto {device} (bf16)...", flush=True)
+    # Resolve the device_map. "cuda" without a GPU silently downgrades to CPU
+    # (matches the prior behavior so SmolLM3 CPU smoke runs still work).
+    if device_map == "cuda" and not torch.cuda.is_available():
+        effective_device_map = "cpu"
+    else:
+        effective_device_map = device_map
+    print(f"Loading model with device_map={effective_device_map!r} (bf16)...", flush=True)
     model = AutoModelForCausalLM.from_pretrained(
-        model_dir, dtype=torch.bfloat16, device_map=device
+        model_dir, dtype=torch.bfloat16, device_map=effective_device_map
     )
 
     from peft import PeftModel
@@ -434,6 +451,10 @@ def load_model(model_dir: str, adapter: str | None, base_adapter: str | None = N
         model = model.merge_and_unload()
 
     model.eval()
+    # Device for input placement: returns the first parameter's device. Works
+    # for single-device placement (cuda:0 / cpu) and for accelerate dispatch
+    # (returns the embedding's device, typically cuda:0).
+    device = next(model.parameters()).device
     return tokenizer, model, device, adapter_params
 
 
@@ -454,6 +475,15 @@ def main():
         help="user fingerprint (e.g. u00000011); filter questions to those "
         "records via data/lamp_user_stats/<task>_user_records.json. Default: no filter.",
     )
+    parser.add_argument(
+        "--user-records-from-file",
+        default=None,
+        help="path to a top-K-users JSON (e.g. "
+        "data/lamp_user_stats/LaMP_3_top100_users.json); filter questions to the "
+        "example IDs in users[*].test_record_id. Used by the K=100 cross-model "
+        "comparison so a single Llama eval job covers all K subset records at "
+        "once. Mutually exclusive with --user-records.",
+    )
     parser.add_argument("--k", type=int, default=4, help="BM25 profile entries to retrieve")
     parser.add_argument("--no-profile", action="store_true", help="non-personalized floor")
     parser.add_argument("--seed", type=int, default=0)
@@ -465,7 +495,31 @@ def main():
         action="store_true",
         help="overwrite existing results JSON / predictions JSONL (default: refuse)",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume from an existing predictions JSONL: skip already-completed "
+        "ids, append new generations, recompute summary over the union. Required "
+        "for preempt-eligible Condor jobs that may be requeued mid-run.",
+    )
+    parser.add_argument(
+        "--device-map",
+        default="cuda",
+        help="device_map passed to from_pretrained. 'cuda' (default) / 'cpu' for "
+        "single-device placement; 'auto' for accelerate multi-GPU sharding (use "
+        "for Llama-3.1-70B). 'cuda' silently falls back to 'cpu' if no GPU is "
+        "available.",
+    )
     args = parser.parse_args()
+
+    if args.resume and args.overwrite:
+        print("ERROR: --resume and --overwrite are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.user_records and args.user_records_from_file:
+        print("ERROR: --user-records and --user-records-from-file are mutually exclusive.",
+              file=sys.stderr)
+        sys.exit(1)
 
     # Capture provenance once at startup so the banner and the result record agree
     # and `timestamp_utc` reflects start time. The banner makes the runlog
@@ -476,7 +530,8 @@ def main():
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
         f"[run] task={args.task} split={args.split} cond={cond_label} "
-        f"seed={args.seed} limit={args.limit} commit={commit_short} "
+        f"seed={args.seed} limit={args.limit} device_map={args.device_map} "
+        f"resume={args.resume} commit={commit_short} "
         f"condor={provenance.get('condor_cluster_id') or '-'}."
         f"{provenance.get('condor_proc_id') or '-'} "
         f"host={provenance.get('hostname')}",
@@ -500,12 +555,33 @@ def main():
     else:
         stacked_tag = adapter_tag
     profile_tag = "noprofile" if args.no_profile else f"bm25k{args.k}"
+    # Model tag: empty for the default SmolLM3 dir (preserves all Phase 1
+    # result filenames), set to the model dir leaf otherwise. Required as soon
+    # as we eval comparator models (Llama-3.1-{8B,70B}-Instruct) — without it,
+    # `--adapter none` runs across different bases all collide on the same
+    # stem and a `--resume` job silently scores against the wrong model's
+    # cached predictions.
+    model_dir_name = Path(args.model_dir).name
+    default_model_name = Path(MODEL_DIR).name
+    model_tag = "" if model_dir_name == default_model_name else f"_{model_dir_name}"
     limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
-    user_tag = f"_user{args.user_records}" if args.user_records else ""
-    stem = f"{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{user_tag}{limit_tag}"
+    if args.user_records:
+        user_tag = f"_user{args.user_records}"
+    elif args.user_records_from_file:
+        # The K=100 subset is a single shared evaluation set, not a per-user
+        # eval, so we tag the result file by the source file's stem (e.g.
+        # `LaMP_3_top100_users` → `_topK100`). Falls back to the bare stem if
+        # the file doesn't include the K-count tag we expect.
+        src_stem = Path(args.user_records_from_file).stem
+        # Heuristic: look for `_top<N>_users` pattern and shorten to `_topK<N>`.
+        m = re.search(r"_top(\d+)_users$", src_stem)
+        user_tag = f"_topK{m.group(1)}" if m else f"_{src_stem}"
+    else:
+        user_tag = ""
+    stem = f"{args.task}_{args.split}_{stacked_tag}{model_tag}_{profile_tag}_seed{args.seed}{user_tag}{limit_tag}"
     out_path = Path(RESULTS_DIR) / f"{stem}.json"
     pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
-    if not args.overwrite and (out_path.exists() or pred_path.exists()):
+    if not args.overwrite and not args.resume and (out_path.exists() or pred_path.exists()):
         print(
             "ERROR: refusing to overwrite existing results:",
             file=sys.stderr,
@@ -514,9 +590,10 @@ def main():
             mark = "exists" if p.exists() else "would-be-new"
             print(f"  {p}   [{mark}]", file=sys.stderr)
         print(
-            "\nPass --overwrite to replace, or vary --seed / --task / --adapter / etc.\n"
-            "to write to a different path. (Smoke runs with --limit already get a\n"
-            "_limitN suffix and won't collide with full runs.)",
+            "\nPass --overwrite to replace, --resume to continue an interrupted run,\n"
+            "or vary --seed / --task / --adapter / etc. to write to a different path.\n"
+            "(Smoke runs with --limit already get a _limitN suffix and won't collide\n"
+            "with full runs.)",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -565,58 +642,173 @@ def main():
               f"{n_filtered_records}/{n_total_records} records kept",
               flush=True)
 
+    # Multi-user subset filter: read the test_record_id values from a top-K-users
+    # JSON. Each user in the file contributes one record to the eval set, so the
+    # subset size equals the user count (K=100 for the Llama scale comparison).
+    # This is the single-job equivalent of running 100 per-user `--user-records`
+    # jobs — appropriate when the model has no per-user adaptation.
+    if args.user_records_from_file:
+        path = Path(args.user_records_from_file)
+        if not path.exists():
+            print(f"ERROR: --user-records-from-file path not found: {path}",
+                  file=sys.stderr)
+            sys.exit(1)
+        data = json.loads(path.read_text())
+        if "users" not in data or not data["users"]:
+            print(f"ERROR: {path} has no 'users' list.", file=sys.stderr)
+            sys.exit(1)
+        wanted_ids = {str(u["test_record_id"]) for u in data["users"]}
+        questions = [q for q in questions if str(q["id"]) in wanted_ids]
+        n_filtered_records = len(questions)
+        if n_filtered_records == 0:
+            # Zero matches almost always means a split-source mismatch: the
+            # top-K JSON was built against time-split test ids but eval is
+            # loading the user-split (default LAMP_DIR), or vice-versa.
+            # Hard-fail rather than produce a vacuous accuracy=0.0 result —
+            # the K=100 jobs (2026-06-28) silently emitted four empty result
+            # JSONs before this guard was added.
+            print(f"ERROR: --user-records-from-file matched 0/{len(wanted_ids)} "
+                  f"ids from {path.name} against {args.task}/{args.split}. "
+                  f"Split-source mismatch: check the file's "
+                  f"`inputs.test_questions` field and set LAMP_DIR to point at "
+                  f"the same data directory.", file=sys.stderr)
+            sys.exit(1)
+        if n_filtered_records != len(wanted_ids):
+            # Partial match — still suspicious but not always fatal (e.g.
+            # legitimate union of users where some have been dropped).
+            print(f"WARN: matched {n_filtered_records}/{len(wanted_ids)} ids from "
+                  f"{path.name} against {args.task}/{args.split}; ensure --split "
+                  f"matches the file's source split.", file=sys.stderr)
+        print(f"[filter] {path.name} {args.split}: "
+              f"{n_filtered_records}/{n_total_records} records kept "
+              f"(from {len(data['users'])} users)", flush=True)
+
     if args.limit > 0:
         questions = questions[: args.limit]
     print(f"{args.task}/{args.split}: {len(questions)} examples", flush=True)
 
+    # --- Resume: load cached predictions before loading the model -----------
+    # If --resume, read whatever predictions JSONL already exists into a dict
+    # so we can skip those ids in the main loop. We do this *before* loading
+    # the 6 GB model so a fully-completed run can exit fast without paying for
+    # a forward pass it doesn't need.
+    cached: dict = {}  # id -> {"pred": str, "gold": str}
+    if args.resume and pred_path.exists():
+        # Defense-in-depth: if a prior summary JSON exists, verify it was
+        # produced with the same model_dir before reusing its predictions.
+        # The stem already includes a model tag for non-default models, so a
+        # mismatch here means something more fundamental is wrong (e.g. user
+        # pointed --model-dir at the symlink target instead of the symlink).
+        if out_path.exists():
+            try:
+                prior = json.loads(out_path.read_text())
+                prior_model = prior.get("model_dir")
+                if prior_model and prior_model != args.model_dir:
+                    print(
+                        f"ERROR: --resume refused: prior summary at {out_path}\n"
+                        f"  was produced with model_dir={prior_model!r}\n"
+                        f"  but this run uses    model_dir={args.model_dir!r}.\n"
+                        f"  Either pass --overwrite, vary the output stem, or "
+                        f"point --model-dir at the same path the prior run used.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+            except (json.JSONDecodeError, OSError):
+                pass  # malformed prior summary — fall through and let the
+                      # JSONL pass handle it
+        with pred_path.open() as f:
+            for line_no, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    print(
+                        f"ERROR: malformed JSONL at {pred_path}:{line_no}; "
+                        "fix or delete the file before resuming.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                cached[str(rec["id"])] = {"pred": rec["pred"], "gold": rec["gold"]}
+        print(f"[resume] loaded {len(cached)} cached predictions from {pred_path}",
+              flush=True)
+
     tokenizer, model, device, adapter_params = load_model(
-        args.model_dir, args.adapter, args.base_adapter
+        args.model_dir, args.adapter, args.base_adapter, args.device_map
     )
     max_new = args.max_new_tokens or TASKS[args.task]["max_new_tokens"]
 
-    ids, preds, gold_list = [], [], []
+    # New (this-run-only) generations — used for efficiency proxies. Combined
+    # with `cached` below to score the full union.
+    new_ids, new_preds, new_golds = [], [], []
     prompt_tok, gen_tok = [], []
     t0 = time.time()
 
-    for i, q in enumerate(questions):
-        if q["id"] not in golds:
-            print(f"  WARN: id {q['id']} has no gold, skipping", file=sys.stderr)
-            continue
-        messages = build_messages(args.task, q, args.k, args.no_profile)
-        prompt = render_prompt(tokenizer, messages)
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        input_len = inputs["input_ids"].shape[1]
+    # Predictions JSONL is written incrementally (one flushed line per example)
+    # so a preempted job's progress survives requeue; --resume then picks up
+    # where it left off. Mode choice:
+    #   --overwrite  → truncate ("w")
+    #   --resume     → append    ("a")  — preserves cached lines
+    #   neither      → truncate ("w")  (refuse-check already passed)
+    Path(RESULTS_DIR).mkdir(parents=True, exist_ok=True)
+    pred_mode = "a" if args.resume else "w"
+    with pred_path.open(pred_mode) as pred_file:
+        for i, q in enumerate(questions):
+            if q["id"] not in golds:
+                print(f"  WARN: id {q['id']} has no gold, skipping", file=sys.stderr)
+                continue
+            if str(q["id"]) in cached:
+                continue  # already done in a prior session
+            messages = build_messages(args.task, q, args.k, args.no_profile)
+            prompt = render_prompt(tokenizer, messages)
+            inputs = tokenizer(prompt, return_tensors="pt").to(device)
+            input_len = inputs["input_ids"].shape[1]
 
-        with torch.no_grad():
-            out = model.generate(
-                **inputs,
-                max_new_tokens=max_new,
-                do_sample=False,  # greedy — deterministic, reproducible eval
-                pad_token_id=tokenizer.eos_token_id,
+            with torch.no_grad():
+                out = model.generate(
+                    **inputs,
+                    max_new_tokens=max_new,
+                    do_sample=False,  # greedy — deterministic, reproducible eval
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            new_tokens = out[0][input_len:]
+            # clean_up_tokenization_spaces=False: the default cleanup is designed for
+            # WordPiece and is destructive for BPE (which SmolLM3 uses) — suppresses the
+            # transformers warning and avoids corrupting punctuation spacing.
+            text = clean_output(
+                tokenizer.decode(
+                    new_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
+                )
             )
-        new_tokens = out[0][input_len:]
-        # clean_up_tokenization_spaces=False: the default cleanup is designed for
-        # WordPiece and is destructive for BPE (which SmolLM3 uses) — suppresses the
-        # transformers warning and avoids corrupting punctuation spacing.
-        text = clean_output(
-            tokenizer.decode(
-                new_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
-        )
 
-        ids.append(q["id"])
-        preds.append(text)
-        gold_list.append(golds[q["id"]])
-        prompt_tok.append(int(input_len))
-        gen_tok.append(int(len(new_tokens)))
+            new_ids.append(q["id"])
+            new_preds.append(text)
+            new_golds.append(golds[q["id"]])
+            prompt_tok.append(int(input_len))
+            gen_tok.append(int(len(new_tokens)))
 
-        if (i + 1) % 50 == 0:
-            print(f"  {i + 1}/{len(questions)}", flush=True)
+            # Flush so a SIGTERM (Condor preemption) loses at most the in-flight
+            # example, never previously-completed work.
+            pred_file.write(json.dumps({"id": q["id"], "pred": text, "gold": golds[q["id"]]}) + "\n")
+            pred_file.flush()
+
+            if (i + 1) % 50 == 0:
+                print(f"  {i + 1}/{len(questions)}", flush=True)
 
     elapsed = time.time() - t0
 
+    # Score on the union of cached + new. The cached order is iteration order
+    # of the dict (insertion order in CPython 3.7+), which matches the JSONL
+    # line order — fine since both metrics are order-invariant.
+    cached_preds_list = [v["pred"] for v in cached.values()]
+    cached_golds_list = [v["gold"] for v in cached.values()]
+    all_preds = cached_preds_list + new_preds
+    all_golds = cached_golds_list + new_golds
+    all_ids = list(cached.keys()) + [str(i) for i in new_ids]
+
     rating = TASKS[args.task]["metric"] == "rating"
-    metrics = score_rating(preds, gold_list) if rating else score_rouge1(preds, gold_list)
+    metrics = score_rating(all_preds, all_golds) if rating else score_rouge1(all_preds, all_golds)
     primary = "accuracy" if rating else "rouge1"
 
     def mean(xs):
@@ -641,6 +833,7 @@ def main():
         "base_adapter_name": base_adapter_tag,
         "stacked_adapter_name": stacked_tag,
         "user_fingerprint": args.user_records,
+        "user_records_from_file": args.user_records_from_file,
         "n_total_records": n_total_records,
         "n_filtered_records": n_filtered_records,
         "no_profile": args.no_profile,
@@ -660,36 +853,38 @@ def main():
         "parse_fail_rate": metrics.get("parse_fail_rate"),
         "rouge1": metrics.get("rouge1"),
         "n": metrics.get("n"),
-        # efficiency proxies
-        "mean_prompt_tokens": round(mean(prompt_tok), 1),
-        "mean_generated_tokens": round(mean(gen_tok), 1),
+        # efficiency proxies — computed over the NEW generations only (the
+        # cached predictions have no token counts on disk). `n_new` is the
+        # denominator; `n_resumed` is what we picked up from JSONL. In a
+        # fresh (non-resume) run, n_resumed=0 and n_new=n.
+        "n_resumed": len(cached),
+        "n_new": len(new_preds),
+        "mean_prompt_tokens": round(mean(prompt_tok), 1) if prompt_tok else None,
+        "mean_generated_tokens": round(mean(gen_tok), 1) if gen_tok else None,
         "adapter_params": adapter_params,
+        "device_map": args.device_map,
         "seconds": round(elapsed, 1),
-        "sec_per_example": round(elapsed / max(len(preds), 1), 3),
+        "sec_per_example": round(elapsed / max(len(new_preds), 1), 3) if new_preds else None,
         # provenance captured at run start — includes Condor IDs, git commit,
         # library versions, hostname, and start timestamp.
         **provenance,
     }
 
-    Path(RESULTS_DIR).mkdir(parents=True, exist_ok=True)
+    # Predictions JSONL was already written incrementally inside the main loop;
+    # only the summary JSON is written here. --resume rewrites this freely (a
+    # resumed run by definition wants to refresh the summary).
     out_path.write_text(json.dumps(record, indent=2))
 
-    # Full per-example predictions go to a sibling JSONL — kept out of the summary
-    # so the summary stays a clean one-row record, but available for error analysis
-    # and re-scoring without re-running the model.
-    with pred_path.open("w") as f:
-        for _id, p, g in zip(ids, preds, gold_list):
-            f.write(json.dumps({"id": _id, "pred": p, "gold": g}) + "\n")
-
     print("=" * 60)
-    for _id, p, g in list(zip(ids, preds, gold_list))[:3]:
+    for _id, p, g in list(zip(all_ids, all_preds, all_golds))[:3]:
         print(f"  [{_id}] pred={p!r}  gold={g!r}")
     print("=" * 60)
     print(f"metric:     {primary} = {metrics[primary]:.4f}  (n={metrics.get('n')})")
     print(f"all metrics:{metrics}")
     print(f"efficiency: prompt_tok={record['mean_prompt_tokens']} "
           f"gen_tok={record['mean_generated_tokens']} "
-          f"{record['sec_per_example']}s/ex")
+          f"{record['sec_per_example']}s/ex "
+          f"(new={len(new_preds)} resumed={len(cached)})")
     print(f"written ->  {out_path}")
     print(f"            {pred_path}")
 

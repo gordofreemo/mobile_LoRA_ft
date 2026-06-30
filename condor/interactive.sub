@@ -2,28 +2,33 @@ universe              = docker
 docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = /bin/bash
 should_transfer_files = YES
-request_GPUs          = 1
+
+# CPU-only interactive shell — used for ad-hoc inspection, the SmolLM3-base
+# result-JSON recovery loop (2026-06-23), and any other work that doesn't
+# need a GPU. To run a GPU smoke test, uncomment the request_GPUs / gpus_*
+# block below.
+# request_GPUs            = 1
+# gpus_minimum_memory     = 32000
+# gpus_minimum_capability = 8.0
 request_CPUs          = 2
 request_memory        = 16G
 
-# Match the train.sub / eval *.sub GPU filter so smoke tests can't land on
-# the 16 GB V100 (loki) where SmolLM3-3B SFT at bs=4 OOMs in the CE loss.
-gpus_minimum_memory     = 32000
-gpus_minimum_capability = 8.0
-
-# Opt in to the H200 / RTX 6000 Ada nodes. Their START expression rejects any
-# job without this knob; without it, only older Ampere stock qualifies and an
-# interactive session can sit idle for hours when those are claimed. Value is
-# in seconds, must be <= 3600*8. 600s (10 min) is plenty for a smoke session
-# and signals to the scheduler we're fine being preempted quickly. Does not
-# opt in to `forseti` (experimental RTX 6000) — that node requires the value
-# to be exactly 0, which we don't want for any job that produces useful work.
+# Opt in to preempt-eligible nodes. This widens the eligible pool —
+# without it the scheduler restricts to a smaller set and an interactive
+# session can sit idle for hours. 600s = 10 min, signals "fine to preempt
+# quickly", which matches interactive use.
 max_job_retirement_time = 600
-when_to_transfer_output = ON_EXIT_OR_EVICT
+
 stream_output           = true
 stream_error            = true
 
 requirements          = UidDomain == "cs.uni-saarland.de"
+
+# Despite the names, these flags grant the job access to the cluster's
+# /home and /scratch BeeGFS mounts (needed for any job — GPU or not — that
+# reads model weights, eval scripts, or writes to results/). Without them
+# /home isn't visible inside the container and the python interpreter
+# can't find the project files.
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true
 queue 1
