@@ -87,6 +87,12 @@ struct ContentView: View {
                 await llm.runBenchmark(mode: mode)
                 return
             }
+            // On-device naive LoRA-training benchmark (Phase 3). Separate launch
+            // args / harness from the inference benchmark above.
+            if let mode = LLMEvaluator.trainBenchmarkLaunchMode {
+                await llm.runTrainBenchmark(mode: mode)
+                return
+            }
             do {
                 // pre-load the weights on launch to speed up the first generation
                 _ = try await llm.load()

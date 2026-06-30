@@ -314,6 +314,8 @@ extension LLMEvaluator {
             "repeat_idx": repeatIdx,
             "app_build": BenchConstants.appBuild,
             "bench_schema_version": BenchConstants.schemaVersion,
+            "git_commit": BenchConstants.gitCommit,
+            "git_dirty": BenchConstants.gitDirty,
             // Stress segment fields (null elsewhere).
             "segment_idx": segment?.idx ?? NSNull(),
             "cumulative_tokens": segment?.cumulativeTokens ?? NSNull(),

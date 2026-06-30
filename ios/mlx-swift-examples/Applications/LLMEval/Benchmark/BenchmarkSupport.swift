@@ -23,8 +23,19 @@ import MLXLMCommon
 enum BenchConstants {
     /// Bump whenever the harness logic changes so every JSONL ties back to a
     /// specific harness version (baked into each record as `app_build`).
-    static let appBuild = "smollm3-ondevice-bench-h2"
-    static let schemaVersion = 2
+    /// h3 (2026-06-22): per-run `Memory.resetPeakMemory()` so `peak_mem_bytes`
+    /// is a per-cell peak (not a session high-water mark) + `git_commit`/
+    /// `git_dirty` provenance. Subject model is now Qwen3-8B-4bit.
+    static let appBuild = "qwen3-8b-ondevice-bench-h3"
+    static let schemaVersion = 3
+
+    /// Build-time provenance (decision: h3). Stamped from `git rev-parse
+    /// --short HEAD` by the Mac-side build step just before `xcodebuild`, the
+    /// same hand-at-build-time discipline as `appBuild` (avoids fragile
+    /// project.pbxproj build-phase surgery / source-tree churn). Baked into
+    /// every record so a JSONL ties back to the exact harness commit.
+    static let gitCommit = "dc43e62"
+    static let gitDirty = true
 
     // Star grid (decision 5): one axis at a time, not a cross-product.
     static let prefillPromptTargets = [64, 256, 512, 1024, 2048]
@@ -156,6 +167,12 @@ func measureGeneration(
     segmentTokens: Int? = nil,
     maxSeconds: Double? = nil
 ) async throws -> GenMeasurement {
+    // h3: reset the GPU peak high-water mark so `peakMemBytes` below reflects
+    // THIS generation's peak (weights resident + prefill KV + decode
+    // activations), not a monotonic session high-water. Reset before prompt
+    // prep so prefill is included in the per-cell peak.
+    GPU.resetPeakMemory()
+
     let lmInput = try await context.processor.prepare(input: userInput)
     let promptTokens = lmInput.text.tokens.size
 

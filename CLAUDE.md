@@ -7,7 +7,8 @@ ran on the cluster; Phase 3 deploys to a real iPhone.
 
 ## Active work (as of 2026-06-30)
 
-- **Phase 3 — on-device deployment (PRIMARY).** Base SmolLM3-3B inference on iPhone DONE 2026-06-21; characterization benchmark DONE. Next on-device milestone: fuse A1-lamp ckpt-1000, convert to MLX, swap the `modelConfiguration` id, measure base vs Task-LoRA with the same rig.
+- **Phase 3 — on-device training (PRIMARY).** Naive LoRA training benchmark **DONE 2026-06-29** (writeup `experiments/2026-06-29-ondevice-training-naive.md`). **Headline:** naive (no systems opts) LoRA FT of SmolLM3-3B-4bit **jetsams (uncatchable SIGKILL) on the first backward step at deployment seq lengths**; feasible only to a **256-token ceiling** (cap=512 OOMs), already throttled there (0.41 iter/s, ~8 min/200 steps, 4.1 GB peak; peak grows ~linearly with seq len). Plan's batch-size sweep was replaced by a seq-length-cap sweep at bs=1 (see writeup deviations). Next step: **gradient-checkpointing variant**, re-run the same cap sweep, deltas = optimization payoff. Harness `LLMEvaluator+TrainBenchmark.swift` (`--benchmark-train` cap sweep done; `--benchmark-train-stress` wired, not yet run).
+- **Phase 3 — base-vs-Task-LoRA inference.** Deferred (was next milestone before training track opened). When resumed: fuse A1-lamp ckpt-1000, convert to MLX, swap `modelConfiguration` id, measure with existing inference rig.
 - **Round 6 (LaMP-4 multi-user) reopened from Phase 2.** Status PRE-EXECUTION as of 2026-06-19. Fresh sessions should check `experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md` (design) and `ls results/paired_compare_*round6*.json` (whether the gate output landed) before proposing anything new in this thread.
 - **Llama-family scale comparison — DONE 2026-06-30.** Writeup: `experiments/2026-06-30-llama-scale-comparison.md`. Headline: **SmolLM3-3B + A1-lamp Task-LoRA beats Llama-3.1-70B-Instruct + BM25 on all three LaMP tasks** (LaMP-3 +0.006, LaMP-4 +0.017, LaMP-7 +0.116). On the K=100 personalization-hard subset, the full two-LoRA stack (Task + User) goes further: acc 0.730 / MAE 0.290 vs Llama-70B+BM25 0.700 / 0.330. Scale alone narrows but does not close the gap to fine-tuning. Aggregator: `eval/tables.py`. Caveats: point estimates only (no CIs); R5's User-LoRA lift is at MDE (p≈0.10), so Table 2 inherits that.
 
@@ -87,6 +88,18 @@ Design: `experiments/2026-06-21-ondevice-base-inference-plan.md`. Writeup: `expe
 **Deliverables:** aggregator `eval/bench_aggregate.py` (stdlib-only); raw telemetry `results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl` (89 records); aggregate `results/ondevice_base_smollm3_4bit_2026-06-21.json`.
 
 **`peak_mem_bytes` caveat:** MLX `peakMemory` is a process high-water mark (monotonic within a session), so per-cell peaks are confounded by execution order — meaningful number is the session peak (~2.2 GB). Reset-per-run is the h3 improvement for the base-vs-LoRA comparison.
+
+### 7B-class characterization (Qwen3-8B-4bit) — DONE 2026-06-22
+
+Exploratory "does the next size class up fit + run, and at what cost" pass. Reuses the 3B plan verbatim (same grid/regime/harness), only the subject model swapped. Writeup: `experiments/2026-06-22-ondevice-qwen3-8b-inference.md`. Subject = `mlx-community/Qwen3-8B-4bit` (8.2B; first-class `qwen3` arch in `mlx-swift-lm`; `enable_thinking:false` matches the SmolLM3 thinking-off regime). **`peak_mem_bytes` caveat above is RESOLVED here** — harness bumped to **h3** (`app_build` `qwen3-8b-ondevice-bench-h3`): `GPU.resetPeakMemory()` before each measured gen → clean **per-cell** peak; `git_commit`/`git_dirty` now baked into each record. `--benchmark` (`.full`) ran the whole suite (cold+prefill+decode+realistic+stress) in one ~95-min session.
+
+**Headline — feasibility YES:** Qwen3-8B-4bit runs on the iPhone 17 Pro, **no OOM/jetsam**, per-cell peak **4.74 GB (p64) → 5.43 GB (p2048)** under the `increased-memory-limit` entitlement. Cost vs the 3B (clean nominal channel = cold + prefill-64): **decode ~15.5 vs ~37 tok/s (0.40×), prefill ~240 vs ~684 tok/s, cold app-launch→answer ≈ 2.8 vs 1.7 s (load 2043 ms + TTFT 770 ms), peak ~5.0 vs ~2.2 GB** — all tracking the ~2.7× param ratio. Realistic LaMP-3 tier = clean 1-token answers (thinking-off confirmed for Qwen3).
+
+**Two findings:**
+1. **8B heat-soaks the phone fast** — reaches `serious` *within* the prefill sweep; sustained/decode collapses to ~5 tok/s (a 2048-tok answer can take >7 min). Plugged-and-idle it can't recover between cells. 8B deployment is thermally bounded, not throughput-bounded.
+2. **At 8B `ProcessInfo.thermalState` DOES report the throttle** (`serious`) — opposite of the 3B, where the enum lied `nominal`. The load is heavy enough the coarse enum catches it; still trust per-segment tok/s as primary.
+
+Telemetry `results/ondevice/bench_metrics_qwen3-8b-4bit-base_2026-06-22.jsonl` (68 records); aggregate `results/ondevice_base_qwen3_8b_4bit_2026-06-22.json`. Decode/realistic/stress cells are all hot-device (`serious`) — clean steady-state 8B decode curve still needs the deferred unplugged-over-Wi-Fi run. `modelConfiguration` id is currently left at `mlx-community/Qwen3-8B-4bit`; flip the one line in `LLMEvaluator.swift` (both models stay cached on-device) to return to SmolLM3.
 
 ### Phase 3 next steps
 
