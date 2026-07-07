@@ -1,0 +1,36 @@
+# Select the top-100 LaMP-4 users by profile size for User-LoRA Round 6.
+#
+# Streams the 95 MB time-split test_questions.json filtering on the eligible
+# fingerprint set (n_test>=1 AND seen_by_a1_lamp==0; 253 LaMP-4 users qualify).
+# Output: data/lamp_user_stats/LaMP_4_top100_users.json.
+#
+# CPU-only, no GPU. Runs on a Condor execute node (login-node OOM concern, per
+# experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md Step 2).
+# See data/select_top_users_lamp4.py for the script details.
+#
+# Override K from the command line:
+#   condor_submit -a 'arguments = --k 200' condor/select_top_users_lamp4.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = data/select_top_users_lamp4.py
+arguments             = --k 100
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/select_top_users_lamp4.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/select_top_users_lamp4.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/select_top_users_lamp4.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — streaming JSON read + small in-memory eligibility set + sort.
+# 8G is generous (the script holds 253 fingerprints + one streamed record);
+# matches the R5 select_top_users_lamp3.sub allocation for consistency.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
