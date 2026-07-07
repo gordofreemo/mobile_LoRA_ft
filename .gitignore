@@ -11,6 +11,8 @@ experiments/*
 .venv/
 # Round-5 per-user OPPU configs (generator: data/lamp_user_stats/round5_gen_configs.py)
 train/config/user_lora_lamp3_oppu_u*.json
+# Round-6 per-user OPPU configs (generator: data/lamp_user_stats/round6_gen_configs.py)
+train/config/user_lora_lamp4_oppu_u*.json
 
 # On-device phase (2026-06) — large external/build artifacts
 .venv-mlx/
