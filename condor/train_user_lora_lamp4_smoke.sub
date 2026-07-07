@@ -1,0 +1,50 @@
+# User-LoRA Round 6 — single-user smoke before the 100-proc full submit.
+#
+# Trains ONE per-user LoRA (u00000070, the smallest-profile user in the
+# top-100 with profile_size=17) to validate the OPPU recipe + the multi-user
+# pipeline end-to-end before submitting condor/train_user_lora_lamp4_multi.sub
+# for the full K=100. Per the Round-6 plan §Step 6 ("Smoke training").
+#
+# Same hardware / image / docker / GPU class as R5's train_user_lora_lamp3_smoke.sub.
+# The only difference is queue 1 + a single hardcoded config_path (u00000070).
+#
+# Acceptance after this smoke completes (Step-6 acceptance):
+#   - train/checkpoints/user_lora_lamp4_u00000070_oppu_seed0/final/adapter_config.json
+#     with r=8, target_modules=["q_proj", "v_proj"]
+#   - train_meta.json has base_adapter_path ending in a1_lamp_1ep_seed0/checkpoint-1000
+#   - non-NaN final loss, below first loss
+#   - no OOM. If OOM: drop to per_device=1, grad_accum=8 in the template and
+#     regenerate configs, then rerun this smoke.
+#
+# Submit (after committing this file):
+#   condor_submit condor/train_user_lora_lamp4_smoke.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000070.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp4_smoke.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp4_smoke.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp4_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
