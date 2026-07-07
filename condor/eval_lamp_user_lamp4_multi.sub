@@ -56,6 +56,16 @@ stream_error            = true
 # Avoid the 16 GB V100 (loki) per the project-wide GPU filter.
 gpus_minimum_memory     = 32000
 gpus_minimum_capability = 8.0
+# Capability *range*, not just a floor. The cluster has RTX PRO 6000 Blackwell
+# (sm_120 / Capability=12.0) nodes that the ver4 Docker image's PyTorch
+# (2.5.1+cu124) cannot target -- its kernels stop at sm_90. A bare
+# gpus_minimum_capability = 8.0 admits Blackwell and the job dies at the
+# first CUDA call with "no kernel image is available for execution on the
+# device" (hit for the first time in this project on 2026-07-07, eval
+# cluster 170373 procs 1/2/4/6, host fornjoter). Cap at < 10.0 to exclude
+# Blackwell while keeping Hopper (9.0), Ada (8.9), and Ampere (8.0+). Pattern
+# copied from condor/eval_lamp_llama.sub, which hit this first.
+require_gpus            = Capability >= 8.0 && Capability < 10.0
 
 request_GPUs          = 1
 request_CPUs          = 2

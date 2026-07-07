@@ -1,0 +1,57 @@
+# Paired comparison — User-LoRA Round 6 (LaMP-4 multi-user).
+#
+# CPU-only job. Runs eval/paired_compare_per_user.py on the consolidated
+# C2 vs C3 prediction files from Step 10:
+#   pred-a: results/LaMP_4_test_round6_C2.predictions.jsonl  (248 lines, 100 users)
+#   pred-b: results/LaMP_4_test_round6_C3.predictions.jsonl  (248 lines, 100 users)
+#
+# Unlike Round 5 (LaMP-3, 1 test record/user, so record-level == user-level),
+# LaMP-4 users have 1-25 test records each. paired_compare_per_user.py scores
+# ROUGE-1 per record, then groups by user and pairs at the PER-USER-MEAN
+# level (K=100 paired observations, not 248).
+#
+# No pre-registered gate (plan decision #9) — raw numbers only. Output has no
+# passes_registered_gate field, no PASS/FAIL verdict.
+#
+# Comparison convention: pred-a is "baseline" (C2 = A1-lamp + BM25), pred-b
+# is "treatment" (C3 = A1-lamp + User-LoRA + BM25). mean_diff = mean(b - a)
+# = mean(ROUGE1_C3 - ROUGE1_C2) across the K=100 per-user means.
+#
+# Descriptives reported (all of it — this round has no gate to separate from):
+#   paired-t p, Wilcoxon signed-rank p, 95% percentile-bootstrap CI (10k
+#   resamples, seed=0), wins/ties/losses at the user level.
+#
+# Plan reference: experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md §Step 11.
+#
+# Submit:
+#   condor_submit condor/paired_compare_lamp4_multi.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare_per_user.py
+
+arguments = --pred-a /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_round6_C2.predictions.jsonl --pred-b /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_round6_C3.predictions.jsonl --label-a c2_a1lamp_bm25 --label-b c3_a1lamp_userlora_bm25 --task LaMP_4 --split test --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp4_multi.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp4_multi.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp4_multi.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Tiny CPU job; ROUGE-1 scoring on 248 records + stats on n=100 users finish
+# in low single-digit seconds (10k bootstrap resamples are the dominant cost).
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
