@@ -1,0 +1,54 @@
+# LaMP eval — Round 6 (LaMP-4 multi-user) SMOKE — C3 / test on u00000070, --limit 5.
+#
+# One job. Exercises the maximum plumbing path for the R6 sweep:
+#   base + A1-lamp + User-LoRA-R6 stacked + BM25 + --user-records on LaMP_4 test.
+# Output filename gets a `_limit5` suffix so it cannot collide with the full
+# R6 run's outputs (eval_lamp.py:567).
+#
+# u00000070 chosen because it's the Step-6/7 training smoke target, so the
+# adapter is already verified well-formed (r=8, target_modules=[q_proj,v_proj],
+# correct base_adapter_path, non-NaN loss). Its profile_size=17 is the
+# smallest in the pool — smoke here also exercises the low end of the
+# max_seq_length=1024 range, not just the high end. The split=test matches
+# the full run; --limit 5 caps the LaMP_4 test load to 5 examples before the
+# --user-records filter, which then reduces to this user's own test records
+# (n_test<=25, per data/lamp_user_stats/LaMP_4_user_records.json).
+#
+# Plan reference: experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md §Step 8.
+#
+# Submit:
+#   condor_submit condor/eval_lamp_user_lamp4_smoke.sub
+#
+# After passing acceptance (predictions JSONL has 1 line per this user's
+# available test records, clamped by --limit 5; no errors), submit the full
+# sweep: condor_submit condor/eval_lamp_user_lamp4_multi.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+arguments    = --task LaMP_4 --split test --k 4 --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000070_oppu_seed0/final --base-adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000 --user-records u00000070 --limit 5
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_smoke.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_smoke.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
