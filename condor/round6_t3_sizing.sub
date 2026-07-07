@@ -1,0 +1,39 @@
+# Round 6 T3 sizing — tokenize all 100 LaMP-4 per-user JSONLs through the
+# SmolLM3-3B chat template (enable_thinking=False) and pin max_seq_length
+# for the Step-6 OPPU config template.
+#
+# Single CPU job, expect well under R5's ~5-10 min (LaMP-4's 100-user pool is
+# 9,325 examples total vs R5's 61,466 on LaMP-3 — same tokenizer, much less
+# text per user given the K=100 pool's profile sizes top out at 1100 vs the
+# LaMP-3 pool's much larger per-user counts).
+# Output: data/lamp_user_stats/LaMP_4_round6_t3_sizing.json.
+#
+# Plan reference: experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md §Step 4.
+# See data/lamp_user_stats/round6_t3_sizing.py for details.
+#
+# Submit:
+#   condor_submit condor/round6_t3_sizing.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = data/lamp_user_stats/round6_t3_sizing.py
+arguments             =
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/round6_t3_sizing.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/round6_t3_sizing.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/round6_t3_sizing.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — tokenizer load + ~9.3k chat-template calls. Memory bounded
+# (single tokenizer + per-example list of length integers). Matches
+# round5_t3_sizing.sub's allocation for consistency.
+request_CPUs          = 4
+request_memory        = 16G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
