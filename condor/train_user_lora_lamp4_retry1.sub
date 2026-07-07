@@ -1,0 +1,103 @@
+# User-LoRA Round 6 — retry for the 46 users that failed in the first
+# condor/train_user_lora_lamp4_multi.sub submission (cluster 170332).
+#
+# Root cause (verified, not a config/recipe bug): 83 of the 100 procs in the
+# first submission landed on the same physical execute node (tyr1). 37 of
+# those 83 succeeded; the other 46 all crashed at the identical point —
+# PeftModel.from_pretrained -> load_adapter -> safetensors load ->
+# "RuntimeError: CUDA error: CUDA-capable device(s) is/are busy or
+# unavailable" — consistent with that node being handed more concurrent
+# GPU-job slots than it had physical GPUs to serve at model-load time. All 46
+# crashed BEFORE output_dir was created (train.py creates it only after the
+# base+adapter load succeeds), so there is no partial/corrupt checkpoint
+# state to clean up — these configs are safe to resubmit as-is.
+#
+# The other 54 users from the first submission are unaffected and already
+# have verified adapters at train/checkpoints/user_lora_lamp4_<user>_oppu_seed0/
+# (structural checks passed: r=8, target_modules=[q_proj,v_proj], correct
+# base_adapter_path, non-NaN loss). Do NOT resubmit those.
+#
+# Same recipe / hardware / image as condor/train_user_lora_lamp4_multi.sub —
+# no config changes, this is purely an infra retry.
+#
+# Submit (after committing this file):
+#   condor_submit condor/train_user_lora_lamp4_retry1.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config $(config_path)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp4_retry1.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp4_retry1.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp4_retry1.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# 46 configs that failed with "CUDA device busy/unavailable" in cluster
+# 170332 (condor/train_user_lora_lamp4_multi.sub's first run).
+queue config_path from (
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000460.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000569.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001186.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000756.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000972.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000166.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000250.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000048.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000554.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000147.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000342.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000187.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000100.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000461.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001404.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000750.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000758.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000679.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001099.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001253.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001614.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000523.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000116.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000755.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00002853.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000293.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000483.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001065.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00002764.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00002832.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000448.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000671.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000916.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00002301.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000762.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00009604.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00003343.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00004105.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001678.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001837.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00006942.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000261.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000377.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000549.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00000959.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp4_oppu_u00001470.json
+)
