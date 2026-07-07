@@ -5,11 +5,11 @@ LoRA pipeline: a **Task-LoRA** (LaMP-{3,4,7}, BM25 profile in `system`) plus a
 per-user **User-LoRA** on time-ordered history, stacked at inference. Phases 1 & 2
 ran on the cluster; Phase 3 deploys to a real iPhone.
 
-## Active work (as of 2026-06-30)
+## Active work (as of 2026-07-07)
 
 - **Phase 3 — on-device training (PRIMARY).** Naive LoRA training benchmark **DONE 2026-06-29** (writeup `experiments/2026-06-29-ondevice-training-naive.md`). **Headline:** naive (no systems opts) LoRA FT of SmolLM3-3B-4bit **jetsams (uncatchable SIGKILL) on the first backward step at deployment seq lengths**; feasible only to a **256-token ceiling** (cap=512 OOMs), already throttled there (0.41 iter/s, ~8 min/200 steps, 4.1 GB peak; peak grows ~linearly with seq len). Plan's batch-size sweep was replaced by a seq-length-cap sweep at bs=1 (see writeup deviations). Next step: **gradient-checkpointing variant**, re-run the same cap sweep, deltas = optimization payoff. Harness `LLMEvaluator+TrainBenchmark.swift` (`--benchmark-train` cap sweep done; `--benchmark-train-stress` wired, not yet run).
 - **Phase 3 — base-vs-Task-LoRA inference.** Deferred (was next milestone before training track opened). When resumed: fuse A1-lamp ckpt-1000, convert to MLX, swap `modelConfiguration` id, measure with existing inference rig.
-- **Round 6 (LaMP-4 multi-user) reopened from Phase 2.** Status PRE-EXECUTION as of 2026-06-19. Fresh sessions should check `experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md` (design) and `ls results/paired_compare_*round6*.json` (whether the gate output landed) before proposing anything new in this thread.
+- **Round 6 (LaMP-4 multi-user) — DONE 2026-07-07.** Writeup: `experiments/2026-07-07-user-lora-lamp4-round6-multi.md`. **Headline:** cross-task OPPU-recipe replication on LaMP-4, K=100 users. Mean per-user ROUGE-1 0.235→0.242 (Δ+0.007), **not statistically significant** (paired-t p=0.20, Wilcoxon p=0.30, 95% CI [−0.002, +0.018] spans zero) — falls in the plan's pre-specified "≈0" disposition bucket, consistent with OPPU's own weak LaMP-4 result (+0.003 R-1) and our four single-user LaMP-4 rounds (R1–R4, all sub-MDE). Expected outcome per the plan's own priors, not a setback — R5's LaMP-3 confirmation of Q4 is unaffected; no R7 follow-up queued. Paper table updated: `overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/2026-06-18-per-user-lora-lamp3.tex` (`tab:r6-lamp4-multi`). Two infra issues surfaced and fixed along the way (see writeup): `tyr1` GPU-slot oversubscription (retry, no code change) and a Blackwell (sm_120) incompatibility on `fornjoter` (now guarded via `require_gpus` on all LaMP-4 GPU subs — the same guard the Llama subs already had; CLAUDE.md's own GPU-capability-ceiling note had already flagged this as likely to eventually hit un-hardened subs).
 - **Llama-family scale comparison — DONE 2026-06-30.** Writeup: `experiments/2026-06-30-llama-scale-comparison.md`. Headline: **SmolLM3-3B + A1-lamp Task-LoRA beats Llama-3.1-70B-Instruct + BM25 on all three LaMP tasks** (LaMP-3 +0.006, LaMP-4 +0.017, LaMP-7 +0.116). On the K=100 personalization-hard subset, the full two-LoRA stack (Task + User) goes further: acc 0.730 / MAE 0.290 vs Llama-70B+BM25 0.700 / 0.330. Scale alone narrows but does not close the gap to fine-tuning. Aggregator: `eval/tables.py`. Caveats: point estimates only (no CIs); R5's User-LoRA lift is at MDE (p≈0.10), so Table 2 inherits that.
 
 **The "no on-device/mobile code" hard constraint is LIFTED for Phase 3** (it
@@ -118,7 +118,7 @@ Telemetry `results/ondevice/bench_metrics_qwen3-8b-4bit-base_2026-06-22.jsonl` (
 | **Q1** — Does fine-tuning on LaMP help a 3B model at all? | **YES** — A1-lamp ckpt-1000 gives +0.11 / +0.07 / +0.13 on LaMP-3/4/7 test over BM25 baseline. |
 | Q2 — Synthetic preference-conditional data on top of LaMP? | DROPPED with 2026-06-02 pivot. |
 | Q3 — General Task-LoRA vs domain-specific? | DROPPED with 2026-06-02 pivot. |
-| **Q4** — Per-user LoRA on time-ordered user history beyond Task-LoRA alone? | **YES (LaMP-3)** confirmed by R5 (2026-06-19): ΔMAE −0.050, acc 0.680→0.730, RMSE 0.616→0.575, zero inference overhead. R6 LaMP-4 cross-task replication PRE-EXECUTION. |
+| **Q4** — Per-user LoRA on time-ordered user history beyond Task-LoRA alone? | **YES (LaMP-3)** confirmed by R5 (2026-06-19): ΔMAE −0.050, acc 0.680→0.730, RMSE 0.616→0.575, zero inference overhead. **Does not extend to LaMP-4**: R6 (2026-07-07) found mean ΔR-1 +0.007, not significant (p=0.20) — expected per the plan's own priors (OPPU's own LaMP-4 lift is a weak +0.003 R-1). Q4 stands as LaMP-3-specific. |
 | **Q5** — Does the 3B + two-LoRA stack survive a scale comparator (Llama-3.1-{8B,70B}-Instruct + BM25)? | **YES** (2026-06-30): A1-lamp Task-LoRA beats Llama-70B+BM25 on LaMP-3/4/7 by +0.006/+0.017/+0.116; on K=100 LaMP-3 the two-LoRA stack reaches 0.730 acc / 0.290 MAE vs Llama-70B+BM25 0.700 / 0.330. `experiments/2026-06-30-llama-scale-comparison.md`. |
 
 ### Canonical artifacts
@@ -126,7 +126,7 @@ Telemetry `results/ondevice/bench_metrics_qwen3-8b-4bit-base_2026-06-22.jsonl` (
 - **A1-lamp Task-LoRA:** `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/` (1-epoch sweep, step 1000, epoch 0.75, frozen 2026-06-02).
 - **100 LaMP-3 User-LoRAs (R5):** `train/checkpoints/user_lora_lamp3_<fp>_seed0/final/` (one per user in `data/lamp_user_stats/LaMP_3_top100_users.json`).
 - **4 single-user LaMP-4 User-LoRAs (R1/R2-B/R4):** retained for re-analysis.
-- **(R6 will add)** 100 LaMP-4 multi-user User-LoRAs at `train/checkpoints/user_lora_lamp4_<fp>_oppu_seed0/final/`.
+- **100 LaMP-4 multi-user User-LoRAs (R6):** `train/checkpoints/user_lora_lamp4_<fp>_oppu_seed0/final/` (one per user in `data/lamp_user_stats/LaMP_4_top100_users.json`).
 
 ### Phase 1 headline numbers (LaMP test, seed=0, greedy, BM25 k=4 — dev numbers within ±0.01; see `experiments/2026-06-13-lamp-test-split-correction.md`)
 
@@ -143,7 +143,7 @@ Earlier `a1_lamp_seed0/` (2-epoch run) is Pareto-dominated but on disk for prove
 
 ### Phase 2 history (one line per round)
 
-Single-user u00000011 LaMP-4 rounds **R1–R4 all failed pre-registered gates on test** (dev/test asymmetry across all four: dev Δ +0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018). **R5 LaMP-3 K=100 OPPU recipe** (r=8 q+v only, LR=1e-5, L2=1e-2, 3 epochs, stacked on A1-lamp ckpt-1000) confirmed Q4 at MDE. **Phase 2 closed 2026-06-19**, reopened same day as R6 cross-task descriptive replication. Full per-round detail in `experiments/2026-06-{15,16,17,18,19}-*.md` and memory `project_user_lora_lamp4_single_user_retrospective.md`, `project_user_lora_round5_lamp3_design.md`, `project_user_lora_round6_lamp4_design.md`.
+Single-user u00000011 LaMP-4 rounds **R1–R4 all failed pre-registered gates on test** (dev/test asymmetry across all four: dev Δ +0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018). **R5 LaMP-3 K=100 OPPU recipe** (r=8 q+v only, LR=1e-5, L2=1e-2, 3 epochs, stacked on A1-lamp ckpt-1000) confirmed Q4 at MDE. **Phase 2 closed 2026-06-19**, reopened same day as R6 cross-task descriptive replication. **R6 done 2026-07-07**: LaMP-4 replication, mean ΔR-1 +0.007, not significant (p=0.20) — expected null per the plan's own priors; no R7 queued, Phase 2 stays closed. Full per-round detail in `experiments/2026-06-{15,16,17,18,19}-*.md`, `experiments/2026-07-07-user-lora-lamp4-round6-multi.md`, and memory `project_user_lora_lamp4_single_user_retrospective.md`, `project_user_lora_round5_lamp3_design.md`, `project_user_lora_round6_lamp4_design.md`.
 
 **R6 carryovers from R5 (settled, not relitigated):** OPPU recipe verbatim (r=8, q+v only, alpha=16, dropout=0.05, AdamW, LR=1e-5, L2=1e-2, cosine + 3% warmup, 3 epochs, save_strategy=epoch, save_total_limit=1); per_device=2 / grad_accum=4 (R5's final working config — skip the OOM iteration); base = SmolLM3-3B + A1-lamp ckpt-1000 stacked via `--base-adapter`; eval = BM25 k=4 + greedy + seed=0 + `enable_thinking=False` + max_new_tokens=64; smoke = one user (smallest profile_size).
 
@@ -190,7 +190,7 @@ r=4 (vs original spec r=64) because the value prop is on-device efficiency — a
 
 Plus **BFCL AST regression** before/after each Task-LoRA training run (target ≥90; baseline 92.3; sanity check only).
 
-**Comparison chain (post-pivot):** Baseline → A1-lamp (Q1, answered) → A1-lamp + User-LoRA (Q4, answered for LaMP-3, in-progress for LaMP-4).
+**Comparison chain (post-pivot):** Baseline → A1-lamp (Q1, answered) → A1-lamp + User-LoRA (Q4, answered YES for LaMP-3; answered NULL for LaMP-4 per R6).
 
 ---
 
