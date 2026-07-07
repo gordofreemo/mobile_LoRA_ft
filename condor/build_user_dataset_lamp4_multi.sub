@@ -1,0 +1,173 @@
+# Per-user LaMP-4 training corpus build for User-LoRA Round 6 multi-user.
+#
+# 100 parallel CPU procs — one per user from the pre-registered top-100 pool
+# (data/lamp_user_stats/LaMP_4_top100_users.json). Each proc invokes
+# train/build_user_dataset.py for its assigned user fingerprint, emitting:
+#     data/lamp_user_train_LaMP_4_<user>_bm25k4.jsonl
+#     data/lamp_user_train_LaMP_4_<user>_bm25k4.meta.json
+#
+# Plan reference: experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md §Step 3.
+#
+# Architectural deviation from plan-text (transparent, mirrors R5's
+# condor/build_user_dataset_lamp3.sub reasoning exactly):
+#   The plan said "single CPU Condor job ... sequentially ... ~100 x ~5s = ~8
+#   min" (a carryover estimate that assumed the fast records-framing early-exit
+#   path). The actual command uses the *profile* framing (find_latest_train_record
+#   in build_user_dataset.py), which has NO early exit — it must scan the
+#   entire 904 MB LaMP_4/train_questions.json per user regardless of that
+#   user's profile size, to find their largest-profile snapshot record.
+#   R5 measured ~2 min/user on LaMP-3's 3.2 GB equivalent file; LaMP-4's file
+#   is ~28% the size, so sequential would still be tens of minutes, not 8. We
+#   use a 100-proc parallel queue block instead, matching the project's
+#   established idiom for every other per-user step (eval_lamp_user_*.sub,
+#   build_user_dataset_lamp3.sub, etc.) — finishes in a couple minutes wall
+#   time instead.
+#   NFS cost: 100 parallel readers of a 904 MB file, mitigated by per-node
+#   page caching; bounded total read traffic given the file is read
+#   sequentially by each reader.
+#
+# Note: u00000011 (rank 1 in this pool, profile_size=1100) already has
+# data/lamp_user_train_LaMP_4_u00000011_bm25k4.jsonl on disk from the R2-B
+# round (2026-06-16). Verified byte-identical reproduction: the profile-BM25
+# code path in build_user_dataset.py is unchanged since that build (only
+# additive --framing/LaMP-3 refactors landed after), and the underlying data
+# is frozen, so --overwrite for this fp is a content no-op (only the meta.json
+# provenance timestamp/commit refresh). Included in the queue rather than
+# special-cased for uniformity.
+#
+# The 100 fingerprints in the queue block are embedded inline (rather than
+# read from the top-100 JSON) so this sub file is a self-contained pre-reg
+# artifact verifiable at commit time. Generated from
+# data/lamp_user_stats/LaMP_4_top100_users.json at commit b5f885f (the
+# Step-2 output).
+#
+# Submit (after committing this file):
+#   condor_submit condor/build_user_dataset_lamp4_multi.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_user_dataset.py
+arguments             = --task LaMP_4 --user $(user) --bm25-k 4 --overwrite
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_lamp4_multi.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_lamp4_multi.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_user_dataset_lamp4_multi.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — streaming JSON read (no early exit, profile framing) + per-entry
+# BM25 + per-entry JSONL write. Matches build_user_dataset_lamp3.sub's
+# allocation for consistency.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# 100 fingerprints — top-100 LaMP-4 users by profile_size, eligibility filter
+# (n_test>=1 AND seen_by_a1_lamp==0). Generated from
+# data/lamp_user_stats/LaMP_4_top100_users.json (Step 2 output, commit b5f885f).
+queue user from (
+  u00000011
+  u00000006
+  u00000120
+  u00000076
+  u00000020
+  u00000001
+  u00000636
+  u00000576
+  u00000093
+  u00001180
+  u00000566
+  u00000260
+  u00000673
+  u00000452
+  u00000043
+  u00000924
+  u00000625
+  u00000098
+  u00000028
+  u00000460
+  u00000041
+  u00000173
+  u00000569
+  u00000171
+  u00001186
+  u00000756
+  u00000972
+  u00000166
+  u00000250
+  u00000048
+  u00000554
+  u00000147
+  u00000342
+  u00000187
+  u00000100
+  u00000461
+  u00001404
+  u00000750
+  u00000758
+  u00000679
+  u00001099
+  u00001253
+  u00001614
+  u00000523
+  u00000116
+  u00000755
+  u00001494
+  u00002853
+  u00002562
+  u00000293
+  u00000643
+  u00000239
+  u00002293
+  u00001327
+  u00000483
+  u00001065
+  u00002764
+  u00002832
+  u00000695
+  u00000427
+  u00001597
+  u00000472
+  u00001891
+  u00004381
+  u00000448
+  u00000671
+  u00000916
+  u00002301
+  u00000039
+  u00000050
+  u00000387
+  u00002554
+  u00002049
+  u00000595
+  u00000762
+  u00009604
+  u00003343
+  u00004105
+  u00000375
+  u00000433
+  u00001482
+  u00000099
+  u00000148
+  u00000237
+  u00001678
+  u00001837
+  u00006942
+  u00000261
+  u00000280
+  u00000314
+  u00000385
+  u00000928
+  u00001320
+  u00003333
+  u00000377
+  u00000549
+  u00000959
+  u00001235
+  u00001470
+  u00000070
+)
