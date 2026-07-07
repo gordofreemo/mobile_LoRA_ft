@@ -1,0 +1,77 @@
+# LaMP eval — Round 6 retry for the 18 rows that failed in the first
+# condor/eval_lamp_user_lamp4_multi.sub submission (cluster 170364).
+#
+# Same root cause as condor/train_user_lora_lamp4_retry1.sub: all 18 crashed
+# with "RuntimeError: CUDA error: CUDA-capable device(s) is/are busy or
+# unavailable" (this time inside transformers' caching_allocator_warmup /
+# torch.cuda.mem_get_info, before any model weights loaded), and all 18
+# landed on the same execute node (tyr1) — the second time this exact node
+# has produced this failure mode for this project. Verified no partial
+# output: none of the 18 (adapter, base_adapter, user_fp) rows have a
+# results JSON or predictions JSONL on disk, so these are safe to resubmit
+# as-is (eval_lamp.py's refuse-to-overwrite means a naive resubmit of the
+# full 200 would also work, but this is the minimal retry).
+#
+# The other 182 rows from the first submission are unaffected — verified
+# present (results/*.json + *.predictions.jsonl for each).
+#
+# Same recipe / hardware / image as condor/eval_lamp_user_lamp4_multi.sub —
+# no config changes, this is purely an infra retry.
+#
+# Submit (after committing this file):
+#   condor_submit condor/eval_lamp_user_lamp4_retry1.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+adapter      = none
+base_adapter = none
+user_fp      = u00000000
+
+arguments    = --task LaMP_4 --split test --k 4 --seed 0 --adapter $(adapter) --base-adapter $(base_adapter) --user-records $(user_fp)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_retry1.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_retry1.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_retry1.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# 18 (adapter, base_adapter, user_fp) rows that failed with "CUDA device
+# busy/unavailable" in cluster 170364 (2 C2 + 16 C3).
+queue adapter, base_adapter, user_fp from (
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000314
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00003333
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000076_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000076
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000020_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000020
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000673_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000673
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000452_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000452
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000554_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000554
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000147_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000147
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001404_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001404
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000750_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000750
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000239_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000239
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002293_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002293
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001597_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001597
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000448_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000448
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00003343_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00003343
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000375_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000375
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00006942_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00006942
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000314_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000314
+)
