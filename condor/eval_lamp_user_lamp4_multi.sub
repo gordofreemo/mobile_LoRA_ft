@@ -1,0 +1,280 @@
+# LaMP eval — User-LoRA Round 6, 100 users x {C2, C3} on the LaMP-4 time-split.
+#
+# 200 parallel GPU procs:
+#
+#   C2 (A1-lamp + BM25, single Task-LoRA only):
+#       adapter      = a1_lamp_1ep_seed0/checkpoint-1000
+#       base_adapter = none
+#       Reproduces the per-user baseline on each user's LaMP_4 test records.
+#
+#   C3 (A1-lamp + User-LoRA + BM25, stacked):
+#       adapter      = user_lora_lamp4_<user>_oppu_seed0/final  (Round 6 Step 7 output)
+#       base_adapter = a1_lamp_1ep_seed0/checkpoint-1000
+#       Plan's stack-vs-merge decision, item #7: stack, not merge.
+#
+# Both conditions use --user-records <fp> to pin eval to that user's LaMP_4
+# test records (1-25 per user, per data/lamp_user_stats/LaMP_4_user_records.json
+# — unlike R5's LaMP-3 pool, which was ~1 test record/user).
+#
+# eval_lamp.py refuses to overwrite by default, so re-submits after partial
+# sweeps only re-run the missing combinations.
+#
+# Plan reference: experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md §Step 9.
+# See condor/eval_lamp_user_lamp3.sub (Round 5) for the multi-row queue-block
+# pattern this generalizes.
+#
+# Submit (after committing this file):
+#   condor_submit condor/eval_lamp_user_lamp4_multi.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+# Macros driven by the queue block. eval_lamp.py treats "none" as "no adapter".
+adapter      = none
+base_adapter = none
+user_fp      = u00000000
+
+arguments    = --task LaMP_4 --split test --k 4 --seed 0 --adapter $(adapter) --base-adapter $(base_adapter) --user-records $(user_fp)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_multi.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_multi.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp4_multi.$(ClusterId).log
+
+should_transfer_files = YES
+# LAMP_DIR points at the TIME-BASED split (data/lamp_time/) per the
+# Round-1 scaffolding-bug lesson. The --user-records IDs come from
+# data/lamp_user_stats/LaMP_4_user_records.json which was built against
+# the time-based split.
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+# Avoid the 16 GB V100 (loki) per the project-wide GPU filter.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# 200 (adapter, base_adapter, user_fp) rows: 100 C2 (A1-lamp alone) then 100
+# C3 (User-LoRA stacked over A1-lamp). Ordered to match the canonical
+# top-100 user ordering from data/lamp_user_stats/LaMP_4_top100_users.json
+# (Step-2 output). Absolute paths required (Round-1 scaffolding-bug lesson).
+#
+# Note on the first submission's training run (cluster 170332): 46/100 procs
+# hit a transient CUDA "device busy" error from GPU-slot oversubscription on
+# one execute node (tyr1), unrelated to eval — retried cleanly on a second
+# submission (cluster 170343... see condor/train_user_lora_lamp4_retry1.sub).
+# If this eval sweep sees a similar cluster of failures on one hostname,
+# that's the same class of infra flake — retry just the failed rows rather
+# than treating it as a pipeline bug.
+queue adapter, base_adapter, user_fp from (
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000011
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000006
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000120
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000076
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000020
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000001
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000636
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000576
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000093
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001180
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000566
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000260
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000673
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000452
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000043
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000924
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000625
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000098
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000028
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000460
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000041
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000173
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000569
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000171
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001186
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000756
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000972
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000166
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000250
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000048
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000554
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000147
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000342
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000187
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000100
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000461
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001404
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000750
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000758
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000679
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001099
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001253
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001614
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000523
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000116
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000755
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001494
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002853
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002562
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000293
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000643
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000239
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002293
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001327
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000483
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001065
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002764
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002832
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000695
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000427
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001597
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000472
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001891
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00004381
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000448
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000671
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000916
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002301
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000039
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000050
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000387
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002554
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00002049
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000595
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000762
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00009604
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00003343
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00004105
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000375
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000433
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001482
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000099
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000148
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000237
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001678
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001837
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00006942
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000261
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000280
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000314
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000385
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000928
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001320
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00003333
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000377
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000549
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000959
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001235
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00001470
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, none, u00000070
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000011_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000011
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000006_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000006
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000120_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000120
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000076_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000076
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000020_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000020
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000001_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000001
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000636_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000636
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000576_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000576
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000093_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000093
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001180_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001180
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000566_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000566
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000260_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000260
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000673_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000673
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000452_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000452
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000043_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000043
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000924_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000924
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000625_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000625
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000098_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000098
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000028_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000028
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000460_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000460
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000041_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000041
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000173_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000173
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000569_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000569
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000171_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000171
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001186_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001186
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000756_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000756
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000972_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000972
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000166_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000166
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000250_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000250
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000048_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000048
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000554_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000554
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000147_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000147
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000342_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000342
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000187_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000187
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000100_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000100
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000461_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000461
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001404_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001404
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000750_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000750
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000758_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000758
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000679_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000679
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001099_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001099
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001253_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001253
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001614_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001614
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000523_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000523
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000116_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000116
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000755_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000755
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001494_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001494
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002853_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002853
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002562_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002562
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000293_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000293
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000643_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000643
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000239_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000239
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002293_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002293
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001327_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001327
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000483_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000483
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001065_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001065
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002764_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002764
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002832_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002832
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000695_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000695
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000427_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000427
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001597_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001597
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000472_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000472
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001891_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001891
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00004381_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00004381
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000448_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000448
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000671_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000671
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000916_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000916
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002301_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002301
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000039_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000039
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000050_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000050
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000387_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000387
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002554_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002554
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00002049_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00002049
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000595_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000595
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000762_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000762
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00009604_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00009604
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00003343_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00003343
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00004105_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00004105
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000375_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000375
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000433_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000433
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001482_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001482
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000099_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000099
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000148_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000148
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000237_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000237
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001678_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001678
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001837_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001837
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00006942_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00006942
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000261_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000261
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000280_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000280
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000314_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000314
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000385_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000385
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000928_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000928
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001320_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001320
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00003333_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00003333
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000377_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000377
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000549_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000549
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000959_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000959
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001235_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001235
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00001470_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00001470
+  /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp4_u00000070_oppu_seed0/final, /home/ange00008/projects/mobileFT_distill/train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000, u00000070
+)
