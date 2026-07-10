@@ -9,9 +9,11 @@ output, and reports quality metrics plus efficiency proxies.
 Personalization mechanism is **retrieval** (the standard LaMP protocol), not
 summarization — see notebooks/lamp_evaluation_approach.md for why.
 
-Supported tasks: LaMP_3 (rating, Accuracy), LaMP_4 / LaMP_7 (generation, ROUGE-1).
-LaMP_6 is intentionally unsupported: its public release ships only Avocado file-id
-placeholders (no text), so it can't be scored without the licensed corpus.
+Supported tasks: LaMP_3 (rating, Accuracy+MAE), LaMP_4 / LaMP_5 / LaMP_7
+(generation, ROUGE-1), LaMP_1 / LaMP_2_movies / LaMP_2_news (classification,
+Accuracy+macro-F1). LaMP_6 is intentionally unsupported: its public release
+ships only Avocado file-id placeholders (no text), so it can't be scored
+without the licensed corpus.
 
 Usage (run on the cluster, inside the Docker image):
     python eval/eval_lamp.py --task LaMP_3 --split dev --k 4 --seed 0
@@ -68,6 +70,60 @@ def trim(text: str, n: int = ENTRY_CHARS) -> str:
     return text if len(text) <= n else text[:n] + "…"
 
 
+# --- Closed label vocabularies for the classification tasks ------------------
+# Enumerated exhaustively from the raw train+dev+test outputs (see
+# notebooks/2026-07-10-r7-step0-findings.md) — these are NOT guesses, every
+# value below was observed in the real data.
+LAMP2_MOVIES_LABELS = [
+    "action", "based on a book", "classic", "comedy", "dark comedy",
+    "dystopia", "fantasy", "psychology", "romance", "sci-fi",
+    "social commentary", "thought-provoking", "true story", "twist ending",
+    "violence",
+]
+LAMP2_NEWS_LABELS = [
+    "business", "crime", "culture & arts", "education", "entertainment",
+    "food & drink", "healthy living", "parents", "politics", "religion",
+    "science & technology", "sports", "style & beauty", "travel", "women",
+]
+
+
+def parse_bracket_choice(text: str, label_universe: list) -> str | None:
+    """LaMP-1: pull the chosen candidate out of free-text output.
+
+    Gold is always exactly "[1]" or "[2]" (verified against real data). A
+    model may drop the brackets or wrap the digit in prose, so we take the
+    *first* of "1"/"2" that appears (optionally bracketed) — same
+    first-match convention as parse_rating. `label_universe` is unused here
+    (kept only so this function has the same signature as
+    parse_closed_vocab_label for uniform dispatch in score_classification).
+    """
+    m = re.search(r"\[?\s*([12])\s*\]?", text)
+    return f"[{m.group(1)}]" if m else None
+
+
+def parse_closed_vocab_label(text: str, label_universe: list) -> str | None:
+    """LaMP-2 (both variants): match free-text output against a closed,
+    per-task label vocabulary.
+
+    Normalize (lowercase, strip, collapse whitespace) both the prediction and
+    every vocab entry, then try an exact match first; fall back to a
+    substring search (longest label wins, to avoid a short label spuriously
+    matching inside a longer one) for cases where the model wraps the answer
+    in a sentence. Returns the ORIGINAL-case label from label_universe, or
+    None if nothing matches (a parse failure — tracked the same way
+    parse_rating's failures are).
+    """
+    def norm(s: str) -> str:
+        return " ".join(str(s).lower().split())
+
+    norm_map = {norm(u): u for u in label_universe}
+    t = norm(text)
+    if t in norm_map:
+        return norm_map[t]
+    matches = [u for u_norm, u in norm_map.items() if u_norm in t]
+    return max(matches, key=len) if matches else None
+
+
 # --- Per-task configuration --------------------------------------------------
 # index_field: the profile-entry text BM25 matches the query against.
 # format:      how a retrieved entry is rendered as a context line in the system prompt.
@@ -88,6 +144,43 @@ TASKS = {
     "LaMP_7": {
         "index_field": lambda it: it.get("text", ""),
         "format": lambda it: f'- "{trim(it.get("text", ""))}"',
+        "max_new_tokens": 64,
+        "metric": "rouge1",
+    },
+    "LaMP_1": {
+        # Profile items are {title, abstract, id} (the author's own prior
+        # papers). Index on the abstract (falls back to title if missing) so
+        # BM25 matches on topical content, not just title phrasing.
+        "index_field": lambda it: it.get("abstract", "") or it.get("title", ""),
+        "format": lambda it: f'- "{trim(it.get("title", ""), TITLE_CHARS)}": {trim(it.get("abstract", ""))}',
+        "max_new_tokens": 8,
+        "metric": "classification",
+        "label_universe": ["[1]", "[2]"],
+        "parse_fn": parse_bracket_choice,
+    },
+    "LaMP_2_movies": {
+        # Profile items are {tag, description, id}.
+        "index_field": lambda it: it.get("description", ""),
+        "format": lambda it: f'- Movie: "{trim(it.get("description", ""))}" — tagged "{it.get("tag", "?")}"',
+        "max_new_tokens": 16,  # longest label ("thought-provoking") is a few tokens
+        "metric": "classification",
+        "label_universe": LAMP2_MOVIES_LABELS,
+        "parse_fn": parse_closed_vocab_label,
+    },
+    "LaMP_2_news": {
+        # Profile items are {text, title, category, id}.
+        "index_field": lambda it: it.get("text", ""),
+        "format": lambda it: f'- Article: "{trim(it.get("title", ""), TITLE_CHARS)}": "{trim(it.get("text", ""))}" — categorized "{it.get("category", "?")}"',
+        "max_new_tokens": 16,  # longest label ("science & technology") is a few tokens
+        "metric": "classification",
+        "label_universe": LAMP2_NEWS_LABELS,
+        "parse_fn": parse_closed_vocab_label,
+    },
+    "LaMP_5": {
+        # Profile items are {title, abstract, id} — same shape as LaMP-1's
+        # (both are the scholarly-citation corpus).
+        "index_field": lambda it: it.get("abstract", "") or it.get("title", ""),
+        "format": lambda it: f'- "{trim(it.get("title", ""), TITLE_CHARS)}": {trim(it.get("abstract", ""))}',
         "max_new_tokens": 64,
         "metric": "rouge1",
     },
@@ -276,6 +369,39 @@ def score_rating(preds: list, golds: list) -> dict:
     return {
         "accuracy": correct / n if n else 0.0,
         "mae": (sum(abs_err) / len(abs_err)) if abs_err else None,
+        "parse_fail_rate": parse_fail / n if n else 0.0,
+        "n": n,
+    }
+
+
+def score_classification(preds: list, golds: list, label_universe: list, parse_fn) -> dict:
+    """Accuracy + macro-F1 over a closed label vocabulary (LaMP-1, LaMP-2).
+
+    Matches CLAUDE.md's R7 metric decision: LaMP-1 is a 2-way choice (macro-F1
+    is degenerate there but reported for schema consistency); LaMP-2's 15-way
+    vocab is where macro-F1 is imbalance-aware and adds real signal over
+    accuracy. A parse failure never matches any label, so it's counted as
+    wrong for both accuracy and every label's precision/recall — same
+    "unparseable = wrong" convention as score_rating.
+    """
+    parsed = [parse_fn(p, label_universe) for p in preds]
+    golds_norm = [str(g).strip() for g in golds]
+    n = len(preds)
+    parse_fail = sum(1 for p in parsed if p is None)
+    correct = sum(1 for p, g in zip(parsed, golds_norm) if p == g)
+
+    f1s = []
+    for label in label_universe:
+        tp = sum(1 for p, g in zip(parsed, golds_norm) if p == label and g == label)
+        fp = sum(1 for p, g in zip(parsed, golds_norm) if p == label and g != label)
+        fn = sum(1 for p, g in zip(parsed, golds_norm) if p != label and g == label)
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1s.append(2 * precision * recall / (precision + recall) if (precision + recall) else 0.0)
+
+    return {
+        "accuracy": correct / n if n else 0.0,
+        "macro_f1": (sum(f1s) / len(f1s)) if f1s else 0.0,
         "parse_fail_rate": parse_fail / n if n else 0.0,
         "n": n,
     }
@@ -807,9 +933,19 @@ def main():
     all_golds = cached_golds_list + new_golds
     all_ids = list(cached.keys()) + [str(i) for i in new_ids]
 
-    rating = TASKS[args.task]["metric"] == "rating"
-    metrics = score_rating(all_preds, all_golds) if rating else score_rouge1(all_preds, all_golds)
-    primary = "accuracy" if rating else "rouge1"
+    metric_kind = TASKS[args.task]["metric"]
+    task_cfg = TASKS[args.task]
+    if metric_kind == "rating":
+        metrics = score_rating(all_preds, all_golds)
+        primary = "accuracy"
+    elif metric_kind == "classification":
+        metrics = score_classification(
+            all_preds, all_golds, task_cfg["label_universe"], task_cfg["parse_fn"]
+        )
+        primary = "accuracy"
+    else:
+        metrics = score_rouge1(all_preds, all_golds)
+        primary = "rouge1"
 
     def mean(xs):
         return (sum(xs) / len(xs)) if xs else 0.0
@@ -850,6 +986,7 @@ def main():
         "metric_value": metrics[primary],
         "accuracy": metrics.get("accuracy"),
         "mae": metrics.get("mae"),
+        "macro_f1": metrics.get("macro_f1"),
         "parse_fail_rate": metrics.get("parse_fail_rate"),
         "rouge1": metrics.get("rouge1"),
         "n": metrics.get("n"),

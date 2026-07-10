@@ -1,0 +1,32 @@
+# R7 (A2-lamp) non-personalized FLOOR for LaMP, DEV split — sibling of
+# eval_lamp_floor.sub, scoped to only the 4 NEW task-tracks (LaMP_1,
+# LaMP_2_movies, LaMP_2_news, LaMP_5). See eval_lamp_r7_newtasks.sub for why
+# this is a separate sub file rather than an edit to the original.
+#
+# Submit alongside the profile baseline, no editing required:
+#   condor_submit condor/eval_lamp_r7_newtasks.sub        # profile baseline (BM25 k=4)
+#   condor_submit condor/eval_lamp_floor_r7_newtasks.sub  # non-personalized floor
+#
+# Each task lands its own result file — the harness picks `noprofile` vs
+# `bm25k4` into the filename, so the two runs don't collide in results/.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+arguments             = --task $(task) --split dev --no-profile --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_r7_newtasks.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_r7_newtasks.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_r7_newtasks.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (LaMP_1 LaMP_2_movies LaMP_2_news LaMP_5)

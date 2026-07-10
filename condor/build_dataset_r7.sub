@@ -1,0 +1,50 @@
+# R7 (A2-lamp) 7-task LaMP training-corpus preprocessing — one-shot CPU job.
+#
+# Extends condor/build_dataset.sub's 3-task (LaMP_3,4,7) corpus build to all
+# 7 public LaMP task-tracks (adds LaMP_1, LaMP_2_movies, LaMP_2_news, LaMP_5).
+# Separate sub file (not an edit to build_dataset.sub) so the original 3-task
+# build stays exactly reproducible for A1-lamp provenance.
+# See experiments/2026-07-10-lamp-coverage-expansion-r7-a2lamp-plan.md Step 4
+# and train/build_dataset.py for details.
+#
+# Raw train_questions.json sizes being streamed (none loaded whole — see
+# stream_json_array in build_dataset.py): LaMP_1 863MB, LaMP_2_movies 262MB,
+# LaMP_2_news 469MB, LaMP_3 2895MB, LaMP_4 788MB, LaMP_5 858MB, LaMP_7 24MB
+# (~6.1 GB total). Login-node OOMs on these, hence the Condor job.
+#
+# Output: data/lamp_train_mixed7_bm25k4.jsonl (+ per-task JSONLs + meta
+# sidecar). The "mixed7" tag (not "mixed") is automatic — build_dataset.py
+# derives it from the --tasks count so this run can NEVER collide with the
+# existing 3-task data/lamp_train_mixed_bm25k4.jsonl (A1-lamp's corpus, left
+# untouched on disk).
+#
+# Smoke first if you want (interactive):
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/build_dataset.py --tasks LaMP_1,LaMP_2_movies,LaMP_2_news,LaMP_5 --limit 100
+# Then submit for the real 7-task build:
+#   condor_submit condor/build_dataset_r7.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_dataset.py
+arguments             = --tasks LaMP_1,LaMP_2_movies,LaMP_2_news,LaMP_3,LaMP_4,LaMP_5,LaMP_7 --k 4 --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_dataset_r7.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_dataset_r7.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_dataset_r7.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp DATA_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — no GPU needed for streaming JSON + BM25 + JSONL write. Bumped
+# vs build_dataset.sub (12G/4G) for the larger 7-task corpus (~6.1 GB raw
+# input streamed, larger mixed-shuffle-in-memory pass).
+request_CPUs          = 2
+request_memory        = 16G
+request_disk          = 6G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

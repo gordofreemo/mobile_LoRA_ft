@@ -14,6 +14,13 @@ Output files:
     data/lamp_train_mixed_bm25k4.jsonl    interleaved + deterministically shuffled
     data/lamp_train_mixed_bm25k4.meta.json  provenance sidecar
 
+The mixed-corpus filename is tagged by task count: exactly the legacy 3-task
+set (LaMP_3,LaMP_4,LaMP_7) keeps the original "mixed" name (so existing
+invocations of this script are byte-for-byte unaffected); any other --tasks
+combination gets "mixed<N>" (e.g. the R7 7-task run writes
+lamp_train_mixed7_bm25k4.jsonl) so it can never collide with A1-lamp's
+existing training corpus.
+
 Each line is one training example:
     {"task": "LaMP_3", "id": "201",
      "system": "<profile context block>",
@@ -79,6 +86,8 @@ def trim(text: str, n: int = ENTRY_CHARS) -> str:
 
 
 # --- Per-task config (MUST stay in sync with eval/eval_lamp.py) --------------
+# Only index_field/format are needed here (no metric/label_universe — this
+# script builds training examples, it doesn't score them).
 TASKS = {
     "LaMP_3": {
         "index_field": lambda it: it.get("text", ""),
@@ -92,7 +101,28 @@ TASKS = {
         "index_field": lambda it: it.get("text", ""),
         "format": lambda it: f'- "{trim(it.get("text", ""))}"',
     },
+    "LaMP_1": {
+        "index_field": lambda it: it.get("abstract", "") or it.get("title", ""),
+        "format": lambda it: f'- "{trim(it.get("title", ""), TITLE_CHARS)}": {trim(it.get("abstract", ""))}',
+    },
+    "LaMP_2_movies": {
+        "index_field": lambda it: it.get("description", ""),
+        "format": lambda it: f'- Movie: "{trim(it.get("description", ""))}" — tagged "{it.get("tag", "?")}"',
+    },
+    "LaMP_2_news": {
+        "index_field": lambda it: it.get("text", ""),
+        "format": lambda it: f'- Article: "{trim(it.get("title", ""), TITLE_CHARS)}": "{trim(it.get("text", ""))}" — categorized "{it.get("category", "?")}"',
+    },
+    "LaMP_5": {
+        "index_field": lambda it: it.get("abstract", "") or it.get("title", ""),
+        "format": lambda it: f'- "{trim(it.get("title", ""), TITLE_CHARS)}": {trim(it.get("abstract", ""))}',
+    },
 }
+
+# The legacy default --tasks set. Used only to decide the mixed-corpus
+# filename tag (see module docstring) — kept as a set so --tasks order
+# doesn't matter.
+LEGACY_MIXED_TASKS = {"LaMP_3", "LaMP_4", "LaMP_7"}
 
 SYSTEM_PREAMBLE = (
     "The following are examples of this user's past activity. "
@@ -320,8 +350,12 @@ def main():
     per_task_paths = {
         t: Path(DATA_OUT_DIR) / f"lamp_train_{t}_{suffix}.jsonl" for t in tasks
     }
-    mixed_path = Path(DATA_OUT_DIR) / f"lamp_train_mixed_{suffix}.jsonl"
-    meta_path = Path(DATA_OUT_DIR) / f"lamp_train_mixed_{suffix}.meta.json"
+    # Mixed-corpus filename tag: legacy 3-task set keeps "mixed" (byte-for-byte
+    # unaffected default behavior); any other --tasks combo (e.g. R7's 7-task
+    # run) gets "mixed<N>" so it never collides with the existing corpus.
+    mixed_tag = "mixed" if set(tasks) == LEGACY_MIXED_TASKS else f"mixed{len(tasks)}"
+    mixed_path = Path(DATA_OUT_DIR) / f"lamp_train_{mixed_tag}_{suffix}.jsonl"
+    meta_path = Path(DATA_OUT_DIR) / f"lamp_train_{mixed_tag}_{suffix}.meta.json"
 
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
