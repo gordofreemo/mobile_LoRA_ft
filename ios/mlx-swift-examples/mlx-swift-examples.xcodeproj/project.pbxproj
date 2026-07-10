@@ -1125,7 +1125,7 @@
 				C32A18442D00E13E0092A5B6 /* XCRemoteSwiftPackageReference "mlx-swift" */,
 				C3EA7F522F8431BE0054AEA3 /* XCRemoteSwiftPackageReference "swift-huggingface" */,
 				C3EA7F532F8432080054AEA3 /* XCRemoteSwiftPackageReference "swift-transformers" */,
-				C36941322F8F489800810A49 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				C36941322F8F489800810A49 /* XCLocalSwiftPackageReference "../mlx-swift-lm-local" */,
 			);
 			productRefGroup = C39273752B606A0A00368D5D /* Products */;
 			projectDirPath = "";
@@ -3889,6 +3889,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Libraries/..;
 		};
+		C36941322F8F489800810A49 /* XCLocalSwiftPackageReference "../mlx-swift-lm-local" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../mlx-swift-lm-local";
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -3914,14 +3918,6 @@
 			requirement = {
 				kind = exactVersion;
 				version = 6.0.1;
-			};
-		};
-		C36941322F8F489800810A49 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.31.3;
 			};
 		};
 		C36BEFF02BC32A8C002D4AFE /* XCRemoteSwiftPackageReference "Progress" */ = {

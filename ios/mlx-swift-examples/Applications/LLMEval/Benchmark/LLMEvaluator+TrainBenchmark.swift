@@ -43,6 +43,11 @@ import MLXOptimizers
     import UIKit
 #endif
 
+/// Serializes concurrent appends to the E2E JSONL from the off-actor train
+/// callback and the main-actor battery sampler. File scope so it is reachable
+/// from `nonisolated` writers (a `@MainActor`-class static `let` would not be).
+private let e2eFileLock = NSLock()
+
 extension LLMEvaluator {
 
     // MARK: - Launch mode
@@ -50,6 +55,8 @@ extension LLMEvaluator {
     /// True when the app was launched to run the training benchmark.
     static var trainBenchmarkLaunchMode: TrainBenchLaunchMode? {
         let args = CommandLine.arguments
+        // E2E (h5) is a distinct exact arg — check first.
+        if args.contains("--benchmark-train-e2e") { return .e2e }
         if args.contains("--benchmark-train-stress") { return .stress }
         if args.contains("--benchmark-train") { return .full }
         return nil
@@ -60,6 +67,30 @@ extension LLMEvaluator {
         case full
         /// Sustained single run: 200 steps at batchSize=1 only, no interruptions.
         case stress
+        /// E2E (h5): one real user trained to completion (3×n_user iters), save
+        /// adapter, capture loss + timed battery. See runE2ETrainBenchmark.
+        case e2e
+    }
+
+    /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
+    private static func launchArgValue(_ flag: String) -> String? {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }
+
+    /// `--user <fingerprint>` — which side-loaded per-user dataset to train (E2E).
+    static var trainBenchmarkUser: String? { launchArgValue("--user") }
+
+    /// `--condition <label>` — staged physical condition (C0/C1/C2/C4); logged
+    /// verbatim in every E2E record. Defaults to "unlabeled".
+    static var trainBenchmarkCondition: String { launchArgValue("--condition") ?? "unlabeled" }
+
+    /// `--max-iters <N>` — cap the iteration count (for the SHORT smoke run of
+    /// execution-order step 1). Absent → full 3×n_user.
+    static var trainBenchmarkMaxIters: Int? {
+        guard let v = launchArgValue("--max-iters") else { return nil }
+        return Int(v)
     }
 
     // MARK: - Per-window sample (collected off-actor, written on main)
@@ -90,6 +121,16 @@ extension LLMEvaluator {
 
     /// Run the training benchmark and exit. Safe to call once on launch.
     func runTrainBenchmark(mode: TrainBenchLaunchMode) async {
+        // E2E (h5) is a separate orchestration path (real user, to completion,
+        // save adapter, timed battery); the cap-sweep below is untouched.
+        if mode == .e2e {
+            await runE2ETrainBenchmark(
+                user: Self.trainBenchmarkUser,
+                condition: Self.trainBenchmarkCondition,
+                maxIters: Self.trainBenchmarkMaxIters)
+            return
+        }
+
         enableThinking = false
 
         #if canImport(UIKit)
@@ -206,6 +247,15 @@ extension LLMEvaluator {
                         keys: TrainBenchConstants.loraKeys))
                 _ = try LoRAContainer.from(model: ctx.model, configuration: config)
 
+                // h4: enable per-transformer-block gradient checkpointing on the
+                // model (no-op for any non-SmolLM3 model). The model's forward
+                // reads each block's trainable params at call time, so this is
+                // set after LoRA is applied. See TrainBenchConstants /
+                // SmolLM3Model.useGradientCheckpoint.
+                if TrainBenchConstants.gradientCheckpointing {
+                    (ctx.model as? SmolLM3Model)?.useGradientCheckpoint = true
+                }
+
                 // Cap sequence length (see capExamples). Done inside perform so
                 // the model tokenizer is in scope.
                 let capTrain = Self.capExamples(
@@ -309,6 +359,330 @@ extension LLMEvaluator {
         exit(0)
     }
 
+    // MARK: - E2E (h5) — real per-user to-completion training
+
+    /// Immutable per-run context, built once on the main actor and passed into
+    /// the nonisolated record builders (so the off-actor train callback and the
+    /// main-actor battery sampler stamp identical run metadata).
+    struct E2ERunContext: Sendable {
+        let user: String
+        let profileSize: Int
+        let condition: String
+        let nUser: Int
+        let iterations: Int
+        let seqCap: Int
+        let modelName: String
+        let sessionId: String
+    }
+
+    /// Train ONE real user's LaMP-3 User-LoRA to completion (3 epochs =
+    /// `3 × n_user` iterations, or `maxIters` for the smoke run), stacked on the
+    /// fused A1-lamp 4-bit base, with the faithful R5 recipe (AdamW wd=0.01, r=8
+    /// q+v, GC on, cap 1024). Saves the adapter, captures training loss per
+    /// window, and samples battery on a wall-clock timer. Records are written
+    /// INCREMENTALLY so a jetsam in a multi-hour run leaves every completed
+    /// window on disk. Then exits.
+    func runE2ETrainBenchmark(user: String?, condition: String, maxIters: Int?) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        guard let user, !user.isEmpty else {
+            tlog("E2E: missing --user <fingerprint>")
+            benchLogLine("E2E FAILED: missing --user <fingerprint>")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("E2E start session=\(sessionId) user=\(user) condition=\(condition) "
+            + "build=\(TrainBenchConstants.appBuild)")
+        benchLogLine("E2E start session=\(sessionId) user=\(user) condition=\(condition)")
+
+        // Side-loaded per-user data from Documents (pushed via devicectl copy).
+        guard let trainData = Self.loadE2EUserData(user: user), !trainData.isEmpty else {
+            tlog("E2E FAILED to load user data for \(user) "
+                + "(expected Documents/\(TrainBenchConstants.e2eDataDirName)/lamp3_\(user).jsonl)")
+            benchLogLine("E2E FAILED to load user data for \(user)")
+            finishTrainBenchmark()
+            return
+        }
+        let nUser = trainData.count
+        var iterations = TrainBenchConstants.e2eEpochs * nUser
+        if let cap = maxIters, cap > 0 { iterations = min(iterations, cap) }
+        tlog("E2E user=\(user) nUser=\(nUser) iterations=\(iterations) "
+            + "(maxIters=\(maxIters.map(String.init) ?? "none"))")
+        benchLogLine("E2E loaded nUser=\(nUser) iterations=\(iterations)")
+
+        // Adapter save path (Documents/e2e_adapters/adapter_<fp>.safetensors).
+        let adapterURL = Self.e2eAdapterURL(user: user)
+        try? FileManager.default.createDirectory(
+            at: adapterURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        // Load model (outside the measured window).
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("E2E model load failed: \(error)")
+            benchLogLine("E2E model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("E2E model loaded")
+
+        let modelName =
+            modelConfiguration.name.components(separatedBy: "/").last
+            ?? modelConfiguration.name
+        let ctx = E2ERunContext(
+            user: user, profileSize: nUser, condition: condition, nUser: nUser,
+            iterations: iterations, seqCap: TrainBenchConstants.e2eSeqCap,
+            modelName: modelName, sessionId: sessionId)
+
+        // A wall-clock origin shared by every elapsed_s column (battery + train).
+        let benchStart = Date.timeIntervalSinceReferenceDate
+
+        let batteryStart = Self.batterySnapshot()
+        Self.appendE2EMarker(
+            ctx, recordType: "run_start",
+            extra: [
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "thermal_state": Self.thermalString(),
+                "adapter_url": adapterURL.lastPathComponent,
+            ])
+
+        // Timed battery sampler on the main actor (UIDevice is @MainActor). Runs
+        // concurrently with the off-actor training loop; cancelled at the end.
+        let batterySampler = Task { @MainActor in
+            while !Task.isCancelled {
+                let snap = Self.batterySnapshot()
+                Self.appendE2EBattery(
+                    ctx,
+                    elapsed: Date.timeIntervalSinceReferenceDate - benchStart,
+                    level: snap.level, charging: snap.charging,
+                    thermal: Self.thermalString(),
+                    lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                    peak: Memory.snapshot().peakMemory)
+                try? await Task.sleep(for: .seconds(TrainBenchConstants.e2eBatterySampleSeconds))
+            }
+        }
+
+        var trainError: String? = nil
+        do {
+            try await container.perform { mc in
+                // OPPU LoRA: r=8, q+v only, all 28 layers (fresh adapter stacked
+                // on the already-fused A1-lamp base weights).
+                let config = LoRAConfiguration(
+                    numLayers: TrainBenchConstants.loraLayers,
+                    loraParameters: .init(
+                        rank: TrainBenchConstants.loraRank,
+                        scale: TrainBenchConstants.loraScale,
+                        keys: TrainBenchConstants.loraKeys))
+                _ = try LoRAContainer.from(model: mc.model, configuration: config)
+
+                // Per-block gradient checkpointing (h4 infra) — required to fit
+                // real seq lengths at cap 1024.
+                if TrainBenchConstants.gradientCheckpointing {
+                    (mc.model as? SmolLM3Model)?.useGradientCheckpoint = true
+                }
+
+                let capTrain = Self.capExamples(
+                    trainData, cap: ctx.seqCap, tokenizer: mc.tokenizer)
+                // 1-example validation stub: LoRATrain forces one validation at
+                // iter 0 regardless of stepsPerEval; its event is ignored.
+                let capValid = Array(capTrain.prefix(1))
+                self.tlog("E2E LoRA applied, starting train iterations=\(iterations)")
+
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.e2eBatchSize,
+                    iterations: iterations,
+                    stepsPerReport: TrainBenchConstants.e2eStepsPerReport,
+                    stepsPerEval: iterations + 1,
+                    validationBatches: 0,
+                    // Save once at the final iteration: (iter+1) % saveEvery == 0
+                    // fires exactly at the last step.
+                    saveEvery: iterations,
+                    adapterURL: adapterURL)
+
+                // Faithful R5 optimizer: AdamW, LR 1e-5, wd 0.01, bias-corrected
+                // to match `adamw_torch`.
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: mc.model, train: capTrain, validate: capValid,
+                    optimizer: optimizer, tokenizer: mc.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train(let iter, let loss, let ips, let tps):
+                        Self.appendE2ETrainWindow(
+                            ctx, step: iter + 1, loss: loss, ips: ips, tps: tps,
+                            elapsed: Date.timeIntervalSinceReferenceDate - benchStart,
+                            peak: Memory.snapshot().peakMemory,
+                            thermal: Self.thermalString(),
+                            lpm: ProcessInfo.processInfo.isLowPowerModeEnabled)
+                        // Re-arm peak counter for the next window (read-then-reset).
+                        GPU.resetPeakMemory()
+                    case .save(let it, let url):
+                        self.tlog("E2E saved adapter @iter \(it + 1) -> \(url.lastPathComponent)")
+                    case .validation:
+                        break
+                    }
+                    return .more
+                }
+            }
+        } catch {
+            trainError = "\(error)"
+            tlog("E2E training error (possible OOM/jetsam): \(error)")
+            benchLogLine("E2E training error: \(error)")
+        }
+
+        batterySampler.cancel()
+        let batteryEnd = Self.batterySnapshot()
+        let adapterSaved = FileManager.default.fileExists(atPath: adapterURL.path)
+        Self.appendE2EMarker(
+            ctx, recordType: trainError == nil ? "run_end" : "error",
+            extra: [
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "thermal_state": Self.thermalString(),
+                "elapsed_s": Date.timeIntervalSinceReferenceDate - benchStart,
+                "adapter_saved": adapterSaved,
+                "error": trainError ?? NSNull(),
+            ])
+        tlog("E2E complete user=\(user) adapter_saved=\(adapterSaved) error=\(trainError ?? "none")")
+        benchLogLine("E2E complete user=\(user) adapter_saved=\(adapterSaved)")
+        finishTrainBenchmark()
+    }
+
+    // MARK: - E2E data + adapter paths
+
+    /// Load the side-loaded `{"text": ...}` per-user dataset from
+    /// `Documents/<e2eDataDirName>/lamp3_<fp>.jsonl` (no bundle fallback — the
+    /// per-user data is device-local and pushed via devicectl).
+    private nonisolated static func loadE2EUserData(user: String) -> [String]? {
+        let url = URL.documentsDirectory
+            .appendingPathComponent(TrainBenchConstants.e2eDataDirName)
+            .appendingPathComponent("lamp3_\(user).jsonl")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? MLXLLM.loadLoRAData(url: url)
+    }
+
+    private nonisolated static func e2eAdapterURL(user: String) -> URL {
+        URL.documentsDirectory
+            .appendingPathComponent(TrainBenchConstants.e2eAdapterDirName)
+            .appendingPathComponent("adapter_\(user).safetensors")
+    }
+
+    // MARK: - E2E record builders (nonisolated → callable from the train callback)
+
+    private nonisolated static func e2eBaseRecord(_ c: E2ERunContext, recordType: String) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "user_fingerprint": c.user,
+            "profile_size": c.profileSize,
+            "condition": c.condition,
+            "n_user": c.nUser,
+            "iterations_total": c.iterations,
+            "seq_cap": c.seqCap,
+            "batch_size": TrainBenchConstants.e2eBatchSize,
+            "epochs": TrainBenchConstants.e2eEpochs,
+            "model": c.modelName,
+            "lora_rank": TrainBenchConstants.loraRank,
+            "lora_keys": TrainBenchConstants.loraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.loraLayers,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
+            "optimizer": "adamw",
+            "learning_rate": TrainBenchConstants.e2eLearningRate,
+            "weight_decay": TrainBenchConstants.e2eWeightDecay,
+            "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
+            "steps_per_report": TrainBenchConstants.e2eStepsPerReport,
+            "app_build": TrainBenchConstants.appBuild,
+            "bench_schema_version": TrainBenchConstants.schemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": c.sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    private nonisolated static func appendE2ETrainWindow(
+        _ c: E2ERunContext, step: Int, loss: Float, ips: Double, tps: Double,
+        elapsed: Double, peak: Int, thermal: String, lpm: Bool
+    ) {
+        var r = e2eBaseRecord(c, recordType: "train")
+        r["step"] = step
+        r["training_loss"] = Double(loss)
+        r["iter_per_sec"] = ips
+        r["tok_per_sec"] = tps
+        r["elapsed_s"] = elapsed
+        r["peak_mem_bytes"] = peak
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        emitE2E(r)
+    }
+
+    private nonisolated static func appendE2EBattery(
+        _ c: E2ERunContext, elapsed: Double, level: Double, charging: Bool,
+        thermal: String, lpm: Bool, peak: Int
+    ) {
+        var r = e2eBaseRecord(c, recordType: "battery")
+        r["elapsed_s"] = elapsed
+        r["battery_level"] = level
+        r["charging"] = charging
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["peak_mem_bytes"] = peak
+        emitE2E(r)
+    }
+
+    private nonisolated static func appendE2EMarker(
+        _ c: E2ERunContext, recordType: String, extra: [String: Any]
+    ) {
+        var r = e2eBaseRecord(c, recordType: recordType)
+        for (k, v) in extra { r[k] = v }
+        emitE2E(r)
+    }
+
+    /// Serialize + append one E2E record to `train_bench_metrics_e2e.jsonl`.
+    /// nonisolated + lock-guarded (see file-scope `e2eFileLock`): the off-actor
+    /// train callback and the main-actor battery sampler both write concurrently.
+    private nonisolated static func emitE2E(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.e2eMetricsFileName)
+        e2eFileLock.lock()
+        defer { e2eFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash a multi-hour run
+        }
+    }
+
     /// Unbuffered stderr line — visible in `devicectl ... launch --console`
     /// (os_log via `benchLogLine` is NOT). Used for milestone tracing so a hard
     /// jetsam/SIGKILL leaves a breadcrumb trail in the console.
@@ -396,6 +770,8 @@ extension LLMEvaluator {
             "lora_keys": TrainBenchConstants.loraKeysLabel,
             "num_lora_layers": TrainBenchConstants.loraLayers,
             "num_train_examples": nTrain,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
             "iterations_total": TrainBenchConstants.iterations,
             "steps_per_report": TrainBenchConstants.stepsPerReport,
             "app_build": TrainBenchConstants.appBuild,
@@ -439,6 +815,8 @@ extension LLMEvaluator {
             "lora_keys": TrainBenchConstants.loraKeysLabel,
             "num_lora_layers": TrainBenchConstants.loraLayers,
             "num_train_examples": nTrain,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
             "iterations_total": TrainBenchConstants.iterations,
             "steps_per_report": TrainBenchConstants.stepsPerReport,
             "app_build": TrainBenchConstants.appBuild,
@@ -476,6 +854,8 @@ extension LLMEvaluator {
             "lora_keys": TrainBenchConstants.loraKeysLabel,
             "num_lora_layers": TrainBenchConstants.loraLayers,
             "num_train_examples": nTrain,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
             "iterations_total": TrainBenchConstants.iterations,
             "steps_per_report": TrainBenchConstants.stepsPerReport,
             "app_build": TrainBenchConstants.appBuild,

@@ -1,0 +1,86 @@
+[
+  {
+    "user": "u00008075",
+    "snapshot_id": "908075",
+    "profile_size": 405,
+    "n_examples": 405,
+    "stats": {
+      "n_written": 405,
+      "n_skipped_empty": 0,
+      "n_dropped_no_date": 0,
+      "n_examples_with_empty_pool": 1
+    },
+    "max_tok": 1190,
+    "out": "data/ondevice_user_data/lamp3_u00008075.jsonl"
+  },
+  {
+    "user": "u00005228",
+    "snapshot_id": "905228",
+    "profile_size": 448,
+    "n_examples": 448,
+    "stats": {
+      "n_written": 448,
+      "n_skipped_empty": 0,
+      "n_dropped_no_date": 0,
+      "n_examples_with_empty_pool": 1
+    },
+    "max_tok": 2385,
+    "out": "data/ondevice_user_data/lamp3_u00005228.jsonl"
+  },
+  {
+    "user": "u00011077",
+    "snapshot_id": "9011077",
+    "profile_size": 500,
+    "n_examples": 500,
+    "stats": {
+      "n_written": 500,
+      "n_skipped_empty": 0,
+      "n_dropped_no_date": 0,
+      "n_examples_with_empty_pool": 1
+    },
+    "max_tok": 1347,
+    "out": "data/ondevice_user_data/lamp3_u00011077.jsonl"
+  },
+  {
+    "user": "u00005020",
+    "snapshot_id": "905020",
+    "profile_size": 550,
+    "n_examples": 550,
+    "stats": {
+      "n_written": 550,
+      "n_skipped_empty": 0,
+      "n_dropped_no_date": 0,
+      "n_examples_with_empty_pool": 1
+    },
+    "max_tok": 1621,
+    "out": "data/ondevice_user_data/lamp3_u00005020.jsonl"
+  },
+  {
+    "user": "u00013218",
+    "snapshot_id": "9013218",
+    "profile_size": 653,
+    "n_examples": 653,
+    "stats": {
+      "n_written": 653,
+      "n_skipped_empty": 0,
+      "n_dropped_no_date": 0,
+      "n_examples_with_empty_pool": 1
+    },
+    "max_tok": 2282,
+    "out": "data/ondevice_user_data/lamp3_u00013218.jsonl"
+  },
+  {
+    "user": "u00012502",
+    "snapshot_id": "9012502",
+    "profile_size": 987,
+    "n_examples": 987,
+    "stats": {
+      "n_written": 987,
+      "n_skipped_empty": 0,
+      "n_dropped_no_date": 0,
+      "n_examples_with_empty_pool": 2
+    },
+    "max_tok": 1361,
+    "out": "data/ondevice_user_data/lamp3_u00012502.jsonl"
+  }
+]

@@ -22,6 +22,7 @@ extension LLMEvaluator {
     static var benchmarkLaunchMode: BenchLaunchMode? {
         let args = CommandLine.arguments
         if args.contains("--benchmark-cold") { return .coldOnly }
+        if args.contains("--benchmark-stress-capped") { return .stressCapped }
         if args.contains("--benchmark-tail") { return .tail }
         if args.contains("--benchmark") { return .full }
         return nil
@@ -34,6 +35,9 @@ extension LLMEvaluator {
         /// long-tail cells be captured in a separate, time-bounded launch when the
         /// full grid would otherwise overrun a single `--console` session.
         case tail
+        /// Capped-stress only (h4): cool to nominal, then repeated 128-token forced
+        /// generations back-to-back for 10 min. Bursty-workload throttle curve.
+        case stressCapped
     }
 
     // MARK: - Entry point
@@ -63,6 +67,17 @@ extension LLMEvaluator {
             return
         }
         let modelLoadMs = (Date.timeIntervalSinceReferenceDate - loadStart) * 1000
+
+        // Capped-stress mode (h4): cool to nominal, then repeated fixed-length
+        // generations back-to-back for 10 min. Separate launch, its own JSONL.
+        if mode == .stressCapped {
+            benchLogLine("cooling to nominal before capped stress …")
+            await cooldown()
+            await runStressCapped(container: container, sessionId: sessionId)
+            benchLogLine("capped-stress benchmark complete session=\(sessionId)")
+            finishBenchmark()
+            return
+        }
 
         // Tail mode: realistic + stress only (the long-tail cells), separate launch.
         if mode == .tail {
@@ -200,6 +215,50 @@ extension LLMEvaluator {
         }
     }
 
+    /// Capped-stress run (h4): back-to-back fixed-length generations for
+    /// `stressCappedMaxSeconds`, each capped at `stressCappedGenTokens` forced
+    /// decode tokens with a fresh prefill of the standard 256-token prompt. One
+    /// record per generation, carrying its decode tok/s, the running cumulative
+    /// token count, and wall seconds since the stress loop began. Models the
+    /// bursty "many short queries" workload; the throttle curve is decode tok/s
+    /// vs elapsed wall time.
+    private func runStressCapped(container: ModelContainer, sessionId: String) async {
+        let promptText = await paddedUserText(
+            container: container, targetPromptTokens: BenchConstants.decodePromptTarget)
+        let input = Self.userOnlyInput(promptText)
+
+        let loopStart = Date.timeIntervalSinceReferenceDate
+        var genOrdinal = 0
+        var cumulativeTokens = 0
+
+        while Date.timeIntervalSinceReferenceDate - loopStart < BenchConstants.stressCappedMaxSeconds {
+            let device = DeviceState.snapshot()
+            do {
+                let m = try await container.perform(nonSendable: input) { ctx, ui in
+                    try await measureGeneration(
+                        context: ctx, userInput: ui,
+                        maxTokens: BenchConstants.stressCappedGenTokens, forced: true)
+                }
+                genOrdinal += 1
+                cumulativeTokens += m.genTokens
+                let elapsed = Date.timeIntervalSinceReferenceDate - loopStart
+                writeRecord(
+                    cell: .stress, m: m, targetPrompt: BenchConstants.decodePromptTarget,
+                    targetGen: BenchConstants.stressCappedGenTokens,
+                    maxTokens: BenchConstants.stressCappedGenTokens, forced: true,
+                    warmup: false, cold: false, modelLoadMs: nil, repeatIdx: genOrdinal,
+                    device: device, sessionId: sessionId,
+                    segment: SegmentSample(
+                        idx: genOrdinal, cumulativeTokens: cumulativeTokens,
+                        genTps: m.genTps, elapsedS: elapsed))
+            } catch {
+                benchLogLine("capped-stress gen \(genOrdinal + 1) failed: \(error)")
+                break
+            }
+        }
+        benchLogLine("capped-stress complete gens=\(genOrdinal) totalTokens=\(cumulativeTokens)")
+    }
+
     /// Cooldown gated on `thermalState == nominal`, capped (decision 6).
     private func cooldown() async {
         let start = Date.timeIntervalSinceReferenceDate
@@ -319,6 +378,8 @@ extension LLMEvaluator {
             // Stress segment fields (null elsewhere).
             "segment_idx": segment?.idx ?? NSNull(),
             "cumulative_tokens": segment?.cumulativeTokens ?? NSNull(),
+            // Wall seconds since the capped-stress loop began (capped stress only).
+            "stress_elapsed_s": segment?.elapsedS ?? NSNull(),
         ]
 
         guard

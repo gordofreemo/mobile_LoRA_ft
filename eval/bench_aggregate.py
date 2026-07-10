@@ -129,6 +129,8 @@ def summarize_stress(records):
             "cumulative_tokens": r.get("cumulative_tokens"),
             "gen_tps": r.get("gen_tps"),
             "thermal_state": r.get("thermal_state"),
+            # Real wall-clock elapsed (capped-stress h4); None for continuous stress.
+            "elapsed_s": r.get("stress_elapsed_s"),
         }
         for r in seg
     ]
@@ -144,6 +146,7 @@ def summarize_stress(records):
             100.0 * (tps[0] - min(tps)) / tps[0] if tps and tps[0] else None
         ),
         "thermal_states": _counts(r.get("thermal_state") for r in seg),
+        "peak_mem_bytes": describe([r.get("peak_mem_bytes") for r in seg]),
         "decay": decay,
     }
 
