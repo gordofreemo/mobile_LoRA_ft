@@ -21,3 +21,6 @@ train/config/user_lora_lamp4_oppu_u*.json
 ios/mlx-swift-examples/build/
 ios/mlx-swift-examples/**/xcuserdata/
 ios/mlx-swift-examples/**/*.xcuserstate
+# mlx-swift-lm vendored as a LOCAL SPM override (Phase 3 gradient-checkpointing
+# experiment): track the source, ignore SPM build output.
+ios/mlx-swift-lm-local/.build/

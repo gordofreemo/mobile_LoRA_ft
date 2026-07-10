@@ -20,14 +20,39 @@ enum TrainBenchConstants {
     /// batch-size sweep to a sequence-length-cap sweep at batchSize=1 to find
     /// the feasible boundary + OOM threshold (records persist per window; a
     /// `cap_start` sentinel marks the OOM'd cap).
-    static let appBuild = "smollm3-ondevice-train-bench-h3"
-    static let schemaVersion = 1
+    /// h4 (2026-06-30): GRADIENT-CHECKPOINTING variant. Per-transformer-block
+    /// gradient checkpointing (all 28 blocks) added via a local mlx-swift-lm SPM
+    /// override (`ios/mlx-swift-lm-local`, `SmolLM3Model.useGradientCheckpoint`).
+    /// Same cap sweep as h3 + cap=1024 stretch. Writes a SEPARATE JSONL
+    /// (`train_bench_metrics_gc.jsonl`) so a mid-run jetsam can't corrupt the
+    /// naive records. See experiments/2026-06-29-ondevice-training-gc-plan.md.
+    /// h5 (2026-07-06): E2E per-user run — NEW mode (`--benchmark-train-e2e
+    /// --user <fp>`, `runE2ETrainBenchmark`). Trains a REAL top-100 LaMP-3
+    /// User-LoRA to completion (3 epochs = `3 × n_user` iterations) on the
+    /// side-loaded per-user data with the faithful R5 recipe (AdamW, GC on,
+    /// cap 1024, save adapter), and captures training loss + timed battery.
+    /// Writes a SEPARATE JSONL (`train_bench_metrics_e2e.jsonl`); records are
+    /// written INCREMENTALLY (per window, from the train callback) so a jetsam
+    /// in a multi-hour run leaves every completed window on disk. The h1–h4
+    /// cap-sweep path (`runTrainBenchmark`) is untouched. See
+    /// experiments/2026-07-03-ondevice-e2e-training-plan.md.
+    static let appBuild = "smollm3-ondevice-train-e2e-h5"
+    static let schemaVersion = 2
 
     /// Build-time git provenance, stamped by hand at build time (same discipline
     /// as the inference harness — avoids fragile project.pbxproj build-phase
     /// surgery). Update alongside `appBuild` when re-baking before a run.
-    static let gitCommit = "b748761"
+    static let gitCommit = "9ba9f06"
     static let gitDirty = true
+
+    // --- Gradient-checkpointing flags (h4) -----------------------------------
+    /// Baked into every record so GC runs are unambiguously distinguishable from
+    /// the naive (h3) baseline even though both share the cap-sweep schema.
+    static let gradientCheckpointing = true
+    /// Granularity of the checkpoint unit. "per_block" = one `mx.checkpoint`-
+    /// equivalent boundary per transformer block (all 28), the maximum-savings
+    /// configuration matching mlx_lm's `--grad-checkpoint`.
+    static let checkpointGranularity = "per_block"
 
     /// Steps per run cell (decision 7/8): 200 training iterations.
     static let iterations = 200
@@ -78,6 +103,60 @@ enum TrainBenchConstants {
     static let trainResource = "lora_train"
     static let validResource = "lora_valid"
 
-    /// Output JSONL in the app sandbox (separate from inference `bench_metrics.jsonl`).
-    static let metricsFileName = "train_bench_metrics.jsonl"
+    /// Output JSONL in the app sandbox. Separate from BOTH the inference
+    /// harness's `bench_metrics.jsonl` AND the naive (h3) run's
+    /// `train_bench_metrics.jsonl`, so a GC jetsam can't corrupt naive records
+    /// and the two runs can be pulled/aggregated independently.
+    static let metricsFileName = "train_bench_metrics_gc.jsonl"
+
+    // =========================================================================
+    // E2E (h5) — real per-user to-completion training. Constants used only by
+    // `runE2ETrainBenchmark`; the h1–h4 cap-sweep constants above are unchanged.
+    // =========================================================================
+
+    /// Separate JSONL for the E2E run (never mixes with the cap-sweep files, so
+    /// a mid-run jetsam can't corrupt prior runs and each is pulled/aggregated
+    /// independently).
+    static let e2eMetricsFileName = "train_bench_metrics_e2e.jsonl"
+
+    /// Side-loaded per-user data lives at
+    /// `Documents/<e2eDataDirName>/lamp3_<fp>.jsonl` (pushed via
+    /// `devicectl device copy to`). Rendered `{"text": ...}` lines.
+    static let e2eDataDirName = "user_data"
+
+    /// Saved adapters go to `Documents/<e2eAdapterDirName>/adapter_<fp>.safetensors`
+    /// (weights persisted for the fidelity / optional-accuracy check).
+    static let e2eAdapterDirName = "e2e_adapters"
+
+    /// Epochs over the user's data. `iterations = e2eEpochs × n_user` at batch 1
+    /// (the LoRABatchIterator reshuffles on exhaustion), matching R5's 3 epochs
+    /// on a data-coverage basis.
+    static let e2eEpochs = 3
+
+    /// Sequence-length cap (GC ceiling; some LaMP-3 examples exceed this and are
+    /// truncated — documented forced deviation from R5's uncapped 7168).
+    static let e2eSeqCap = 1024
+
+    /// Batch 1 (no grad-accum in the stock trainer; batch≥2 at real seq length
+    /// jetsams). Forced deviation from R5's effective-8.
+    static let e2eBatchSize = 1
+
+    /// Loss-reporting / record-emission cadence. Matches R5's logging_steps=10;
+    /// the reported loss is the mean over the window. For L (987×3≈2961 iters)
+    /// this is ~296 records — fine-grained enough for the fidelity overlay,
+    /// coarse enough to keep the JSONL small.
+    static let e2eStepsPerReport = 10
+
+    /// Faithful R5 optimizer: AdamW, LR 1e-5, weight-decay 0.01 (== R5 L2).
+    static let e2eLearningRate: Float = 1e-5
+    static let e2eWeightDecay: Float = 0.01
+    /// R5 used `adamw_torch`, which bias-corrects the moment estimates; MLX's
+    /// AdamW defaults `biasCorrection=false`. Set true to match PyTorch AdamW.
+    static let e2eAdamBiasCorrection = true
+
+    /// Timed battery-sampling cadence (wall-clock seconds). Independent of the
+    /// per-window train records so the C2 (unplugged) drain curve has real
+    /// wall-clock resolution over a multi-hour run. UIDevice is @MainActor, so
+    /// these samples are taken on the main actor while training runs off-actor.
+    static let e2eBatterySampleSeconds = 30.0
 }

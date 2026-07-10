@@ -51,15 +51,20 @@ class LLMEvaluator {
     private var generationTimer: Timer?
     private var firstTokenTime: TimeInterval = 0
 
-    /// This controls which model loads. Currently `mlx-community/SmolLM3-3B-4bit`
-    /// (downloaded on-device from the Hugging Face Hub) — the subject of the
-    /// Phase-3 on-device naive LoRA-training benchmark (2026-06-29). First-class
-    /// `smollm3` arch + `LoRAModel` conformance in mlx-swift-lm; thinking-off via
-    /// `enable_thinking:false`. Was temporarily `mlx-community/Qwen3-8B-4bit` for
-    /// the 7B-class inference characterization (2026-06-22); flip the id back for
-    /// that (both models stay cached on-device).
+    /// This controls which model loads. Currently `ageyko/SmolLM3-3B-a1lamp-4bit`
+    /// (downloaded on-device from the Hugging Face Hub) — SmolLM3-3B with the
+    /// A1-lamp Task-LoRA FUSED into the base, 4-bit MLX. This is the deployment
+    /// base for the Phase-3 E2E on-device per-user User-LoRA training run
+    /// (2026-07-06): the fresh q+v User-LoRA is stacked on this fused base,
+    /// mathematically matching the cluster R5 `--base-adapter` stacking.
+    /// First-class `smollm3` arch + `LoRAModel` conformance in mlx-swift-lm;
+    /// thinking-off via `enable_thinking:false`.
+    /// Other ids used earlier (all stay cached on-device): the un-fused base
+    /// `mlx-community/SmolLM3-3B-4bit` (inference + naive-training benchmarks),
+    /// `mlx-community/Qwen3-8B-4bit` (7B-class characterization) — flip the id
+    /// back for those.
     var modelConfiguration = ModelConfiguration(
-        id: "mlx-community/SmolLM3-3B-4bit",
+        id: "ageyko/SmolLM3-3B-a1lamp-4bit",
         defaultPrompt: "Why is the sky blue?"
     )
 

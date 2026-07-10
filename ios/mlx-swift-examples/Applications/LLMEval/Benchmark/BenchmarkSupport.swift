@@ -26,15 +26,19 @@ enum BenchConstants {
     /// h3 (2026-06-22): per-run `Memory.resetPeakMemory()` so `peak_mem_bytes`
     /// is a per-cell peak (not a session high-water mark) + `git_commit`/
     /// `git_dirty` provenance. Subject model is now Qwen3-8B-4bit.
-    static let appBuild = "qwen3-8b-ondevice-bench-h3"
-    static let schemaVersion = 3
+    /// h4 (2026-07-03): capped-stress launch mode (`--benchmark-stress-capped`):
+    /// repeated 128-token forced generations back-to-back for 10 min (bursty
+    /// realistic workload) instead of one continuous decode. One record per
+    /// generation, new `stress_elapsed_s` column (wall seconds from stress start).
+    static let appBuild = "ondevice-bench-stresscap-h4"
+    static let schemaVersion = 4
 
     /// Build-time provenance (decision: h3). Stamped from `git rev-parse
     /// --short HEAD` by the Mac-side build step just before `xcodebuild`, the
     /// same hand-at-build-time discipline as `appBuild` (avoids fragile
     /// project.pbxproj build-phase surgery / source-tree churn). Baked into
     /// every record so a JSONL ties back to the exact harness commit.
-    static let gitCommit = "dc43e62"
+    static let gitCommit = "9ba9f06"
     static let gitDirty = true
 
     // Star grid (decision 5): one axis at a time, not a cross-product.
@@ -57,6 +61,14 @@ enum BenchConstants {
     static let stressMaxSeconds = 300.0
     static let stressSegmentTokens = 256
     static let stressMaxTokens = 60_000
+
+    /// Capped-stress run (h4): repeated fixed-length generations back-to-back for
+    /// `stressCappedMaxSeconds`, each capped at `stressCappedGenTokens` forced
+    /// decode tokens (fresh prefill each time). Models a bursty "many short
+    /// queries" workload rather than one continuous decode. One record per
+    /// generation; the throttle curve is decode tok/s vs wall time.
+    static let stressCappedGenTokens = 128
+    static let stressCappedMaxSeconds = 600.0
 
     /// Inter-cell cooldown is gated on `thermalState == nominal`, capped here
     /// (decision 6) rather than a blind sleep.
@@ -111,11 +123,15 @@ struct DeviceState: Sendable {
 
 // MARK: - Measurement result
 
-/// One stress-run segment: tok/s over a `stressSegmentTokens` window.
+/// One stress-run segment: tok/s over a `stressSegmentTokens` window (continuous
+/// stress), or one full 128-token generation (capped stress). `elapsedS` is wall
+/// seconds from stress start to the end of this sample (capped stress only; nil
+/// for the continuous run, where elapsed is reconstructed from cumulative tok/s).
 struct SegmentSample: Sendable {
     let idx: Int
     let cumulativeTokens: Int
     let genTps: Double
+    let elapsedS: Double?
 }
 
 /// Scalar result of one generation (Sendable so it can cross the `perform`
@@ -214,7 +230,7 @@ func measureGeneration(
                 segments.append(
                     SegmentSample(
                         idx: segIdx, cumulativeTokens: genTokens,
-                        genTps: Double(segCount) / (now - segStart)))
+                        genTps: Double(segCount) / (now - segStart), elapsedS: nil))
                 segStart = now
                 segCount = 0
             }
