@@ -1,0 +1,37 @@
+# R7 (A2-lamp) smoke test for the 4 NEW LaMP task-tracks (LaMP_1,
+# LaMP_2_movies, LaMP_2_news, LaMP_5) — batch (non-interactive) equivalent of
+# manually running `python eval/eval_lamp.py --task <t> --limit 5` in an
+# interactive session. --limit 5 makes eval_lamp.py append a `_limit5` suffix
+# to its output filenames, so this can never collide with the real full-run
+# results (see eval_lamp.py's refuse-to-overwrite + limit_tag logic).
+#
+# Submit directly, no interactive session needed:
+#   condor_submit condor/eval_lamp_r7_newtasks_smoke.sub
+# Then check results:
+#   cat runlogs/eval_lamp_r7_newtasks_smoke.<task>.<cluster>.<proc>.out
+#   ls results/LaMP_1_dev_base_bm25k4_seed0_limit5.*
+# (repeat for LaMP_2_movies / LaMP_2_news / LaMP_5)
+#
+# Once this looks right, submit the real sweep:
+#   condor_submit condor/eval_lamp_r7_newtasks.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+arguments             = --task $(task) --split dev --k 4 --seed 0 --limit 5
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_r7_newtasks_smoke.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_r7_newtasks_smoke.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_r7_newtasks_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (LaMP_1 LaMP_2_movies LaMP_2_news LaMP_5)
