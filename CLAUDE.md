@@ -11,6 +11,7 @@ ran on the cluster; Phase 3 deploys to a real iPhone.
 - **Phase 3 — on-device *cost* training benchmarks (DONE, superseded by E2E above).** Naive baseline **DONE 2026-06-29** (`experiments/2026-06-29-ondevice-training-naive.md`): naive LoRA FT of SmolLM3-3B-4bit jetsams on the first backward step at deployment seq lengths; feasible only to a **256-tok ceiling** (cap=512 OOMs), throttled there (0.41 iter/s, 4.1 GB). **Gradient-checkpointing variant DONE 2026-06-30** (`experiments/2026-06-30-ondevice-training-gc.md`). **Headline:** per-block GC lifts the ceiling **256 → 1024 tok (4×)** — cap=512 AND cap=1024 now train, zero OOM across the full sweep; memory savings grow with seq len (−17% @32 → −41% @256); **GC@1024 (4014 MB) fits in less peak than naive@256 (4128 MB)**; recompute cost ~0.78–0.85× naive iter/s. The bound is now thermal, not memory (cap=1024 = ~52 min/200 steps, `serious`). **Implementation:** per-block checkpoint via public MLX `CustomFunction`+`vjp` (NOT the raw `mlx_checkpoint` C binding — `Cmlx` isn't a public product; the C route would force vendoring mlx-swift too), LoRA params threaded as explicit differentiable inputs. `mlx-swift-lm` is now **vendored as a local SPM override** at `ios/mlx-swift-lm-local/` (replaces the remote pin in `project.pbxproj`; edits confined to `Libraries/MLXLLM/Models/SmolLM3.swift` — `SmolLM3Model.useGradientCheckpoint` flag). No fork of `LoraTrain.swift` needed (flag on the model drives the stock trainer). Harness h4, separate JSONL `train_bench_metrics_gc.jsonl`. (The "stack next MeBP technique" idea is deferred behind the E2E run.)
 - **Phase 3 — base-vs-Task-LoRA inference.** Deferred (was next milestone before training track opened). When resumed: fuse A1-lamp ckpt-1000, convert to MLX, swap `modelConfiguration` id, measure with existing inference rig.
 - **Round 6 (LaMP-4 multi-user) reopened from Phase 2.** Status PRE-EXECUTION as of 2026-06-19. Fresh sessions should check `experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md` (design) and `ls results/paired_compare_*round6*.json` (whether the gate output landed) before proposing anything new in this thread.
+- **Llama-family scale comparison — DONE 2026-06-30.** Writeup: `experiments/2026-06-30-llama-scale-comparison.md`. Headline: **SmolLM3-3B + A1-lamp Task-LoRA beats Llama-3.1-70B-Instruct + BM25 on all three LaMP tasks** (LaMP-3 +0.006, LaMP-4 +0.017, LaMP-7 +0.116). On the K=100 personalization-hard subset, the full two-LoRA stack (Task + User) goes further: acc 0.730 / MAE 0.290 vs Llama-70B+BM25 0.700 / 0.330. Scale alone narrows but does not close the gap to fine-tuning. Aggregator: `eval/tables.py`. Caveats: point estimates only (no CIs); R5's User-LoRA lift is at MDE (p≈0.10), so Table 2 inherits that.
 
 **The "no on-device/mobile code" hard constraint is LIFTED for Phase 3** (it
 remains the historical framing for Phases 1–2).
@@ -129,6 +130,7 @@ Writeup: `experiments/2026-07-03-ondevice-capped-stress.md`. Re-ran the sustaine
 | Q2 — Synthetic preference-conditional data on top of LaMP? | DROPPED with 2026-06-02 pivot. |
 | Q3 — General Task-LoRA vs domain-specific? | DROPPED with 2026-06-02 pivot. |
 | **Q4** — Per-user LoRA on time-ordered user history beyond Task-LoRA alone? | **YES (LaMP-3)** confirmed by R5 (2026-06-19): ΔMAE −0.050, acc 0.680→0.730, RMSE 0.616→0.575, zero inference overhead. R6 LaMP-4 cross-task replication PRE-EXECUTION. |
+| **Q5** — Does the 3B + two-LoRA stack survive a scale comparator (Llama-3.1-{8B,70B}-Instruct + BM25)? | **YES** (2026-06-30): A1-lamp Task-LoRA beats Llama-70B+BM25 on LaMP-3/4/7 by +0.006/+0.017/+0.116; on K=100 LaMP-3 the two-LoRA stack reaches 0.730 acc / 0.290 MAE vs Llama-70B+BM25 0.700 / 0.330. `experiments/2026-06-30-llama-scale-comparison.md`. |
 
 ### Canonical artifacts
 
@@ -211,9 +213,12 @@ Plus **BFCL AST regression** before/after each Task-LoRA training run (target �
 ├── condor/                       # Condor submit files + helper scripts
 │   ├── build_dataset.sub         # CPU: preprocess LaMP train → JSONL
 │   ├── download_model.{py,sub}   # one-time HF Hub pull of SmolLM3-3B
-│   ├── interactive.sub           # GPU shell for smoke tests
+│   ├── download_llama.{py,sub}   # one-time HF Hub pull of Llama-3.1-{8B,70B}-Instruct
+│   ├── interactive.sub           # CPU shell for ad-hoc inspection (uncomment GPU block for smoke tests)
 │   ├── eval_lamp.sub             # LaMP profile-baseline + adapter eval (×3 parallel)
 │   ├── eval_lamp_floor.sub       # LaMP non-personalized floor (×3 parallel)
+│   ├── eval_lamp_llama.sub       # Llama scale comparator, full test sets (12 jobs)
+│   ├── eval_lamp_llama_k100.sub  # Llama scale comparator, K=100 subset (4 jobs)
 │   ├── eval_bfcl.sub             # BFCL AST regression (1 GPU, all categories)
 │   ├── train.sub                 # superseded (2-epoch A1-lamp)
 │   ├── train_1ep.sub             # canonical (1-epoch A1-lamp)
@@ -226,6 +231,7 @@ Plus **BFCL AST regression** before/after each Task-LoRA training run (target �
 │   ├── lamp_user_stats.py        # per-user record-count analysis
 │   ├── lamp_user_stats/          # per-task user CSVs + R5/R6 top-K JSONs
 │   ├── models/SmolLM3-3B/        # downloaded weights (~6 GB)
+│   ├── models/Llama-3.1-{8B,70B}-Instruct → /scratch/<group>/<user>/models/  # symlinks; ~16 + ~141 GB on /scratch
 │   ├── lamp_train_*_bm25k4.jsonl # built by build_dataset.py
 │   └── lamp_train_mixed_bm25k4.meta.json
 ├── train/
@@ -238,11 +244,12 @@ Plus **BFCL AST regression** before/after each Task-LoRA training run (target �
 │   │   └── user_lora_*.json      # R5/R6 OPPU templates
 │   └── checkpoints/              # training output (gitignored)
 ├── eval/
-│   ├── eval_lamp.py              # LaMP harness (BM25 k=4, refuse-to-overwrite, --base-adapter, --user-records)
+│   ├── eval_lamp.py              # LaMP harness (BM25 k=4, refuse-to-overwrite, --base-adapter, --user-records, --user-records-from-file, --resume, --device-map)
 │   ├── eval_bfcl.py              # BFCL via bfcl-eval's ast_checker as a library
 │   ├── paired_compare.py         # single-user paired stats (User-LoRA R1-R4)
 │   ├── paired_compare_per_user.py # multi-user grouped paired stats (R5/R6)
 │   ├── bench_aggregate.py        # on-device bench JSONL → aggregate JSON
+│   ├── tables.py                 # Llama-scale Tables 1 + 2 from results/*.json (markdown or plain)
 │   └── summary.py                # flatten results/*.json → table
 ├── ios/mlx-swift-examples/       # git-subtree vendored (upstream 378f244); LLMEval edited for SmolLM3 + benchmark harness
 ├── results/                      # flat scalar JSON + per-example predictions JSONL; ondevice/ subdir for bench telemetry
@@ -281,7 +288,9 @@ Current tag: **`ghcr.io/gordofreemo/smollm3-train:ver4`**.
 2. `apt-get install git` (added ver3) — for `git_commit` provenance inside the container
 3. `pip install -r requirements.txt` — transformers, peft, datasets, accelerate, wandb, rouge_score, bfcl-eval, soundfile
 
-**When you change `requirements.txt` or the Dockerfile**, bump the tag and update **all seven** sub files: `condor/{eval_lamp,eval_lamp_floor,eval_bfcl,build_dataset,train,interactive,download_model}.sub`.
+**When you change `requirements.txt` or the Dockerfile**, bump the tag and update **all ten** sub files: `condor/{eval_lamp,eval_lamp_floor,eval_lamp_llama,eval_lamp_llama_k100,eval_bfcl,build_dataset,train,interactive,download_model,download_llama}.sub`.
+
+**GPU capability ceiling.** The cluster has RTX PRO 6000 Blackwell (sm_120) nodes that ver4's PyTorch 2.5.1+cu124 cannot target. Llama submits constrain to `Capability >= 8.0 && Capability < 10.0` via `require_gpus` — anything that lands on Blackwell dies at the first CUDA op with "no kernel image is available for execution on the device". Other submits don't yet carry this guard; harden them if they start failing the same way.
 
 ---
 

@@ -1,0 +1,66 @@
+# Llama-family scale comparison — K=100 LaMP-3 subset eval (step 9 of the plan).
+# Same 100 test records as R5's per-user User-LoRA eval, so Table 2 stays
+# apples-to-apples: SmolLM3 + A1-lamp + User-LoRA at acc=0.730 vs Llama-{8B,70B}
+# with BM25 / no profile on the exact same 100 records.
+#
+# 4 jobs total: Llama-{8B, 70B} × {noprofile, bm25k4}. One job per combo —
+# enabled by eval_lamp.py's --user-records-from-file flag, which reads all 100
+# test_record_id values from the top-K JSON in a single pass (no LoRA → no
+# per-user model swap, so the 100 records are scorable in one model load).
+#
+# See experiments/2026-06-22-llama-scale-comparison-plan.md (Table 2).
+# Submit:
+#   condor_submit condor/eval_lamp_llama_k100.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+# Same arg template as eval_lamp_llama.sub, plus --user-records-from-file
+# pointing at the K=100 JSON. The resulting filename gets a `_topK100` tag.
+arguments             = --task LaMP_3 --split test --seed 0 --model-dir /home/ange00008/projects/mobileFT_distill/data/models/Llama-3.1-$(model_tag)-Instruct --device-map $(device_map) --resume --user-records-from-file /home/ange00008/projects/mobileFT_distill/data/lamp_user_stats/LaMP_3_top100_users.json $(cond_flag)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_k100.$(model_tag).$(cond_tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_k100.$(model_tag).$(cond_tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_k100.$(ClusterId).log
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+# LAMP_DIR overrides eval_lamp.py's default user-split data directory. The
+# K=100 subset's test_record_id values were sampled from the *time-split*
+# (per the top-K JSON's `inputs.test_questions` provenance — built by
+# select_top_users_lamp3.py against data/lamp_time/). Without this override
+# the user-split test set is loaded and zero of the 100 ids match.
+environment             = "LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 4
+request_memory        = 64G
+
+requirements            = UidDomain == "cs.uni-saarland.de"
+gpus_minimum_memory     = 80000
+# See eval_lamp_llama.sub for the rationale — Blackwell sm_120 is incompatible
+# with the ver4 Docker image's PyTorch 2.5.1+cu124, so cap at < 10.0.
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+max_job_retirement_time = 600
++WantGPUHomeMounted     = true
++WantScratchMounted     = true
+
+# --- 8B: single 80GB+ GPU ----------------------------------------------------
+model_tag    = 8B
+device_map   = cuda
+request_GPUs = 1
+queue cond_tag, cond_flag from (
+    noprofile --no-profile
+    bm25k4    --k 4
+)
+
+# --- 70B: 2× 80GB+ GPUs, accelerate auto-dispatch ----------------------------
+model_tag    = 70B
+device_map   = auto
+request_GPUs = 2
+queue cond_tag, cond_flag from (
+    noprofile --no-profile
+    bm25k4    --k 4
+)
