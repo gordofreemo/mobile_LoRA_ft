@@ -367,20 +367,26 @@ def main():
         flush=True,
     )
 
-    # Refuse-to-overwrite — preprocessing output is the input to every training
-    # run, so silently clobbering it would invalidate every downstream
-    # checkpoint and result.
-    existing = [
-        p
-        for p in (list(per_task_paths.values()) + [mixed_path, meta_path])
-        if p.exists()
-    ]
+    # Refuse-to-overwrite on the two OUTPUTS of this specific invocation (the
+    # mixed corpus + its meta sidecar) — silently clobbering those would
+    # invalidate every downstream checkpoint and result. Per-task JSONLs are
+    # NOT part of this check: a task's per-task file is keyed only on
+    # {task}_{k}, not on the --tasks combination that produced it, so e.g.
+    # building the R7 7-task corpus legitimately reuses LaMP_3/4/7's per-task
+    # files already on disk from A1-lamp's build. Those are handled by the
+    # skip-if-exists logic in the per-task pass below (same convention as
+    # data/download_lamp.py) rather than refused here — refusing would force
+    # --overwrite, which risks silently regenerating (and diverging from) an
+    # existing task's canonical training corpus if the code has drifted since
+    # it was originally built.
+    existing = [p for p in (mixed_path, meta_path) if p.exists()]
     if existing and not args.overwrite:
         print("ERROR: refusing to overwrite existing files:", file=sys.stderr)
         for p in existing:
             print(f"  {p}", file=sys.stderr)
         print(
-            "\nPass --overwrite to replace, or change --k / --seed to write a new path.",
+            "\nPass --overwrite to replace, or change --k / --seed / --tasks to "
+            "write a new path.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -390,8 +396,23 @@ def main():
     # --- Per-task pass: stream raw JSON → write compact JSONL ----------------
     per_task_counts = {}
     per_task_skipped = {}
+    per_task_reused = {}
     t0 = time.time()
     for task in tasks:
+        if per_task_paths[task].exists() and not args.overwrite:
+            # Reuse an already-built per-task corpus untouched — e.g.
+            # LaMP_3/4/7 were already built for A1-lamp under this exact
+            # {task}_{k} filename. Never rebuild it just because a *different*
+            # --tasks combination now includes it (see the refuse-to-overwrite
+            # comment above for why).
+            n_written = sum(1 for _ in per_task_paths[task].open())
+            per_task_counts[task] = n_written
+            per_task_skipped[task] = None  # unknown — file wasn't rebuilt this run
+            per_task_reused[task] = True
+            print(f"{task}: reusing existing {per_task_paths[task]} "
+                  f"({n_written} examples)")
+            continue
+        per_task_reused[task] = False
         q_path = Path(LAMP_DIR) / task / "train_questions.json"
         o_path = Path(LAMP_DIR) / task / "train_outputs.json"
         if not q_path.exists() or not o_path.exists():
@@ -462,6 +483,7 @@ def main():
         "limit": args.limit,
         "per_task_counts": per_task_counts,
         "per_task_skipped": per_task_skipped,
+        "per_task_reused": per_task_reused,
         "total_count": len(mixed_lines),
         "per_task_files": {t: str(per_task_paths[t]) for t in tasks},
         "mixed_file": str(mixed_path),
