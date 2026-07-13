@@ -3178,7 +3178,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = JGW9U9Y36Y;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3199,7 +3199,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Applications/LLMEval/LLMEval-Info-Additions.plist;
+				INFOPLIST_FILE = "Applications/LLMEval/LLMEval-Info-Additions.plist";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -3272,7 +3272,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = JGW9U9Y36Y;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
@@ -3287,7 +3287,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Applications/LLMEval/LLMEval-Info-Additions.plist;
+				INFOPLIST_FILE = "Applications/LLMEval/LLMEval-Info-Additions.plist";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -3888,13 +3888,13 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C397D8F22CD2F60B00B87EE2 /* XCLocalSwiftPackageReference "Libraries/.." */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Libraries/..;
-		};
 		C36941322F8F489800810A49 /* XCLocalSwiftPackageReference "../mlx-swift-lm-local" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../mlx-swift-lm-local";
+		};
+		C397D8F22CD2F60B00B87EE2 /* XCLocalSwiftPackageReference "Libraries/.." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Libraries/..;
 		};
 /* End XCLocalSwiftPackageReference section */
 

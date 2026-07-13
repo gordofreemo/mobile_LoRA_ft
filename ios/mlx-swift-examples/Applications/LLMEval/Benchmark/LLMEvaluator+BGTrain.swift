@@ -444,6 +444,31 @@ extension LLMEvaluator {
                             "cumulative_device_elapsed_s": localCumulativeDeviceElapsedS,
                             "calendar_elapsed_s": Date().timeIntervalSince(calendarOrigin),
                         ])
+                    // Milestone trace (visible live in Xcode's console during
+                    // debug-forced validation, unlike the JSONL/meta writes
+                    // above) — one line per chunk so progress is observable
+                    // without pulling files mid-session.
+                    self.tlog(
+                        "BG wake: checkpoint iter=\(localIterationsCompleted)/\(ctx.iterationsTotal) "
+                            + "chunkElapsed=\(String(format: "%.1f", chunkElapsed))s "
+                            + "ckptWriteMs=\(String(format: "%.0f", checkpointWriteMs))")
+
+                    // Lightweight partial upsert into bg_run_meta.json after
+                    // EVERY chunk (not just at wake end) — see the doc
+                    // comment on `upsertBGRunMetaWake` for why: a hard kill
+                    // mid-wake must still leave this wake in the file.
+                    // `charging: true` is hardcoded rather than sampled (no
+                    // MainActor hop available off-actor here) — matches
+                    // requiresExternalPower=true, always true for this task.
+                    Self.upsertBGRunMetaWake(
+                        wakeNumber: ctx.wakeNumber, wakeStart: wakeStartDate, wakeEnd: Date(),
+                        iterationsThisWake: localIterationsCompleted - initialIterationsCompleted,
+                        iterationsCompletedTotal: localIterationsCompleted,
+                        iterationsTotal: ctx.iterationsTotal, charging: true,
+                        thermalAtStart: thermalAtWakeStart, thermalAtEnd: Self.thermalString(),
+                        completed: localIterationsCompleted >= ctx.iterationsTotal,
+                        calendarOrigin: calendarOrigin,
+                        cumulativeDeviceElapsedS: localCumulativeDeviceElapsedS)
 
                     if localIterationsCompleted >= ctx.iterationsTotal {
                         localTerminationReason = "chunk_loop_finished_early"
@@ -482,7 +507,7 @@ extension LLMEvaluator {
                 "error": wakeError ?? NSNull(),
             ])
 
-        Self.appendBGRunMetaWake(
+        Self.upsertBGRunMetaWake(
             wakeNumber: wakeNumber, wakeStart: wakeStartDate, wakeEnd: wakeEndDate,
             iterationsThisWake: iterationsCompleted - (priorMeta?.iterationsCompleted ?? 0),
             iterationsCompletedTotal: iterationsCompleted, iterationsTotal: config.iterationsTotal,
@@ -641,11 +666,31 @@ extension LLMEvaluator {
         URL.documentsDirectory.appendingPathComponent(TrainBenchConstants.bgRunMetaFileName)
     }
 
-    /// Read-modify-write: append this wake's summary, recompute the rolling
-    /// run-level summary (7-day-cap accounting happens in monitoring/
-    /// aggregation, not here — this just keeps the file current every wake
-    /// so a daily `devicectl` pull never sees a stale summary).
-    private nonisolated static func appendBGRunMetaWake(
+    /// Read-modify-write: UPSERT this wake's summary by `wakeNumber` (replace
+    /// if an entry for this wake already exists, else append + keep sorted),
+    /// recompute the rolling run-level summary. Upsert rather than blind
+    /// append for two reasons, both confirmed by the first validation cycle:
+    /// (1) called from TWO places per wake now (see below) so the same wake
+    /// must not produce duplicate entries; (2) a debug-forced wake that's
+    /// re-triggered via `_simulateLaunchForTaskWithIdentifier:` before the
+    /// prior invocation finished (observed during validation — re-issuing
+    /// the LLDB command mid-wake) would otherwise also duplicate.
+    ///
+    /// Called from TWO places in `runBGTrainWake()`:
+    ///   - a lightweight partial upsert after EVERY chunk checkpoint (from
+    ///     inside the `container.perform` closure, off-actor — so `charging`
+    ///     is hardcoded `true` rather than sampled, matching the task's own
+    ///     `requiresExternalPower` requirement, and thermal uses the
+    ///     `nonisolated` `thermalString()` reader) — this is the fix for a
+    ///     real gap found in validation: a hard kill mid-wake (Xcode Stop,
+    ///     or a real SIGKILL) previously left NO trace of that wake in this
+    ///     file at all, only in the per-chunk JSONL + `checkpoint_meta.json`,
+    ///     undercounting wakes in the co-headline #2 wake-scheduling
+    ///     analysis.
+    ///   - the authoritative full upsert once the wake actually finishes
+    ///     (graceful or error), with real end-of-wake battery/thermal —
+    ///     overwrites the last partial entry with accurate final values.
+    private nonisolated static func upsertBGRunMetaWake(
         wakeNumber: Int, wakeStart: Date, wakeEnd: Date, iterationsThisWake: Int,
         iterationsCompletedTotal: Int, iterationsTotal: Int, charging: Bool,
         thermalAtStart: String, thermalAtEnd: String, completed: Bool,
@@ -656,18 +701,29 @@ extension LLMEvaluator {
                 try? JSONDecoder().decode(BGRunMetaFile.self, from: $0)
             } ?? BGRunMetaFile(wakes: [], summary: nil)
 
-        let previousWakeEnd = file.wakes.last.flatMap { parseISO8601($0.wakeEndUtc) }
+        // Gap is measured against the previous WAKE NUMBER's end, not simply
+        // "the last array entry" — safe under upserts/out-of-order writes.
+        let previousWakeEnd = file.wakes
+            .filter { $0.wakeNumber < wakeNumber }
+            .max(by: { $0.wakeNumber < $1.wakeNumber })
+            .flatMap { parseISO8601($0.wakeEndUtc) }
         let gap = previousWakeEnd.map { wakeStart.timeIntervalSince($0) }
 
-        file.wakes.append(
-            BGWakeSummary(
-                wakeNumber: wakeNumber,
-                wakeStartUtc: ISO8601DateFormatter().string(from: wakeStart),
-                wakeEndUtc: ISO8601DateFormatter().string(from: wakeEnd),
-                gapSincePreviousWakeS: gap, iterationsThisWake: iterationsThisWake,
-                iterationsCompletedTotal: iterationsCompletedTotal,
-                iterationsTotal: iterationsTotal, charging: charging,
-                thermalStateAtWakeStart: thermalAtStart, thermalStateAtWakeEnd: thermalAtEnd))
+        let entry = BGWakeSummary(
+            wakeNumber: wakeNumber,
+            wakeStartUtc: ISO8601DateFormatter().string(from: wakeStart),
+            wakeEndUtc: ISO8601DateFormatter().string(from: wakeEnd),
+            gapSincePreviousWakeS: gap, iterationsThisWake: iterationsThisWake,
+            iterationsCompletedTotal: iterationsCompletedTotal,
+            iterationsTotal: iterationsTotal, charging: charging,
+            thermalStateAtWakeStart: thermalAtStart, thermalStateAtWakeEnd: thermalAtEnd)
+
+        if let idx = file.wakes.firstIndex(where: { $0.wakeNumber == wakeNumber }) {
+            file.wakes[idx] = entry
+        } else {
+            file.wakes.append(entry)
+            file.wakes.sort { $0.wakeNumber < $1.wakeNumber }
+        }
 
         let gaps = file.wakes.compactMap { $0.gapSincePreviousWakeS }
         let totalCalendarDays = wakeEnd.timeIntervalSince(calendarOrigin) / 86400
