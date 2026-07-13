@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	h6 background-scheduled training (see LLMEvaluator+BGTrain.swift,
+	LLMEvalApp.swift). GENERATE_INFOPLIST_FILE=YES synthesizes most of this
+	target's Info.plist from INFOPLIST_KEY_* build settings, but that
+	mechanism does not support these two array-valued keys (confirmed empty
+	post-build with those settings, this file is the fix) — Xcode merges an
+	explicit INFOPLIST_FILE in with the generated one when both are set.
+	-->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>mlx.LLMEval.bgtrain</string>
+	</array>
+</dict>
+</plist>

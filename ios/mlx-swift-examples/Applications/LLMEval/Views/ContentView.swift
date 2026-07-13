@@ -93,6 +93,16 @@ struct ContentView: View {
                 await llm.runTrainBenchmark(mode: mode)
                 return
             }
+            // h6 background-scheduled training: one-shot submission of a
+            // BGProcessingTaskRequest, then exit. The wake itself is handled
+            // by the `.backgroundTask` scene modifier in LLMEvalApp.swift,
+            // not here.
+            if LLMEvaluator.bgTrainSubmitLaunchMode {
+                llm.submitBGTrainRequest(
+                    user: LLMEvaluator.bgTrainSubmitUser,
+                    condition: LLMEvaluator.bgTrainSubmitCondition)
+                exit(0)
+            }
             do {
                 // pre-load the weights on launch to speed up the first generation
                 _ = try await llm.load()

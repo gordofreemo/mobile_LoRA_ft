@@ -159,4 +159,70 @@ enum TrainBenchConstants {
     /// wall-clock resolution over a multi-hour run. UIDevice is @MainActor, so
     /// these samples are taken on the main actor while training runs off-actor.
     static let e2eBatterySampleSeconds = 30.0
+
+    // =========================================================================
+    // Background-scheduled (h6) — real BGProcessingTask OS scheduling, chunked
+    // resumable training. Constants used only by `LLMEvaluator+BGTrain.swift`;
+    // h1–h5 constants above are unchanged. Reuses the h5 recipe constants
+    // (loraRank, loraKeys, e2eLearningRate, e2eWeightDecay,
+    // e2eAdamBiasCorrection, e2eSeqCap, e2eBatchSize, e2eEpochs,
+    // gradientCheckpointing) verbatim — only the orchestration differs.
+    //
+    // h6 (2026-07-XX): trains a real top-100 LaMP-3 User-LoRA to completion
+    // under real (non-forced) `BGProcessingTask` OS scheduling instead of a
+    // foreground/screen-on session. `LoRATrain.train` is called in chunks of
+    // `bgChunkIterations` (10) so the app can checkpoint between chunks and
+    // survive being suspended/relaunched across many wakes. See
+    // experiments/2026-07-13-ondevice-bg-training-plan.md.
+    //
+    // KNOWN, ACCEPTED DEVIATION: checkpoint/resume covers LoRA weights + the
+    // iteration counter ONLY. `MLXOptimizers.AdamW`'s internal Adam moments
+    // (m/v) are stored in an `internal`-access `stateStorage` dict with no
+    // public getter/setter (verified by reading mlx-swift's
+    // Source/MLXOptimizers/Optimizers.swift — only a read-only, unkeyed
+    // `innerState() -> [MLXArray]` is exposed, nothing to round-trip through).
+    // Vendoring mlx-swift locally (as we did for mlx-swift-lm, to get
+    // gradient checkpointing) to expose it was considered and explicitly
+    // rejected as disproportionate for this round. So a FRESH `AdamW` is
+    // constructed every wake — first/second moments reset to zero at every
+    // wake boundary. This is a deliberate scope decision, not an oversight:
+    // the round's two headline questions (calendar-vs-device time,
+    // wake-scheduling characterization) don't depend on optimizer
+    // continuity. The secondary loss-curve-continuity deliverable WILL show
+    // small real restart bumps at wake boundaries — report them as such in
+    // the write-up rather than treating them as a bug.
+    static let bgAppBuild = "smollm3-ondevice-train-bg-h6"
+    static let bgSchemaVersion = 1
+
+    /// `BGTaskSchedulerPermittedIdentifiers` entry (Info.plist) + the id
+    /// passed to `.backgroundTask(.processing(id:))` — must match exactly.
+    static let bgTaskIdentifier = "mlx.LLMEval.bgtrain"
+
+    /// Separate JSONL for the BG run (never mixes with h1–h5 files).
+    static let bgMetricsFileName = "train_bench_metrics_e2e_bg.jsonl"
+
+    /// Run-level summary, mirrors the cluster-side `train_meta.json`
+    /// convention (rewritten at the end of every wake).
+    static let bgRunMetaFileName = "bg_run_meta.json"
+
+    /// Per-user checkpoint subdir under Documents:
+    /// `bg_checkpoints/<fp>/weights.safetensors` (the LoRA adapter itself —
+    /// doubles as both the running checkpoint and the final saved adapter)
+    /// + `bg_checkpoints/<fp>/checkpoint_meta.json` (iteration counter, wake
+    /// number, cumulative device-compute seconds). No optimizer-state file
+    /// — see the deviation note above.
+    static let bgCheckpointDirName = "bg_checkpoints"
+
+    /// Submission-time config written to `Documents/<bgConfigFileName>` (user
+    /// fingerprint, condition, computed iterations_total) — read by the wake
+    /// handler since `BGProcessingTaskRequest` carries no custom payload.
+    static let bgConfigFileName = "bg_train_config.json"
+
+    /// Checkpoint cadence: `LoRATrain.train(iterations: bgChunkIterations)`
+    /// called in a loop, checkpointing to disk between calls. Matches
+    /// `e2eStepsPerReport` (10) so one JSONL record = one checkpoint = one
+    /// chunk. `LoRATrain.train` is a single blocking call — checkpointing
+    /// only happens BETWEEN chunks, so worst case ~10 iterations of work is
+    /// lost on a hard SIGKILL rather than a clean expiration.
+    static let bgChunkIterations = 10
 }
