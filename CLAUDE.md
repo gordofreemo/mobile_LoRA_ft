@@ -319,6 +319,33 @@ Every run gets `experiments/YYYY-MM-DD-<slug>.md`:
 
 ---
 
+## Paper writeup style (Overleaf prose)
+
+When writing the Hypothesis/Setup/Result/Conclusion prose in
+`overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/*.tex` (not the tables
+— tables and the Provenance block stay technical), match the plain, direct
+style already in the existing sections (e.g. `2026-05-29-baseline_LaMP.tex`,
+`2026-06-18-per-user-lora-lamp3.tex`): short declarative sentences that say
+what was done and what happened, first person plural, minimal jargon.
+
+Concretely avoid, per explicit feedback (2026-07-13) on an early draft that
+read as too AI-generated:
+- Meta-references to research-question numbers inline (no "RQ1", "corroborates
+  Q4", etc. in prose — the reader doesn't need the paper's internal
+  bookkeeping surfaced).
+- Introducing a shorthand/acronym as an awkward parenthetical aside mid-sentence
+  (e.g. "...should produce a single adapter (A2-lamp) that..."). If a new
+  short name is needed, give it its own plain sentence ("We call the new
+  adapter A2-lamp.").
+- Justification asides for design choices that don't change what the reader
+  takes away from the result (e.g. explaining *why* a task is excluded is
+  usually unnecessary — just note it's excluded).
+- Any other line that over-explains rationale nobody asked for ("keeps the
+  on-device story simple", etc.) — cut it; let the numbers and plain
+  description carry the point.
+
+---
+
 ## Key references (do not hallucinate URLs)
 
 - SmolLM3-3B: `HuggingFaceTB/SmolLM3-3B` on HuggingFace
