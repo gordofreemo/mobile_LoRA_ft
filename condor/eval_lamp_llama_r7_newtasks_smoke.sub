@@ -1,0 +1,72 @@
+# Smoke test for eval_lamp_llama_r7_newtasks.sub — same 16-job matrix
+# (4 new tasks x 2 conditions x {8B, 70B}), but --limit 5 so each job is a
+# handful of generations instead of the full test split. Confirms the model
+# loads on both GPU configs (single 8B GPU, dual-GPU 70B accelerate dispatch)
+# and the new tasks' classification/rouge1 metric paths work with a non-SmolLM3
+# base model before committing the real (expensive, especially 70B) run.
+# --limit 5 appends a _limit5 suffix, so this can never collide with the real
+# results.
+#
+# Submit:
+#   condor_submit condor/eval_lamp_llama_r7_newtasks_smoke.sub
+# Then check:
+#   grep -l "" runlogs/eval_lamp_llama_r7_newtasks_smoke.*.out
+#   ls results/LaMP_*_test_base_Llama-3.1-*-Instruct_*_seed0_limit5.*
+# Once confirmed, submit the real matrix:
+#   condor_submit condor/eval_lamp_llama_r7_newtasks.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+arguments             = --task $(task) --split test --seed 0 --model-dir /home/ange00008/projects/mobileFT_distill/data/models/Llama-3.1-$(model_tag)-Instruct --device-map $(device_map) --limit 5 $(cond_flag)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_r7_newtasks_smoke.$(model_tag).$(task).$(cond_tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_r7_newtasks_smoke.$(model_tag).$(task).$(cond_tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_r7_newtasks_smoke.$(ClusterId).log
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+environment             = "CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 4
+request_memory        = 64G
+
+requirements            = UidDomain == "cs.uni-saarland.de"
+gpus_minimum_memory     = 80000
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+max_job_retirement_time = 600
++WantGPUHomeMounted     = true
++WantScratchMounted     = true
+
+# --- 8B: single 80GB+ GPU, single-device placement ---------------------------
+model_tag    = 8B
+device_map   = cuda
+request_GPUs = 1
+queue task, cond_tag, cond_flag from (
+    LaMP_1        noprofile --no-profile
+    LaMP_1        bm25k4    --k 4
+    LaMP_2_movies noprofile --no-profile
+    LaMP_2_movies bm25k4    --k 4
+    LaMP_2_news   noprofile --no-profile
+    LaMP_2_news   bm25k4    --k 4
+    LaMP_5        noprofile --no-profile
+    LaMP_5        bm25k4    --k 4
+)
+
+# --- 70B: 2× 80GB+ GPUs, accelerate device_map="auto" dispatch ---------------
+model_tag    = 70B
+device_map   = auto
+request_GPUs = 2
+queue task, cond_tag, cond_flag from (
+    LaMP_1        noprofile --no-profile
+    LaMP_1        bm25k4    --k 4
+    LaMP_2_movies noprofile --no-profile
+    LaMP_2_movies bm25k4    --k 4
+    LaMP_2_news   noprofile --no-profile
+    LaMP_2_news   bm25k4    --k 4
+    LaMP_5        noprofile --no-profile
+    LaMP_5        bm25k4    --k 4
+)
