@@ -42,7 +42,7 @@ enum TrainBenchConstants {
     /// Build-time git provenance, stamped by hand at build time (same discipline
     /// as the inference harness — avoids fragile project.pbxproj build-phase
     /// surgery). Update alongside `appBuild` when re-baking before a run.
-    static let gitCommit = "9ba9f06"
+    static let gitCommit = "3047aff"
     static let gitDirty = true
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
@@ -191,8 +191,90 @@ enum TrainBenchConstants {
     // continuity. The secondary loss-curve-continuity deliverable WILL show
     // small real restart bumps at wake boundaries — report them as such in
     // the write-up rather than treating them as a bug.
+    // h6 schema v2 (2026-07-13, mid-run): added persistent JSONL diagnostic
+    // markers (`model_loaded`, `training_setup_complete`, `chunk_start`,
+    // `resume_start`/`resumed`) after the first real submission made zero
+    // progress across 3 wakes with no visibility into why — deliberately
+    // NOT more `tlog()`, since tlog's stderr is unreadable during a real
+    // unattended wake (no console attached), only readable during a
+    // `devicectl --console` launch or an Xcode-debug session. Also switched
+    // `loadLoRAWeights`'s `Module.update` call from the `verify: .none`
+    // convenience wrapper to the throwing `verify: .shapeMismatch` overload
+    // — a real latent gap (silent corruption instead of a catchable error
+    // on any shape mismatch), found while investigating two consecutive
+    // real wakes that died silently right around the weight-resume step.
+    // h6 schema v3 (2026-07-13, mid-run, same day as v2): after v2 STILL
+    // showed 4/4 consecutive resume-needing wakes dying in the same narrow
+    // window (right after `model_loaded`, before even `resume_start`) while
+    // the 1 fresh-start wake sailed through it — added `lora_apply_start`/
+    // `lora_apply_complete` markers bracketing the one call both paths
+    // share, PLUS a heartbeat mechanism (`bgHeartbeatFileName`, overwritten
+    // ~1x/sec by a concurrent Task, independent of which milestone marker
+    // last fired) to directly answer "how long was this wake actually alive
+    // before it died" — a question the coarse milestone markers alone can't
+    // answer precisely, since a wake can die between any two of them.
+    // h6 schema v4 (2026-07-14): after v3's new markers showed 30+
+    // consecutive wakes dying in an extremely tight ~9.6-9.8s band (not just
+    // "somewhere in the early region" — a near-fixed cutoff), always
+    // silently (no `wake_end`, so `setTaskCompleted` never gets called) —
+    // added `Task.isCancelled` checks at every step boundary in the setup
+    // path (not just the training while-loop, which is where the ONLY
+    // successful cancellation-catch so far happened, on wake 0) plus a
+    // loose wall-clock backstop (`bgWallClockBackstopS`) independent of
+    // `Task.isCancelled`, in case cancellation doesn't propagate through a
+    // synchronous call. Testable hypothesis, not a confirmed fix: silently
+    // dying without ever calling `setTaskCompleted` may be training iOS's
+    // scheduler to keep granting minimal "probation" windows — reaching a
+    // clean `return` (even a `wall_clock_backstop` one with zero training
+    // done) at least gives the scheduler an acknowledged completion signal
+    // every time, which the current behavior never has.
+    // h6 schema v5 (2026-07-14): the wall-clock-backstop catch (v4) confirmed
+    // the fix's mechanism works when it fires, but the very next wake reverted
+    // to the same ~10s silent death with no visible grant-size recovery — so
+    // "reach a clean return eventually" isn't enough on its own to test the
+    // scheduler-trust hypothesis; the app was still trying to grab MULTIPLE
+    // `bgChunkIterations` chunks per wake whenever it got the chance (wake 0
+    // ran 4 chunks back-to-back before being cancelled), i.e. always asking
+    // for as much as it could get. Changed `runBGTrainWake()` to attempt
+    // exactly ONE chunk per wake, checkpoint, then voluntarily return
+    // (`voluntary_yield`) rather than looping for more even if time remains.
+    // Explicitly a hypothesis test, not a confirmed fix: does a consistently
+    // small, quick, always-completes-cleanly request pattern earn steadier
+    // scheduling than a greedy one? Doesn't address the current dominant
+    // failure mode (dying during model load/LoRA setup, before any chunk is
+    // reached) — it's a complementary, lower-priority experiment layered on
+    // top of the existing Task.isCancelled/wall-clock-backstop safety net,
+    // which is unchanged.
+    // h6 schema v6 (2026-07-15): diagnostic-only, no behavior change. A
+    // standalone control app (`ios/BGProbe/` — registers a trivial
+    // BGProcessingTask, no model load, no heavy allocation) got 240s+
+    // grants at the EXACT SAME wake instants (matched to the second) that
+    // LLMEval died at its usual ~9.5-10s — ruling out a platform/OS-level
+    // ceiling and pointing squarely at LLMEval's own resource footprint
+    // (most likely memory pressure from loading the ~1.7GB 4-bit model) as
+    // the proximate cause of the short grants. Added `peak_mem_bytes`/
+    // `active_mem_bytes` (via `Memory.snapshot()`) to the `model_loaded`,
+    // `lora_apply_start`, and `lora_apply_complete` markers, plus a single
+    // `GPU.resetPeakMemory()` near wake start for a clean per-wake
+    // baseline so readings are comparable. Also bumped the heartbeat
+    // cadence 1s→200ms and added the same memory fields to every heartbeat
+    // tick — prior investigation localized death to within ~0.1-0.5s of
+    // `lora_apply_start`, too fast for 1s heartbeat resolution to pin down
+    // further; the finer cadence plus memory fields means the LAST
+    // heartbeat tick before a silent death now gives both a tighter
+    // elapsed-time bound AND an actual memory reading at approximately the
+    // moment of death.
     static let bgAppBuild = "smollm3-ondevice-train-bg-h6"
-    static let bgSchemaVersion = 1
+    static let bgSchemaVersion = 6
+
+    /// Defensive wall-clock ceiling (from `wakeStart`) checked alongside
+    /// `Task.isCancelled` at every setup-path step boundary — independent
+    /// backstop in case cancellation doesn't propagate through a
+    /// synchronous call in time. Set well above the observed ~10s death
+    /// zone (30+ consecutive real wakes) so it never preempts a
+    /// legitimately long wake (wake 0 ran ~324s) — this is a safety net,
+    /// not a mechanism for trying to predict/beat the real kill.
+    static let bgWallClockBackstopS: Double = 25.0
 
     /// `BGTaskSchedulerPermittedIdentifiers` entry (Info.plist) + the id
     /// passed to `.backgroundTask(.processing(id:))` — must match exactly.
@@ -200,6 +282,14 @@ enum TrainBenchConstants {
 
     /// Separate JSONL for the BG run (never mixes with h1–h5 files).
     static let bgMetricsFileName = "train_bench_metrics_e2e_bg.jsonl"
+
+    /// Overwritten (not appended) ~1x/sec throughout a wake by a concurrent
+    /// heartbeat `Task`, independent of which milestone marker last fired.
+    /// After a wake dies silently, this file's last-written
+    /// `wake_elapsed_s` is the actual OS-granted time-slice length for that
+    /// wake — the milestone JSONL markers alone can only bound death to
+    /// "somewhere between marker A and marker B," which can be a wide gap.
+    static let bgHeartbeatFileName = "bg_heartbeat.json"
 
     /// Run-level summary, mirrors the cluster-side `train_meta.json`
     /// convention (rewritten at the end of every wake).
@@ -218,11 +308,13 @@ enum TrainBenchConstants {
     /// handler since `BGProcessingTaskRequest` carries no custom payload.
     static let bgConfigFileName = "bg_train_config.json"
 
-    /// Checkpoint cadence: `LoRATrain.train(iterations: bgChunkIterations)`
-    /// called in a loop, checkpointing to disk between calls. Matches
-    /// `e2eStepsPerReport` (10) so one JSONL record = one checkpoint = one
-    /// chunk. `LoRATrain.train` is a single blocking call — checkpointing
-    /// only happens BETWEEN chunks, so worst case ~10 iterations of work is
-    /// lost on a hard SIGKILL rather than a clean expiration.
+    /// Chunk size for the ONE `LoRATrain.train(iterations: bgChunkIterations)`
+    /// call attempted per wake (schema v5 — previously looped for multiple
+    /// chunks per wake whenever time allowed; now always stops after exactly
+    /// one, see the v5 changelog above). Matches `e2eStepsPerReport` (10) so
+    /// one JSONL record = one checkpoint = one chunk = one wake's worth of
+    /// work. `LoRATrain.train` is a single blocking call — checkpointing only
+    /// happens after the chunk completes, so worst case ~10 iterations of
+    /// work is lost on a hard SIGKILL rather than a clean expiration.
     static let bgChunkIterations = 10
 }

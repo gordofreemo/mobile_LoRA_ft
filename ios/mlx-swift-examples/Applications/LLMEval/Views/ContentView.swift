@@ -95,12 +95,25 @@ struct ContentView: View {
             }
             // h6 background-scheduled training: one-shot submission of a
             // BGProcessingTaskRequest, then exit. The wake itself is handled
-            // by the `.backgroundTask` scene modifier in LLMEvalApp.swift,
-            // not here.
+            // by `handleBGTrainTask(_:)`, registered via
+            // `BGTaskScheduler.register` in `LLMEvalApp.init()`, not here.
             if LLMEvaluator.bgTrainSubmitLaunchMode {
                 llm.submitBGTrainRequest(
                     user: LLMEvaluator.bgTrainSubmitUser,
                     condition: LLMEvaluator.bgTrainSubmitCondition)
+                exit(0)
+            }
+            // h6: one-shot cancellation of any pending BGProcessingTaskRequest
+            // (stops the self-perpetuating wake chain without touching
+            // on-disk data — see `cancelBGTrainRequest()`'s doc comment).
+            if LLMEvaluator.bgTrainCancelLaunchMode {
+                llm.cancelBGTrainRequest()
+                exit(0)
+            }
+            // h6: one-shot re-arm without touching config/checkpoint — see
+            // `resubmitBGTrainRequest()`'s doc comment.
+            if LLMEvaluator.bgTrainResubmitLaunchMode {
+                llm.resubmitBGTrainRequest()
                 exit(0)
             }
             do {

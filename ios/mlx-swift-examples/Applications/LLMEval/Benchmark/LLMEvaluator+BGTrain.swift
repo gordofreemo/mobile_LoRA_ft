@@ -51,9 +51,30 @@ extension LLMEvaluator {
 
     /// True when launched to SUBMIT a BGProcessingTaskRequest (one-shot,
     /// exits immediately after). The wake itself is handled separately by
-    /// the `.backgroundTask` scene modifier, not a launch arg.
+    /// `handleBGTrainTask(_:)`, registered via `BGTaskScheduler.register` in
+    /// `LLMEvalApp.init()` — not a launch arg.
     static var bgTrainSubmitLaunchMode: Bool {
         CommandLine.arguments.contains("--bg-train-submit")
+    }
+
+    /// True when launched to CANCEL all pending BGProcessingTaskRequests for
+    /// this identifier (one-shot, exits immediately after). Does NOT touch
+    /// any on-disk data (config/checkpoints/JSONL) — pair with a manual wipe
+    /// or a fresh `--bg-train-submit` (which wipes the checkpoint dir itself)
+    /// if a clean restart is the goal.
+    static var bgTrainCancelLaunchMode: Bool {
+        CommandLine.arguments.contains("--bg-train-cancel")
+    }
+
+    /// True when launched to submit a fresh `BGProcessingTaskRequest`
+    /// WITHOUT touching `bg_train_config.json` or the checkpoint dir (unlike
+    /// `--bg-train-submit`, which wipes both for a clean-slate start) and
+    /// without resetting the original submission's calendar-cap origin
+    /// timestamp. For re-arming the chain after a code update mid-run,
+    /// where the goal is to keep existing progress and the original 7-day
+    /// clock, not restart either.
+    static var bgTrainResubmitLaunchMode: Bool {
+        CommandLine.arguments.contains("--bg-train-resubmit")
     }
 
     /// `--bg-train-validation` — stamped into every record this session so
@@ -147,6 +168,38 @@ extension LLMEvaluator {
         }
     }
 
+    /// Cancel any pending `BGProcessingTaskRequest` for this identifier —
+    /// stops the self-perpetuating wake chain (`runBGTrainWake()` re-arms the
+    /// next request as its first action, so simply wiping on-disk data does
+    /// NOT stop future wakes from firing; this does). Does not touch
+    /// on-disk state.
+    func cancelBGTrainRequest() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: TrainBenchConstants.bgTaskIdentifier)
+        tlog("BG cancel: cancelled pending request for \(TrainBenchConstants.bgTaskIdentifier)")
+        benchLogLine("BG cancel: cancelled pending request")
+    }
+
+    /// Submit a fresh `BGProcessingTaskRequest` — same request shape as
+    /// `submitBGTrainRequest`/the in-wake re-arm — but WITHOUT touching
+    /// `bg_train_config.json` or the checkpoint dir. For re-arming after a
+    /// code update mid-run (e.g. cancel, reinstall, resubmit) where existing
+    /// progress and the original submission's calendar-cap origin should
+    /// both be preserved, unlike `--bg-train-submit` which wipes both for a
+    /// deliberate clean-slate start.
+    func resubmitBGTrainRequest() {
+        let request = BGProcessingTaskRequest(identifier: TrainBenchConstants.bgTaskIdentifier)
+        request.requiresExternalPower = true
+        request.requiresNetworkConnectivity = false
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            tlog("BG resubmit OK (config/checkpoint untouched)")
+            benchLogLine("BG resubmit OK")
+        } catch {
+            tlog("BG resubmit FAILED: \(error)")
+            benchLogLine("BG resubmit FAILED: \(error)")
+        }
+    }
+
     // MARK: - Checkpoint (weights + iteration counter — NOT optimizer state)
 
     private struct BGCheckpointMeta: Codable {
@@ -184,13 +237,47 @@ extension LLMEvaluator {
         try? data.write(to: bgCheckpointMetaURL(user: user), options: .atomic)
     }
 
+    /// Overwritten (not appended) ~1x/sec by the heartbeat `Task` in
+    /// `runBGTrainWake()` — see `TrainBenchConstants.bgHeartbeatFileName`'s
+    /// doc comment for why this exists (pinpointing actual OS-granted
+    /// time-slice length, independent of which milestone marker last fired).
+    private nonisolated static func writeBGHeartbeat(
+        wakeNumber: Int, wakeElapsedS: Double, peakMemBytes: Int, activeMemBytes: Int
+    ) {
+        let payload: [String: Any] = [
+            "wake_number": wakeNumber,
+            "wake_elapsed_s": wakeElapsedS,
+            "peak_mem_bytes": peakMemBytes,
+            "active_mem_bytes": activeMemBytes,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        let url = URL.documentsDirectory.appendingPathComponent(TrainBenchConstants.bgHeartbeatFileName)
+        try? data.write(to: url, options: .atomic)
+    }
+
     /// `LoraTrain.swift` only exposes `saveLoRAWeights` — no load counterpart
     /// upstream (a stale doc-comment references one that was never added).
     /// Same primitive (`loadArrays` / `Module.update(parameters:)`), just the
     /// missing other half.
+    ///
+    /// Uses the THROWING `update(parameters:verify:)` overload with
+    /// `.shapeMismatch` rather than the convenience `update(parameters:)`
+    /// wrapper (which hardcodes `verify: .none` and `try!`) — found while
+    /// investigating a real-run wake that died silently right around this
+    /// call: with `.none`, a shape mismatch wouldn't throw at all, it would
+    /// silently assign the wrong-shaped array into the model's parameter
+    /// storage, and the actual crash would surface later as an uncatchable
+    /// native MLX abort the next time that parameter hits a matmul — which
+    /// looks EXACTLY like what was observed (silent death, zero trace). Not
+    /// confident this is the actual root cause (the same code path worked in
+    /// Xcode-debug validation, and LoRA shapes should be deterministic given
+    /// identical config both times) — but converting a silent-corruption
+    /// failure mode into a catchable, loggable one is strictly safer either
+    /// way, and costs nothing on the success path.
     private nonisolated static func loadLoRAWeights(model: Module, url: URL) throws {
         let arrays = try loadArrays(url: url)
-        _ = model.update(parameters: ModuleParameters.unflattened(arrays))
+        _ = try model.update(parameters: ModuleParameters.unflattened(arrays), verify: .shapeMismatch)
     }
 
     // MARK: - Per-run context (immutable, built once per wake on the main actor)
@@ -318,6 +405,47 @@ extension LLMEvaluator {
                 "iterations_completed_total": iterationsCompleted,
             ])
 
+        // Diagnostic instrumentation (schema v6, added after the BGProbe
+        // control experiment showed a trivial app gets 240s+ at the SAME
+        // wake instants LLMEval dies at ~9.5-10s — ruling out a platform/OS
+        // ceiling and pointing at LLMEval's own resource footprint, most
+        // likely memory pressure from loading the ~1.7GB 4-bit model, as
+        // the proximate cause. Diagnostic-only: no behavior change here,
+        // just finer visibility into what that footprint looks like right
+        // up to the moment of death.
+        //
+        // One clean per-wake baseline so every peak_mem_bytes reading below
+        // (heartbeat ticks + the model_loaded/lora_apply_start/
+        // lora_apply_complete markers) is comparable and monotonic within
+        // this wake, not carrying over noise from a previous wake's process
+        // if the OS happened to keep it warm.
+        GPU.resetPeakMemory()
+
+        // Heartbeat: overwrites a small file ~5x/sec (bumped from ~1x/sec —
+        // prior investigation showed death lands within ~0.1-0.5s of
+        // `lora_apply_start`, too fast for 1s resolution to localize
+        // further), independent of which milestone marker last fired.
+        // Now also carries peak/active memory so the LAST tick before a
+        // silent death gives a real memory-footprint reading at
+        // approximately the moment of death, not just an elapsed time.
+        // `Task { ... }` is NOT a structured child of this function (no
+        // automatic cancellation on return), so it's cancelled explicitly
+        // via `defer` — covers every exit path below (model-load failure,
+        // closure success, closure error) without duplicating the cancel
+        // call at each one.
+        let heartbeatWakeNumber = wakeNumber
+        let heartbeatTask = Task {
+            while !Task.isCancelled {
+                let snap = Memory.snapshot()
+                Self.writeBGHeartbeat(
+                    wakeNumber: heartbeatWakeNumber,
+                    wakeElapsedS: Date.timeIntervalSinceReferenceDate - wakeStart,
+                    peakMemBytes: snap.peakMemory, activeMemBytes: snap.activeMemory)
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+        defer { heartbeatTask.cancel() }
+
         let container: ModelContainer
         do {
             container = try await load()
@@ -329,8 +457,23 @@ extension LLMEvaluator {
                 extra: ["error": "model load failed: \(error)", "wake_termination_reason": "error"])
             return
         }
+        // Diagnostic marker (persistent JSONL, NOT tlog — during a real
+        // unattended wake there is no attached console to read tlog's
+        // stderr from; only what's written to disk survives to be pulled
+        // later). Pinpoints whether a dead wake ever got past model load.
+        // `peak_mem_bytes` (schema v6) — footprint right after loading the
+        // ~1.7GB 4-bit model, the leading suspect for why LLMEval dies at
+        // the same wake instants a near-zero-footprint control app (see
+        // ios/BGProbe/) gets 240s+.
+        Self.appendBGMarker(
+            ctx, recordType: "model_loaded",
+            extra: [
+                "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                "peak_mem_bytes": Memory.snapshot().peakMemory,
+                "active_mem_bytes": Memory.snapshot().activeMemory,
+            ])
 
-        var terminationReason = "chunk_loop_finished_early"
+        var terminationReason = "voluntary_yield"
         var wakeError: String? = nil
         // Snapshotted for capture into the `perform` closure below — that
         // closure owns its OWN local copies and returns them via
@@ -342,13 +485,74 @@ extension LLMEvaluator {
 
         do {
             let result = try await container.perform { mc throws -> BGWakeResult in
+                // Every real wake since the first has died silently between
+                // `model_loaded` and the next marker — never via a caught
+                // `Task.isCancelled` + clean return, always via what looks
+                // like a hard kill mid-synchronous-call. Two independent
+                // checkpoints added at every step boundary below: (1)
+                // `Task.isCancelled` — the OS's own cooperative-cancellation
+                // signal, which DID work correctly on wake 0 (caught between
+                // chunks, clean `expiration_handler` return); checking it
+                // EARLIER, before the risky synchronous calls, gives it more
+                // chances to catch an expiring wake before the hard kill.
+                // (2) a loose wall-clock backstop, independent of (1), in
+                // case cancellation doesn't propagate through some
+                // synchronous call for whatever reason — threshold is set
+                // well above the observed ~10s death zone so it never
+                // preempts a legitimately long wake like wake 0's ~324s one.
+                // The goal either way: reach a clean `return` so
+                // `handleBGTrainTask`'s wrapper actually calls
+                // `task.setTaskCompleted`, instead of the process just
+                // vanishing with no acknowledgment sent to the scheduler —
+                // untested hypothesis, but a real gap either way (see
+                // memory/CLAUDE.md for the fuller reasoning).
+                func earlyExit(_ reason: String) -> BGWakeResult {
+                    BGWakeResult(
+                        iterationsCompleted: initialIterationsCompleted,
+                        cumulativeDeviceElapsedS: initialCumulativeDeviceElapsedS,
+                        terminationReason: reason)
+                }
+                func expiring() -> Bool {
+                    Task.isCancelled
+                        || Date.timeIntervalSinceReferenceDate - wakeStart
+                            > TrainBenchConstants.bgWallClockBackstopS
+                }
+
+                if expiring() {
+                    return earlyExit(Task.isCancelled ? "expiration_handler" : "wall_clock_backstop")
+                }
+
                 let config2 = LoRAConfiguration(
                     numLayers: TrainBenchConstants.loraLayers,
                     loraParameters: .init(
                         rank: TrainBenchConstants.loraRank,
                         scale: TrainBenchConstants.loraScale,
                         keys: TrainBenchConstants.loraKeys))
+                // Bracketed specifically because 4 consecutive real wakes
+                // that needed to resume a checkpoint died somewhere between
+                // `model_loaded` and the next marker, while the 1 fresh-start
+                // wake (no resume needed) sailed through this same region —
+                // this call is the one thing both paths share, so bracketing
+                // it directly is the next disambiguation step.
+                Self.appendBGMarker(
+                    ctx, recordType: "lora_apply_start",
+                    extra: [
+                        "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                        "peak_mem_bytes": Memory.snapshot().peakMemory,
+                        "active_mem_bytes": Memory.snapshot().activeMemory,
+                    ])
                 _ = try LoRAContainer.from(model: mc.model, configuration: config2)
+                Self.appendBGMarker(
+                    ctx, recordType: "lora_apply_complete",
+                    extra: [
+                        "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                        "peak_mem_bytes": Memory.snapshot().peakMemory,
+                        "active_mem_bytes": Memory.snapshot().activeMemory,
+                    ])
+
+                if expiring() {
+                    return earlyExit(Task.isCancelled ? "expiration_handler" : "wall_clock_backstop")
+                }
 
                 if TrainBenchConstants.gradientCheckpointing {
                     (mc.model as? SmolLM3Model)?.useGradientCheckpoint = true
@@ -358,8 +562,33 @@ extension LLMEvaluator {
                 if initialIterationsCompleted > 0,
                     FileManager.default.fileExists(atPath: weightsURL.path)
                 {
+                    if expiring() {
+                        return earlyExit(Task.isCancelled ? "expiration_handler" : "wall_clock_backstop")
+                    }
+                    // Bracketed with its own markers + peak-memory reading —
+                    // this exact step (loading + assigning the saved
+                    // checkpoint on top of an already-loaded model) is the
+                    // prime suspect for two silent real-wake deaths (see the
+                    // doc comment on `loadLoRAWeights`). If a future wake
+                    // dies with `resume_start` but no `resumed`, this is
+                    // confirmed as the bottleneck; the peak-mem reading on
+                    // success helps judge whether memory pressure is
+                    // plausible even when it doesn't outright kill the wake.
+                    GPU.resetPeakMemory()
+                    let resumeStart = Date.timeIntervalSinceReferenceDate
+                    Self.appendBGMarker(
+                        ctx, recordType: "resume_start",
+                        extra: ["wake_elapsed_s": resumeStart - wakeStart])
                     try Self.loadLoRAWeights(model: mc.model, url: weightsURL)
                     self.tlog("BG wake: resumed weights from \(weightsURL.lastPathComponent)")
+                    Self.appendBGMarker(
+                        ctx, recordType: "resumed",
+                        extra: [
+                            "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                            "step_elapsed_s": Date.timeIntervalSinceReferenceDate - resumeStart,
+                            "peak_mem_bytes": Memory.snapshot().peakMemory,
+                        ])
+                    GPU.resetPeakMemory()
                 }
 
                 let capTrain = Self.capExamples(trainData, cap: ctx.seqCap, tokenizer: mc.tokenizer)
@@ -375,16 +604,44 @@ extension LLMEvaluator {
 
                 var localIterationsCompleted = initialIterationsCompleted
                 var localCumulativeDeviceElapsedS = initialCumulativeDeviceElapsedS
-                var localTerminationReason = "chunk_loop_finished_early"
+                var localTerminationReason = "voluntary_yield"
 
-                while localIterationsCompleted < ctx.iterationsTotal {
-                    if Task.isCancelled {
-                        localTerminationReason = "expiration_handler"
-                        break
-                    }
+                // Diagnostic marker: LoRA applied, GC flag set, weights
+                // resumed (if any) — everything before the training loop
+                // itself is done. If a wake dies with `model_loaded` but no
+                // `training_setup_complete`, the bottleneck is LoRA/GC setup
+                // or the weight-resume step, not model load or training.
+                Self.appendBGMarker(
+                    ctx, recordType: "training_setup_complete",
+                    extra: [
+                        "resume_from_iter": initialIterationsCompleted,
+                        "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                    ])
+
+                // ONE chunk per wake, then a voluntary clean return — schema
+                // v5 (see TrainBenchConstants.bgAppBuild's changelog). This
+                // used to be a `while`, looping for more chunks whenever time
+                // allowed (wake 0 ran 4 back-to-back); now it always stops
+                // after exactly one chunk regardless of remaining budget, to
+                // test whether a consistently small, quick, always-completes
+                // request pattern earns steadier scheduling than a greedy one.
+                if localIterationsCompleted < ctx.iterationsTotal && !Task.isCancelled {
                     let remaining = ctx.iterationsTotal - localIterationsCompleted
                     let chunk = min(TrainBenchConstants.bgChunkIterations, remaining)
                     let iterationsCompletedBeforeChunk = localIterationsCompleted
+
+                    // Diagnostic marker: about to attempt this chunk. If a
+                    // wake dies with a `chunk_start` for iteration N but no
+                    // matching `checkpoint`, the bottleneck is somewhere
+                    // inside that specific `LoRATrain.train` call (the 10
+                    // training steps themselves took too long / got evicted
+                    // mid-chunk), not setup.
+                    Self.appendBGMarker(
+                        ctx, recordType: "chunk_start",
+                        extra: [
+                            "step_target": iterationsCompletedBeforeChunk + chunk,
+                            "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                        ])
 
                     let params = LoRATrain.Parameters(
                         batchSize: TrainBenchConstants.e2eBatchSize,
@@ -470,10 +727,11 @@ extension LLMEvaluator {
                         calendarOrigin: calendarOrigin,
                         cumulativeDeviceElapsedS: localCumulativeDeviceElapsedS)
 
-                    if localIterationsCompleted >= ctx.iterationsTotal {
-                        localTerminationReason = "chunk_loop_finished_early"
-                        break
-                    }
+                    localTerminationReason =
+                        localIterationsCompleted >= ctx.iterationsTotal
+                        ? "run_complete" : "voluntary_yield"
+                } else if Task.isCancelled {
+                    localTerminationReason = "expiration_handler"
                 }
 
                 return BGWakeResult(
