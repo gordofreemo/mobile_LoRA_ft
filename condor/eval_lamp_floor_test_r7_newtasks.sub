@@ -6,11 +6,20 @@
 # Submit alongside the test profile baseline, no editing required:
 #   condor_submit condor/eval_lamp_test_r7_newtasks.sub        # profile baseline (BM25 k=4) on test
 #   condor_submit condor/eval_lamp_floor_test_r7_newtasks.sub  # non-personalized floor on test
+#
+# For an adapter under --no-profile (e.g. the One-LoRA FT no-profile ablation,
+# experiments/2026-07-16-one-lora-ft-noprofile-ablation.md):
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a2_lamp_1ep_seed0/final' condor/eval_lamp_floor_test_r7_newtasks.sub
 
 universe              = docker
 docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = eval/eval_lamp.py
-arguments             = --task $(task) --split test --no-profile --seed 0
+
+# Default: bare model. Override with `condor_submit -a 'adapter=<path>'` for an
+# adapter eval. eval_lamp.py treats "none" as "no adapter".
+adapter               = none
+
+arguments             = --task $(task) --split test --no-profile --seed 0 --adapter $(adapter)
 
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_test_r7_newtasks.$(task).$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_floor_test_r7_newtasks.$(task).$(ClusterId).$(ProcId).err
