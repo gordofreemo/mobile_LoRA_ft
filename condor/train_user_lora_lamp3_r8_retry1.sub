@@ -1,0 +1,137 @@
+# User-LoRA Round 8 — retry for jobs that failed on the initial K=100 submit
+# (cluster 174464).
+#
+# 83/100 jobs failed on the first submit: 75 on tyr1 (CUDA "device busy or
+# unavailable" — the known transient GPU-slot oversubscription issue from
+# CLAUDE.md/project_cluster_infrastructure, same class as R6's LaMP-4
+# retries and this round's own C3' smoke retry on cluster 174463), 7 on modi
+# (uncorrectable ECC error — a real hardware fault signal, not just
+# scheduling), and 1 (u00008075) was a false failure: refuse-to-overwrite
+# against the Step-4 smoke checkpoint already at that output path, which is
+# valid and does not need retraining.
+#
+# This sub retries the 82 genuine failures (83 minus u00008075), excluding
+# both tyr1 and modi via requirements. Same recipe/config as
+# condor/train_user_lora_lamp3_r8.sub — only the queue list and the
+# exclusion requirement differ.
+#
+# Plan: experiments/2026-07-16-user-lora-round8-lamp3-onelora-plan.md
+#
+# Submit (after committing this file):
+#   condor_submit condor/train_user_lora_lamp3_r8_retry1.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config $(config_path)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp3_r8_retry1.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp3_r8_retry1.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_user_lora_lamp3_r8_retry1.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# 82 per-user R8 configs that failed on the first submit: 75 on tyr1
+# (CUDA-busy oversubscription) + 7 on modi (ECC error). See header above.
+queue config_path from (
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005854_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00003131_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00011099_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00018331_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00011655_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00003997_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00017011_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00009601_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00004654_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00001267_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00010695_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00004219_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00019617_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00009710_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00004746_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00015515_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00002421_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00009704_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00007195_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00019598_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00009492_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00013218_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00000303_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00013354_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00008467_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00018966_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00017623_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00010474_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00012620_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00013776_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00017757_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00012364_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00016746_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00015526_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00016789_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00001339_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005020_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00012534_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00010269_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00013840_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005355_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00019089_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00015995_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00007656_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00003161_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00015757_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00000506_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00017403_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00018839_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00008614_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00018961_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005816_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00011077_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00018181_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00016057_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00016732_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00000145_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00012879_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00010442_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00012602_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00001965_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00011288_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00001646_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005394_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00006012_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005228_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00009262_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00013401_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00010547_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00015546_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00017070_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00011202_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00003907_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00004868_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00008160_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00001751_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00009406_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00005301_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00011400_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00002533_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00019583_r8.json
+  /home/ange00008/projects/mobileFT_distill/train/config/user_lora_lamp3_oppu_u00010694_r8.json
+)
