@@ -1,0 +1,49 @@
+# LongLaMP Product Review eval — PROFILE baseline (BM25 k=4, no adapter) by
+# default, or the LongLaMP-LoRA (Review) Task-LoRA via `-a 'adapter=...'`.
+#
+# Smoke-test FIRST in an interactive session before submitting the full run:
+#   condor_submit -i condor/interactive.sub
+#   python eval/eval_longlamp.py --task product_review_user --split dev --k 4 --limit 5
+# Then submit this for the full dev/test numbers (bare model):
+#   condor_submit condor/eval_longlamp.sub
+#
+# For the Task-LoRA run, override `adapter` at submit time (results filename
+# picks up the adapter tag automatically):
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/longlamp_lora_review_1ep_seed0/final' condor/eval_longlamp.sub
+#
+# For the non-personalized floor, see eval_longlamp_floor.sub.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_longlamp.py
+
+# Default: bare model. Override with `condor_submit -a 'adapter=<path>'` for
+# the Task-LoRA eval. eval_longlamp.py treats "none" as "no adapter".
+adapter               = none
+split                 = test
+
+arguments             = --task product_review_user --split $(split) --k 4 --seed 0 --resume --adapter $(adapter)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp.$(ClusterId).log
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+environment             = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LONGLAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/longlamp CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+max_job_retirement_time = 600
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

@@ -1,0 +1,53 @@
+{
+  "_doc": "LongLaMP-LoRA (Review) — LL1's Task-LoRA. Recipe reused verbatim from a1_lamp_1ep.json / One-LoRA FT (plan decision #10): the paper has no LoRA baseline to defer to (its only fine-tuning experiment is a full FlanT5-base fine-tune). 1 epoch (decision #11), matching A1-lamp/One-LoRA FT's own settled choice. save_steps=100 (not 200, per the plan) because ~14,745 examples / effective batch 32 is ~460 steps/epoch, roughly half A1-lamp's per-epoch step count, so halving save_steps keeps a comparable ~4-5 intermediate checkpoints. See experiments/2026-07-17-longlamp-review-ll1-plan.md.",
+
+  "condition": "longlamp_review_1ep",
+  "seed": 0,
+  "model_name_or_path": "data/models/SmolLM3-3B",
+  "dataset_path": "data/longlamp_train_review_user_bm25k4.jsonl",
+  "output_dir": "train/checkpoints/longlamp_lora_review_1ep_seed0",
+
+  "lora": {
+    "r": 4,
+    "lora_alpha": 8,
+    "lora_dropout": 0.05,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+
+  "data": {
+    "max_seq_length": 2048
+  },
+
+  "trainer": {
+    "num_train_epochs": 1,
+    "per_device_train_batch_size": 4,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 3e-4,
+    "weight_decay": 0.0,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_epsilon": 1e-8,
+    "max_grad_norm": 1.0,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.03,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "gradient_checkpointing_kwargs": {"use_reentrant": false},
+    "save_strategy": "steps",
+    "save_steps": 100,
+    "save_total_limit": null,
+    "logging_steps": 10,
+    "optim": "adamw_torch",
+    "report_to": "none",
+    "remove_unused_columns": false,
+    "dataloader_num_workers": 2
+  },
+
+  "wandb": {
+    "_doc": "Disabled — report_to above is 'none'. Flip report_to to 'wandb' and run `wandb login` once on the login node to re-enable.",
+    "project": "mobileFT_distill",
+    "run_name": "longlamp_review_1ep_seed0"
+  }
+}
