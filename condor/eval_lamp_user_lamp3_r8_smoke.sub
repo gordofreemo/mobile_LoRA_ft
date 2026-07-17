@@ -12,6 +12,11 @@
 # Acceptance: clean single-record prediction, no errors, adapter path
 # resolves to the Step-4 smoke checkpoint.
 #
+# First submit (cluster 174462) hit the known transient tyr1 GPU-slot
+# oversubscription CUDA error ("CUDA-capable device(s) is/are busy or
+# unavailable") documented in CLAUDE.md/project_cluster_infrastructure — same
+# class of issue as R6's LaMP-4 retries. Excluded tyr1 below for the retry.
+#
 # Submit (after committing this file):
 #   condor_submit condor/eval_lamp_user_lamp3_r8_smoke.sub
 
@@ -40,7 +45,7 @@ require_gpus            = Capability >= 8.0 && Capability < 10.0
 request_GPUs          = 1
 request_CPUs          = 2
 request_memory        = 16G
-requirements          = UidDomain == "cs.uni-saarland.de"
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de"
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true
 
