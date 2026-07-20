@@ -53,14 +53,25 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import time
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-USER_SPLIT_DIR = ROOT / "data" / "lamp"
-TIME_SPLIT_DIR = ROOT / "data" / "lamp_time"
-OUT_DIR = ROOT / "data" / "lamp_user_stats"
+# Env-var overrides (matching train/build_dataset.py's LAMP_DIR/DATA_OUT_DIR
+# pattern) — required under Condor, where `should_transfer_files = YES` runs
+# the executable from a scratch sandbox, so `Path(__file__).parent.parent`
+# does NOT resolve to the real repo checkout. Bug found 2026-07-20 when this
+# script was first run via Condor (condor/lamp_user_stats_newtasks.sub) —
+# previously only ever run directly on a login node, where the relative
+# resolution happened to work.
+ROOT = Path(os.environ.get(
+    "PROJECT_ROOT",
+    str(Path(__file__).parent.parent),
+))
+USER_SPLIT_DIR = Path(os.environ.get("LAMP_DIR", str(ROOT / "data" / "lamp")))
+TIME_SPLIT_DIR = Path(os.environ.get("LAMP_TIME_DIR", str(ROOT / "data" / "lamp_time")))
+OUT_DIR = Path(os.environ.get("USER_STATS_OUT_DIR", str(ROOT / "data" / "lamp_user_stats")))
 
 TASKS = ["LaMP_3", "LaMP_4", "LaMP_7",
           "LaMP_1", "LaMP_2_movies", "LaMP_2_news", "LaMP_5"]
