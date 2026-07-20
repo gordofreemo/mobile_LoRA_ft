@@ -6,6 +6,14 @@
 # modules, 1 epoch. See train/config/longlamp_review_1ep.json and
 # experiments/2026-07-17-longlamp-review-ll1-plan.md (Step 4).
 #
+# max_seq_length raised 2048->8192 after a Step-4 smoke (2026-07-20) showed
+# 75% truncation-drop at 2048 (LongLaMP's PPEP profile + input routinely
+# exceed it); per_device_train_batch_size dropped 4->2 accordingly to keep
+# memory manageable at 4x context — see the config's _doc. gpus_minimum_memory
+# bumped 32000->40000 for the same reason (R5/R8's own 7168-context per-user
+# LoRA training fits in 32000 at per_device=2; 8192 is a further ~14% and adds
+# more LoRA target modules, so a bit of headroom).
+#
 # Outputs go to train/checkpoints/longlamp_lora_review_1ep_seed0/ — a fresh
 # directory, doesn't touch any LaMP checkpoint.
 #
@@ -32,7 +40,7 @@ log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_
 should_transfer_files = YES
 environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
 
-gpus_minimum_memory     = 32000
+gpus_minimum_memory     = 40000
 gpus_minimum_capability = 8.0
 # Capability *range*, not just a floor — see condor/eval_lamp_llama.sub for
 # the full rationale (Blackwell sm_120 nodes crash ver4's PyTorch 2.5.1+cu124).

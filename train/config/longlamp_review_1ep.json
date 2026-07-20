@@ -1,5 +1,5 @@
 {
-  "_doc": "LongLaMP-LoRA (Review) — LL1's Task-LoRA. Recipe reused verbatim from a1_lamp_1ep.json / One-LoRA FT (plan decision #10): the paper has no LoRA baseline to defer to (its only fine-tuning experiment is a full FlanT5-base fine-tune). 1 epoch (decision #11), matching A1-lamp/One-LoRA FT's own settled choice. save_steps=100 (not 200, per the plan) because ~14,745 examples / effective batch 32 is ~460 steps/epoch, roughly half A1-lamp's per-epoch step count, so halving save_steps keeps a comparable ~4-5 intermediate checkpoints. See experiments/2026-07-17-longlamp-review-ll1-plan.md.",
+  "_doc": "LongLaMP-LoRA (Review) — LL1's Task-LoRA. Recipe reused verbatim from a1_lamp_1ep.json / One-LoRA FT (plan decision #10) EXCEPT max_seq_length and batch shape (see below) — the paper has no LoRA baseline to defer to (its only fine-tuning experiment is a full FlanT5-base fine-tune). 1 epoch (decision #11), matching A1-lamp/One-LoRA FT's own settled choice. save_steps=100 (not 200, per the plan) because ~14,745 examples / effective batch 32 is ~460 steps/epoch, roughly half A1-lamp's per-epoch step count, so halving save_steps keeps a comparable ~4-5 intermediate checkpoints. See experiments/2026-07-17-longlamp-review-ll1-plan.md. DEVIATION found during Step 4 smoke (2026-07-20): a 64-example/4-step smoke at the plan's original max_seq_length=2048 dropped 48/64 (75%) for truncating past the assistant span — LongLaMP's PPEP-templated profile context + already-long `input` field routinely exceed 2048 tokens (median example ~12.2k chars across the full built corpus, ~92% over 2048 tok by a conservative chars/4 estimate). User decision: raise max_seq_length instead of capping profile-entry text, to keep PPEP verbatim/uncapped (closer to paper fidelity) rather than retrofitting LaMP's ENTRY_CHARS-style truncation. Set to 8192 (est. ~1-2% still truncated, matching R5/R8's own 7168 precedent for long-context per-user LoRA — see train/config/user_lora_lamp3_oppu_r8_template.json). per_device_train_batch_size dropped 4->2, gradient_accumulation_steps raised 8->16 to hold effective batch at 32 while keeping memory manageable at 4x the sequence length (mirrors R5/R8's per_device=2 choice at their own long context, not a fresh guess).",
 
   "condition": "longlamp_review_1ep",
   "seed": 0,
@@ -17,13 +17,13 @@
   },
 
   "data": {
-    "max_seq_length": 2048
+    "max_seq_length": 8192
   },
 
   "trainer": {
     "num_train_epochs": 1,
-    "per_device_train_batch_size": 4,
-    "gradient_accumulation_steps": 8,
+    "per_device_train_batch_size": 2,
+    "gradient_accumulation_steps": 16,
     "learning_rate": 3e-4,
     "weight_decay": 0.0,
     "adam_beta1": 0.9,
