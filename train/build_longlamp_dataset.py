@@ -207,8 +207,12 @@ def main():
 
     provenance = collect_provenance()
     suffix = f"bm25k{args.k}"
-    out_path = Path(DATA_OUT_DIR) / f"longlamp_train_review_user_{suffix}.jsonl"
-    meta_path = Path(DATA_OUT_DIR) / f"longlamp_train_review_user_{suffix}.meta.json"
+    # Smoke runs (--limit > 0) get an _limitN suffix so they can never collide
+    # with the full-run output path, matching this project's standard
+    # refuse-to-overwrite convention (see e.g. train/build_dataset.py).
+    limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
+    out_path = Path(DATA_OUT_DIR) / f"longlamp_train_review_user_{suffix}{limit_tag}.jsonl"
+    meta_path = Path(DATA_OUT_DIR) / f"longlamp_train_review_user_{suffix}{limit_tag}.meta.json"
 
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
