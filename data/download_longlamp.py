@@ -46,12 +46,12 @@ CONFIG_NAMES = {
     "temporal": "product_review_temporal",
 }
 
-# HF dataset split name -> local filename. LongLaMP calls its dev split
-# "validation"; we write it as val.json to match data/lamp_time/'s "dev"-ish
-# shorthand convention loosely (LaMP itself uses "dev", but LongLaMP's own HF
-# split key is "validation" — keeping val.json avoids implying a false 1:1
-# naming match with LaMP's dev/test).
-SPLITS = {"train": "train.json", "validation": "val.json", "test": "test.json"}
+# HF dataset split name -> local filename. Confirmed against the real error
+# from a first download attempt (cluster 174653, 2026-07-17): the actual HF
+# split key is "val" (not "validation", which was an unverified assumption —
+# `ValueError: Unknown split "validation". Should be one of ['train', 'val',
+# 'test'].`).
+SPLITS = {"train": "train.json", "val": "val.json", "test": "test.json"}
 
 DEFAULT_OUT_DIR = Path(__file__).parent / "longlamp"
 
