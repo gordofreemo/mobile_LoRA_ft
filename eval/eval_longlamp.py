@@ -360,6 +360,22 @@ def main():
         help="device_map passed to from_pretrained. 'cuda' (default) / 'cpu' for "
         "single-device placement; 'auto' for accelerate multi-GPU sharding.",
     )
+    parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=1.0,
+        help="passed to model.generate(); 1.0 (default) is a no-op, matching "
+        "every existing result file. Decoding stays greedy/deterministic "
+        "(do_sample=False unchanged) -- this only reweights repeated-token "
+        "logits, it doesn't sample. Added after a Step-5 smoke showed the "
+        "LongLaMP Task-LoRA arm degenerating into repetition loops under "
+        "plain greedy decoding (present from checkpoint-100 onward, not a "
+        "late-training artifact) -- a documented interaction between LoRA "
+        "fine-tuning and greedy decoding (see huggingface/peft#1003, "
+        "tloen/alpaca-lora#467). Use one fixed value (e.g. 1.3) applied "
+        "identically across all three arms (floor/baseline/adapter) -- "
+        "never sweep this against the eval metric.",
+    )
     args = parser.parse_args()
 
     if args.resume and args.overwrite:
@@ -391,7 +407,12 @@ def main():
         stacked_tag = adapter_tag
     profile_tag = "noprofile" if args.no_profile else f"bm25k{args.k}"
     limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
-    stem = f"LongLaMP_{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{limit_tag}"
+    # Only tag the filename when repetition_penalty deviates from the
+    # transformers default (1.0) -- keeps every existing plain-greedy result
+    # path unchanged, and lets the penalty condition live at its own path
+    # instead of colliding or requiring --overwrite.
+    rp_tag = f"_rp{args.repetition_penalty}" if args.repetition_penalty != 1.0 else ""
+    stem = f"LongLaMP_{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{rp_tag}{limit_tag}"
     out_path = Path(RESULTS_DIR) / f"{stem}.json"
     pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
     if not args.overwrite and not args.resume and (out_path.exists() or pred_path.exists()):
@@ -491,6 +512,7 @@ def main():
                     **inputs,
                     max_new_tokens=max_new,
                     do_sample=False,
+                    repetition_penalty=args.repetition_penalty,
                     pad_token_id=tokenizer.eos_token_id,
                 )
             new_tokens = out[0][input_len:]
@@ -541,6 +563,7 @@ def main():
         "k": 0 if args.no_profile else args.k,
         "seed": args.seed,
         "decoding": "greedy",
+        "repetition_penalty": args.repetition_penalty,
         "max_new_tokens": max_new,
         "limit": args.limit,
         "model_dir": args.model_dir,
