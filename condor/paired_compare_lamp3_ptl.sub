@@ -1,0 +1,48 @@
+# Paired comparison — PT1 (LaMP-3 User-LoRA on Per-Task-LoRA(LaMP-3)).
+#
+# CPU-only job. Runs eval/paired_compare.py UNMODIFIED on the consolidated
+# C2''' vs C3''' prediction files:
+#   pred-a: results/LaMP_3_test_per_task_lamp3_1ep_seed0_final_bm25k4_seed0_topK100.predictions.jsonl  (100 lines, C2''' batch)
+#   pred-b: results/LaMP_3_test_pt1_C3.predictions.jsonl  (100 lines, C3''' aggregated)
+#
+# NO pre-registered gate this round (plan axis 10) — paired_compare.py still
+# emits p-values/CI/wins-ties-losses as always, they're just reported
+# side-by-side with R5's archived Δ−0.050 (7/91/2) and R8's exact 0.000
+# (5/90/5), not used for a pass/fail decision.
+#
+# Plan reference: experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md
+# §Execution sequence Step 12 / Scaffolding inventory item 12.
+#
+# Must run via condor_submit, not directly — scipy isn't on the login node
+# (same issue R8/R9 both hit).
+#
+# Submit (after committing this file, and after Step 11's aggregation):
+#   condor_submit condor/paired_compare_lamp3_ptl.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare.py
+
+arguments = --pred-a /home/ange00008/projects/mobileFT_distill/results/LaMP_3_test_per_task_lamp3_1ep_seed0_final_bm25k4_seed0_topK100.predictions.jsonl --pred-b /home/ange00008/projects/mobileFT_distill/results/LaMP_3_test_pt1_C3.predictions.jsonl --label-a c2_ptl_bm25 --label-b c3_ptl_userlora_bm25 --task LaMP_3 --split test --metric mae --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp3_ptl.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp3_ptl.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp3_ptl.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
