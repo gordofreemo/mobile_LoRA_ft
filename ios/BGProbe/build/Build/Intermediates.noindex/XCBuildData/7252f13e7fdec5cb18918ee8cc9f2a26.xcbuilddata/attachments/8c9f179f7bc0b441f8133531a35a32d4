@@ -1,0 +1,29 @@
+{
+  "" : {
+    "diagnostics" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbe-primary.dia",
+    "emit-module-dependencies" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbe-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbe-primary-emit-module.dia",
+    "pch" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbe-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbe-primary.swiftdeps"
+  },
+  "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/BGProbe/BGProbeApp.swift" : {
+    "const-values" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.swiftconstvalues",
+    "dependencies" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.d",
+    "diagnostics" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.dia",
+    "index-unit-output-path" : "/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.o",
+    "llvm-bc" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.bc",
+    "object" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.o",
+    "swift-dependencies" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp.swiftdeps",
+    "swiftmodule" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/BGProbeApp~partial.swiftmodule"
+  },
+  "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/BGProbe/ContentView.swift" : {
+    "const-values" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/build/Build/Intermediates.noindex/BGProbe.build/Debug-iphoneos/BGProbe.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  }
+}

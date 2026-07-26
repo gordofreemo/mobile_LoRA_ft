@@ -48,6 +48,16 @@ import MLXOptimizers
 /// from `nonisolated` writers (a `@MainActor`-class static `let` would not be).
 private let e2eFileLock = NSLock()
 
+/// Serializes appends to the token-time (h7) JSONL. No concurrent writer
+/// (single sequential train callback, no battery sampler) but kept for
+/// consistency with the E2E write path and as cheap insurance.
+private let tokentimeFileLock = NSLock()
+
+/// Serializes appends to the granularity-sweep (h8) JSONL. No concurrent
+/// writer (one cell per process launch, single sequential train callback)
+/// but kept for consistency with the other write paths.
+private let granularityFileLock = NSLock()
+
 extension LLMEvaluator {
 
     // MARK: - Launch mode
@@ -55,8 +65,13 @@ extension LLMEvaluator {
     /// True when the app was launched to run the training benchmark.
     static var trainBenchmarkLaunchMode: TrainBenchLaunchMode? {
         let args = CommandLine.arguments
-        // E2E (h5) is a distinct exact arg — check first.
+        // E2E (h5), token-time (h7, hot/cold), and granularity (h8) are
+        // distinct exact args — check the more specific "-cold" flag before
+        // the plain one.
         if args.contains("--benchmark-train-e2e") { return .e2e }
+        if args.contains("--benchmark-train-tokentime-cold") { return .tokentimeCold }
+        if args.contains("--benchmark-train-tokentime") { return .tokentime }
+        if args.contains("--benchmark-train-granularity") { return .granularity }
         if args.contains("--benchmark-train-stress") { return .stress }
         if args.contains("--benchmark-train") { return .full }
         return nil
@@ -70,6 +85,18 @@ extension LLMEvaluator {
         /// E2E (h5): one real user trained to completion (3×n_user iters), save
         /// adapter, capture loss + timed battery. See runE2ETrainBenchmark.
         case e2e
+        /// Token-time (h7), HOT regime: per-iteration wall-time vs synthetic
+        /// example token count, warm-up burst + no cooldown between cells
+        /// (sustained-training conditions). See runTokenTimeBenchmark.
+        case tokentime
+        /// Token-time (h7), COLD regime: same grid/recipe/iterations, but
+        /// each cell isolated by a cooldown-to-nominal gate before and after
+        /// (clean per-token-count measurement). See runTokenTimeColdBenchmark.
+        case tokentimeCold
+        /// GC granularity sweep (h8): ONE cell (fixed K, via `--granularity-k`)
+        /// per process launch — Mac-driven orchestration loops K across many
+        /// launches. See runGranularityBenchmark.
+        case granularity
     }
 
     /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
@@ -90,6 +117,13 @@ extension LLMEvaluator {
     /// execution-order step 1). Absent → full 3×n_user.
     static var trainBenchmarkMaxIters: Int? {
         guard let v = launchArgValue("--max-iters") else { return nil }
+        return Int(v)
+    }
+
+    /// `--granularity-k <K>` — checkpoint group size for this process's single
+    /// cell (h8). Must be a divisor of 36; validated in runGranularityBenchmark.
+    static var trainBenchmarkGranularityK: Int? {
+        guard let v = launchArgValue("--granularity-k") else { return nil }
         return Int(v)
     }
 
@@ -128,6 +162,23 @@ extension LLMEvaluator {
                 user: Self.trainBenchmarkUser,
                 condition: Self.trainBenchmarkCondition,
                 maxIters: Self.trainBenchmarkMaxIters)
+            return
+        }
+        // Token-time (h7) is also a separate orchestration path (synthetic
+        // exact-length sweep); the cap-sweep below is untouched. Two regimes,
+        // two entry points — see their doc comments.
+        if mode == .tokentime {
+            await runTokenTimeBenchmark()
+            return
+        }
+        if mode == .tokentimeCold {
+            await runTokenTimeColdBenchmark()
+            return
+        }
+        // Granularity (h8) is also a separate orchestration path (one fixed-K
+        // cell per process launch); the cap-sweep below is untouched.
+        if mode == .granularity {
+            await runGranularityBenchmark(k: Self.trainBenchmarkGranularityK)
             return
         }
 
@@ -251,9 +302,9 @@ extension LLMEvaluator {
                 // model (no-op for any non-SmolLM3 model). The model's forward
                 // reads each block's trainable params at call time, so this is
                 // set after LoRA is applied. See TrainBenchConstants /
-                // SmolLM3Model.useGradientCheckpoint.
+                // SmolLM3Model.checkpointGroupSize.
                 if TrainBenchConstants.gradientCheckpointing {
-                    (ctx.model as? SmolLM3Model)?.useGradientCheckpoint = true
+                    (ctx.model as? SmolLM3Model)?.checkpointGroupSize = 1
                 }
 
                 // Cap sequence length (see capExamples). Done inside perform so
@@ -340,12 +391,15 @@ extension LLMEvaluator {
     }
 
     /// Cooldown gated on `thermalState == nominal`, capped (decision 8).
-    private func trainCooldown() async {
+    /// `capSeconds` defaults to the original h3/h4 cap so existing callers are
+    /// unaffected; the token-time COLD regime (h7 v4) passes a much larger
+    /// value — see `tokentimeColdCooldownCapSeconds`'s doc comment for why.
+    private func trainCooldown(capSeconds: Double = TrainBenchConstants.cooldownCapSeconds) async {
         let start = Date.timeIntervalSinceReferenceDate
         while ProcessInfo.processInfo.thermalState != .nominal {
-            if Date.timeIntervalSinceReferenceDate - start
-                > TrainBenchConstants.cooldownCapSeconds
-            {
+            let elapsed = Date.timeIntervalSinceReferenceDate - start
+            if elapsed > capSeconds {
+                tlog("cooldown cap hit after \(Int(elapsed))s (still \(Self.thermalString()))")
                 benchLogLine("train cooldown cap hit (still non-nominal)")
                 break
             }
@@ -486,7 +540,7 @@ extension LLMEvaluator {
                 // Per-block gradient checkpointing (h4 infra) — required to fit
                 // real seq lengths at cap 1024.
                 if TrainBenchConstants.gradientCheckpointing {
-                    (mc.model as? SmolLM3Model)?.useGradientCheckpoint = true
+                    (mc.model as? SmolLM3Model)?.checkpointGroupSize = 1
                 }
 
                 let capTrain = Self.capExamples(
@@ -688,6 +742,590 @@ extension LLMEvaluator {
     /// jetsam/SIGKILL leaves a breadcrumb trail in the console.
     nonisolated func tlog(_ message: String) {
         FileHandle.standardError.write(Data(("[trainbench] " + message + "\n").utf8))
+    }
+
+    // MARK: - Token-time (h7) — per-iteration wall-time vs token count
+
+    /// Run the token-time cost-model sweep: a discarded warm-up burst, then
+    /// the token-count grid back-to-back with NO cooldown gate (locked
+    /// design — this cost model is meant to represent real sustained E2E
+    /// training, not a cool per-cell reset). Each cell trains a single
+    /// synthetic example (exact token count) for
+    /// `tokentimeIterationsPerCell` iterations with `stepsPerReport = 1` so
+    /// every progress callback reports a true per-step (not window-averaged)
+    /// rate. See experiments/2026-07-24-ondevice-tokentime-plan.md.
+    func runTokenTimeBenchmark() async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        tlog("tokentime start session=\(sessionId) build=\(TrainBenchConstants.tokentimeAppBuild)")
+        benchLogLine(
+            "tokentime start session=\(sessionId) build=\(TrainBenchConstants.tokentimeAppBuild)")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("tokentime model load failed: \(error)")
+            benchLogLine("tokentime model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("tokentime model loaded")
+
+        let modelName =
+            modelConfiguration.name.components(separatedBy: "/").last
+            ?? modelConfiguration.name
+
+        await runTokenTimeWarmup(container: container, sessionId: sessionId)
+
+        for tokens in TrainBenchConstants.tokentimeTokenCounts {
+            await runTokenTimeCell(
+                container: container, targetTokens: tokens, modelName: modelName,
+                sessionId: sessionId, fileName: TrainBenchConstants.tokentimeMetricsFileName,
+                regime: "hot_sustained_no_cooldown")
+        }
+
+        tlog("tokentime complete session=\(sessionId)")
+        benchLogLine("tokentime complete session=\(sessionId)")
+        finishTrainBenchmark()
+    }
+
+    /// COLD regime (v3): same grid/recipe/iterations as `runTokenTimeBenchmark`,
+    /// but each cell is isolated by a cooldown-to-nominal gate before and
+    /// after, instead of a warm-up burst + no cooldown. Explicit user request
+    /// for the opposite thermal regime, to compare against the hot sweep.
+    /// Writes to a SEPARATE JSONL (`tokentimeColdMetricsFileName`) so the two
+    /// regimes' data never mix in one aggregation.
+    func runTokenTimeColdBenchmark() async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        tlog(
+            "tokentime-cold start session=\(sessionId) "
+                + "build=\(TrainBenchConstants.tokentimeAppBuild)")
+        benchLogLine(
+            "tokentime-cold start session=\(sessionId) "
+                + "build=\(TrainBenchConstants.tokentimeAppBuild)")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("tokentime-cold model load failed: \(error)")
+            benchLogLine("tokentime-cold model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("tokentime-cold model loaded")
+
+        let modelName =
+            modelConfiguration.name.components(separatedBy: "/").last
+            ?? modelConfiguration.name
+
+        // Ensure a clean nominal baseline before cell 1 too (the device may
+        // still be hot from a prior run) — no warm-up burst here, that would
+        // defeat the point of this regime.
+        tlog("tokentime-cold: pre-sweep cooldown")
+        await trainCooldown(capSeconds: TrainBenchConstants.tokentimeColdCooldownCapSeconds)
+
+        for tokens in TrainBenchConstants.tokentimeTokenCounts {
+            await runTokenTimeCell(
+                container: container, targetTokens: tokens, modelName: modelName,
+                sessionId: sessionId, fileName: TrainBenchConstants.tokentimeColdMetricsFileName,
+                regime: "cold_isolated")
+            tlog("tokentime-cold cell tokens=\(tokens): cooling down")
+            await trainCooldown(capSeconds: TrainBenchConstants.tokentimeColdCooldownCapSeconds)
+        }
+
+        tlog("tokentime-cold complete session=\(sessionId)")
+        benchLogLine("tokentime-cold complete session=\(sessionId)")
+        finishTrainBenchmark()
+    }
+
+    /// Discarded throwaway training burst at `tokentimeWarmupSeqCap` for
+    /// ~`tokentimeWarmupSeconds` (locked design: no records written) so the
+    /// real sweep below starts already thermally representative of sustained
+    /// training, rather than giving the smallest token count an artificial
+    /// cold-start advantage.
+    private func runTokenTimeWarmup(container: ModelContainer, sessionId: String) async {
+        tlog(
+            "tokentime warmup: starting (~\(TrainBenchConstants.tokentimeWarmupSeconds)s "
+                + "@tokens=\(TrainBenchConstants.tokentimeWarmupSeqCap))")
+        do {
+            try await container.perform { ctx throws -> Void in
+                let config = LoRAConfiguration(
+                    numLayers: TrainBenchConstants.loraLayers,
+                    loraParameters: .init(
+                        rank: TrainBenchConstants.loraRank,
+                        scale: TrainBenchConstants.loraScale,
+                        keys: TrainBenchConstants.loraKeys))
+                _ = try LoRAContainer.from(model: ctx.model, configuration: config)
+                if TrainBenchConstants.gradientCheckpointing {
+                    (ctx.model as? SmolLM3Model)?.checkpointGroupSize = 1
+                }
+
+                let example = Self.syntheticExample(
+                    targetTokens: TrainBenchConstants.tokentimeWarmupSeqCap,
+                    tokenizer: ctx.tokenizer)
+                let data = [example]
+
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: TrainBenchConstants.tokentimeWarmupMaxIterations,
+                    stepsPerReport: 1,
+                    stepsPerEval: TrainBenchConstants.tokentimeWarmupMaxIterations + 1,
+                    validationBatches: 0,
+                    saveEvery: TrainBenchConstants.tokentimeWarmupMaxIterations + 1,
+                    adapterURL: nil)
+
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+
+                let warmupStart = Date.timeIntervalSinceReferenceDate
+                try LoRATrain.train(
+                    model: ctx.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: ctx.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train:
+                        let elapsed = Date.timeIntervalSinceReferenceDate - warmupStart
+                        if elapsed >= TrainBenchConstants.tokentimeWarmupSeconds {
+                            return .stop
+                        }
+                    case .validation, .save:
+                        break
+                    }
+                    return .more
+                }
+            }
+            tlog("tokentime warmup: complete")
+            benchLogLine("tokentime warmup complete")
+        } catch {
+            // Best-effort — a warmup failure shouldn't abort the real sweep;
+            // each cell below applies its own fresh LoRA/GC state regardless.
+            tlog("tokentime warmup error (continuing to sweep anyway): \(error)")
+            benchLogLine("tokentime warmup error (continuing): \(error)")
+        }
+    }
+
+    /// One token-length cell: `tokentimeIterationsPerCell` iterations on a
+    /// single synthetic example of exactly `targetTokens` tokens, discarding
+    /// iteration index 0 (compile warm-up + the forced iteration-0
+    /// validation pass folded into the same window). Records are written
+    /// incrementally (per kept step) so a mid-sweep failure on a later cell
+    /// leaves every earlier cell's data on disk.
+    private func runTokenTimeCell(
+        container: ModelContainer, targetTokens: Int, modelName: String, sessionId: String,
+        fileName: String, regime: String
+    ) async {
+        tlog("tokentime cell tokens=\(targetTokens): starting")
+        do {
+            try await container.perform { ctx throws -> Void in
+                let config = LoRAConfiguration(
+                    numLayers: TrainBenchConstants.loraLayers,
+                    loraParameters: .init(
+                        rank: TrainBenchConstants.loraRank,
+                        scale: TrainBenchConstants.loraScale,
+                        keys: TrainBenchConstants.loraKeys))
+                _ = try LoRAContainer.from(model: ctx.model, configuration: config)
+                if TrainBenchConstants.gradientCheckpointing {
+                    (ctx.model as? SmolLM3Model)?.checkpointGroupSize = 1
+                }
+
+                let example = Self.syntheticExample(
+                    targetTokens: targetTokens, tokenizer: ctx.tokenizer)
+                let data = [example]
+
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: TrainBenchConstants.tokentimeIterationsPerCell,
+                    stepsPerReport: 1,
+                    stepsPerEval: TrainBenchConstants.tokentimeIterationsPerCell + 1,
+                    validationBatches: 0,
+                    saveEvery: TrainBenchConstants.tokentimeIterationsPerCell + 1,
+                    adapterURL: nil)
+
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: ctx.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: ctx.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train(let iteration, _, let ips, let tps):
+                        if iteration == 0 {
+                            // Discard: MLX graph compile / first-allocation
+                            // overhead, plus the forced iteration-0
+                            // validation pass folded into this same window.
+                            return .more
+                        }
+                        Self.appendTokenTimeRecord(
+                            targetTokens: targetTokens, iteration: iteration,
+                            secondsPerIter: 1.0 / ips, tokPerSec: tps,
+                            peakMemBytes: Memory.snapshot().peakMemory,
+                            thermalState: Self.thermalString(),
+                            lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                            modelName: modelName, sessionId: sessionId, fileName: fileName,
+                            regime: regime)
+                    case .validation, .save:
+                        break
+                    }
+                    return .more
+                }
+            }
+            tlog("tokentime cell tokens=\(targetTokens): complete")
+            benchLogLine("tokentime cell tokens=\(targetTokens) complete")
+        } catch {
+            tlog("tokentime cell tokens=\(targetTokens): error: \(error)")
+            benchLogLine("tokentime cell tokens=\(targetTokens) error: \(error)")
+        }
+    }
+
+    /// Build ONE synthetic example whose token count is EXACTLY `target`, by
+    /// tiling `tokentimeFillerPhrase` until it exceeds `target` tokens, then
+    /// truncating via tokenizer encode/decode (same mechanism as
+    /// `capExamples`). Content is irrelevant to attention/FFN compute cost —
+    /// only sequence shape matters.
+    private nonisolated static func syntheticExample(
+        targetTokens target: Int, tokenizer: Tokenizer
+    ) -> String {
+        var text = ""
+        var toks = tokenizer.encode(text: text)
+        while toks.count <= target {
+            text += TrainBenchConstants.tokentimeFillerPhrase
+            toks = tokenizer.encode(text: text)
+        }
+        return tokenizer.decode(tokenIds: Array(toks.prefix(target)))
+    }
+
+    /// Serialize + append one record to the token-time JSONL (`fileName`
+    /// selects hot vs cold — see `runTokenTimeBenchmark`/
+    /// `runTokenTimeColdBenchmark`).
+    private nonisolated static func appendTokenTimeRecord(
+        targetTokens: Int, iteration: Int, secondsPerIter: Double, tokPerSec: Double,
+        peakMemBytes: Int, thermalState: String, lowPowerMode: Bool, modelName: String,
+        sessionId: String, fileName: String, regime: String
+    ) {
+        let record: [String: Any] = [
+            "record_type": "train",
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "target_tokens": targetTokens,
+            "iteration": iteration,
+            "seconds_per_iter": secondsPerIter,
+            "tok_per_sec": tokPerSec,
+            "peak_mem_bytes": peakMemBytes,
+            "thermal_state": thermalState,
+            "low_power_mode": lowPowerMode,
+            "model": modelName,
+            "regime": regime,
+            "batch_size": TrainBenchConstants.trainBatchSize,
+            "iterations_per_cell": TrainBenchConstants.tokentimeIterationsPerCell,
+            "lora_rank": TrainBenchConstants.loraRank,
+            "lora_keys": TrainBenchConstants.loraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.loraLayers,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
+            "optimizer": "adamw",
+            "learning_rate": TrainBenchConstants.e2eLearningRate,
+            "weight_decay": TrainBenchConstants.e2eWeightDecay,
+            "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
+            "warmup_seconds": TrainBenchConstants.tokentimeWarmupSeconds,
+            "warmup_seq_cap": TrainBenchConstants.tokentimeWarmupSeqCap,
+            "cooldown_cap_seconds": TrainBenchConstants.cooldownCapSeconds,
+            "app_build": TrainBenchConstants.tokentimeAppBuild,
+            "bench_schema_version": TrainBenchConstants.tokentimeSchemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": sessionId,
+            "device_model": Self.trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+        emitTokenTime(record, fileName: fileName)
+    }
+
+    /// Append one token-time JSONL line to `fileName` (see `tokentimeFileLock`).
+    private nonisolated static func emitTokenTime(_ record: [String: Any], fileName: String) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(fileName)
+        tokentimeFileLock.lock()
+        defer { tokentimeFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash the run
+        }
+    }
+
+    // MARK: - GC granularity sweep (h8) — one fixed-K cell per process launch
+
+    /// Run ONE granularity cell (`checkpointGroupSize = k`) at the fixed
+    /// `granularitySeqCap`/`granularityIterations` recipe, then exit. Mac-side
+    /// orchestration launches this once per K in `granularityKValues`,
+    /// blocking on each launch's exit before the next — see
+    /// `scripts/run_granularity_sweep.sh`. A jetsam/OOM at this K is valid
+    /// data (the `k_start` sentinel written before training, mirroring h1-h4's
+    /// `cap_start`, pinpoints which K was in flight if the process dies
+    /// without ever reaching a `train` record); the orchestrator moves on to
+    /// the next K regardless of how this process exits.
+    func runGranularityBenchmark(k: Int?) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        guard let k, k > 0, 36 % k == 0 else {
+            tlog("granularity: missing/invalid --granularity-k (must be a divisor of 36)")
+            benchLogLine("granularity FAILED: missing/invalid --granularity-k")
+            finishTrainBenchmark()
+            return
+        }
+        tlog(
+            "granularity start session=\(sessionId) k=\(k) "
+                + "build=\(TrainBenchConstants.granularityAppBuild)")
+        benchLogLine("granularity start session=\(sessionId) k=\(k)")
+
+        guard
+            let trainData = Self.loadBundledLoRAData(TrainBenchConstants.trainResource),
+            let validData = Self.loadBundledLoRAData(TrainBenchConstants.validResource)
+        else {
+            tlog("granularity k=\(k): FAILED to load bundled LoRA data")
+            benchLogLine("granularity k=\(k) FAILED to load bundled LoRA data")
+            finishTrainBenchmark()
+            return
+        }
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("granularity k=\(k): model load failed: \(error)")
+            benchLogLine("granularity k=\(k) model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("granularity k=\(k): model loaded")
+
+        tlog(
+            "granularity k=\(k): cooldown to nominal (uncapped) + "
+                + "\(Int(TrainBenchConstants.granularityCooldownBufferSeconds))s buffer")
+        await granularityCooldown()
+
+        let modelName =
+            modelConfiguration.name.components(separatedBy: "/").last
+            ?? modelConfiguration.name
+
+        writeGranularityKStartRecord(k: k, modelName: modelName, sessionId: sessionId)
+
+        do {
+            try await container.perform { ctx throws -> Void in
+                let config = LoRAConfiguration(
+                    numLayers: TrainBenchConstants.granularityLoraLayers,
+                    loraParameters: .init(
+                        rank: TrainBenchConstants.loraRank,
+                        scale: TrainBenchConstants.loraScale,
+                        keys: TrainBenchConstants.loraKeys))
+                _ = try LoRAContainer.from(model: ctx.model, configuration: config)
+
+                (ctx.model as? SmolLM3Model)?.checkpointGroupSize = k
+
+                let capTrain = Self.capExamples(
+                    trainData, cap: TrainBenchConstants.granularitySeqCap, tokenizer: ctx.tokenizer)
+                let capValid = Self.capExamples(
+                    validData, cap: TrainBenchConstants.granularitySeqCap, tokenizer: ctx.tokenizer)
+                self.tlog(
+                    "granularity k=\(k): LoRA applied (numLayers="
+                        + "\(TrainBenchConstants.granularityLoraLayers)), starting train")
+
+                let iterations = TrainBenchConstants.granularityIterations
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: iterations,
+                    stepsPerReport: TrainBenchConstants.granularityStepsPerReport,
+                    stepsPerEval: iterations + 1,
+                    validationBatches: 0,
+                    saveEvery: iterations + 1,
+                    adapterURL: nil)
+
+                let optimizer = AdamW(learningRate: TrainBenchConstants.granularityLearningRate)
+
+                let loopStart = Date.timeIntervalSinceReferenceDate
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: ctx.model, train: capTrain, validate: capValid,
+                    optimizer: optimizer, tokenizer: ctx.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train(let iter, _, let ips, let tps):
+                        Self.appendGranularityTrainRecord(
+                            k: k, step: iter + 1, iterPerSec: ips, tokPerSec: tps,
+                            elapsed: Date.timeIntervalSinceReferenceDate - loopStart,
+                            peakMemBytes: Memory.snapshot().peakMemory,
+                            thermalState: Self.thermalString(),
+                            lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                            modelName: modelName, sessionId: sessionId)
+                        GPU.resetPeakMemory()
+                    case .validation, .save:
+                        break
+                    }
+                    return .more
+                }
+            }
+            tlog("granularity k=\(k): complete")
+            benchLogLine("granularity k=\(k) complete")
+        } catch {
+            tlog("granularity k=\(k): training error (possible OOM): \(error)")
+            benchLogLine("granularity k=\(k) training error (possible OOM): \(error)")
+            writeGranularityErrorRecord(
+                k: k, error: "\(error)", modelName: modelName, sessionId: sessionId)
+        }
+
+        tlog("granularity complete session=\(sessionId) k=\(k)")
+        benchLogLine("granularity complete session=\(sessionId) k=\(k)")
+        finishTrainBenchmark()
+    }
+
+    /// Uncapped cooldown (h8): poll `thermalState` once every
+    /// `granularityCooldownPollSeconds` until `nominal` — NO timed backstop
+    /// (locked design, unlike `trainCooldown`'s capped wait) — then wait a
+    /// fixed additional `granularityCooldownBufferSeconds` buffer.
+    private func granularityCooldown() async {
+        let start = Date.timeIntervalSinceReferenceDate
+        while ProcessInfo.processInfo.thermalState != .nominal {
+            try? await Task.sleep(for: .seconds(TrainBenchConstants.granularityCooldownPollSeconds))
+        }
+        let elapsedToNominal = Date.timeIntervalSinceReferenceDate - start
+        tlog(
+            "granularity cooldown: reached nominal after \(Int(elapsedToNominal))s, "
+                + "waiting \(Int(TrainBenchConstants.granularityCooldownBufferSeconds))s buffer")
+        try? await Task.sleep(for: .seconds(TrainBenchConstants.granularityCooldownBufferSeconds))
+    }
+
+    // MARK: - Granularity record builders
+
+    private nonisolated static func granularityBaseRecord(
+        k: Int, recordType: String, modelName: String, sessionId: String
+    ) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "checkpoint_granularity": k,
+            "num_checkpoint_groups": 36 / k,
+            "seq_cap": TrainBenchConstants.granularitySeqCap,
+            "batch_size": TrainBenchConstants.trainBatchSize,
+            "iterations_total": TrainBenchConstants.granularityIterations,
+            "steps_per_report": TrainBenchConstants.granularityStepsPerReport,
+            "model": modelName,
+            "lora_rank": TrainBenchConstants.loraRank,
+            "lora_keys": TrainBenchConstants.loraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.granularityLoraLayers,
+            "gradient_checkpointing": true,
+            "optimizer": "adamw",
+            "learning_rate": TrainBenchConstants.granularityLearningRate,
+            "app_build": TrainBenchConstants.granularityAppBuild,
+            "bench_schema_version": TrainBenchConstants.granularitySchemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    private nonisolated static func appendGranularityTrainRecord(
+        k: Int, step: Int, iterPerSec: Double, tokPerSec: Double, elapsed: Double,
+        peakMemBytes: Int, thermalState: String, lowPowerMode: Bool, modelName: String,
+        sessionId: String
+    ) {
+        var r = granularityBaseRecord(
+            k: k, recordType: "train", modelName: modelName, sessionId: sessionId)
+        r["step"] = step
+        r["iter_per_sec"] = iterPerSec
+        r["tok_per_sec"] = tokPerSec
+        r["elapsed_s"] = elapsed
+        r["peak_mem_bytes"] = peakMemBytes
+        r["thermal_state"] = thermalState
+        r["low_power_mode"] = lowPowerMode
+        emitGranularity(r)
+    }
+
+    /// Sentinel written BEFORE a cell trains (mirrors h1-h4's `cap_start`). If
+    /// the process then dies (uncatchable SIGKILL/jetsam, no `train` records),
+    /// this marks which K was in flight.
+    private func writeGranularityKStartRecord(k: Int, modelName: String, sessionId: String) {
+        var r = Self.granularityBaseRecord(
+            k: k, recordType: "k_start", modelName: modelName, sessionId: sessionId)
+        r["thermal_state"] = Self.thermalString()
+        r["low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
+        Self.emitGranularity(r)
+    }
+
+    private func writeGranularityErrorRecord(
+        k: Int, error: String, modelName: String, sessionId: String
+    ) {
+        var r = Self.granularityBaseRecord(
+            k: k, recordType: "error", modelName: modelName, sessionId: sessionId)
+        r["error"] = error
+        r["thermal_state"] = Self.thermalString()
+        r["low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
+        Self.emitGranularity(r)
+    }
+
+    /// Serialize + append one record to `train_bench_metrics_granularity.jsonl`.
+    /// No concurrent writer within a single process (one cell per launch,
+    /// sequential train callback) but lock-guarded for consistency with the
+    /// other harnesses' write paths.
+    private nonisolated static func emitGranularity(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.granularityMetricsFileName)
+        granularityFileLock.lock()
+        defer { granularityFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash the run
+        }
     }
 
     // MARK: - Bundled data

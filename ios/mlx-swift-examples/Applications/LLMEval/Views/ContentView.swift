@@ -10,7 +10,10 @@ import Tokenizers
 struct ContentView: View {
     @Environment(DeviceStat.self) private var deviceStat
 
-    @State var llm = LLMEvaluator()
+    // `.shared`, not a fresh instance — a BGProcessingTask wake reuses
+    // this same loaded model if it fires while the app is still resident
+    // in the background (see `LLMEvaluator.shared`'s doc comment).
+    @State var llm = LLMEvaluator.shared
 
     enum DisplayStyle: String, CaseIterable, Identifiable {
         case plain, markdown
@@ -92,6 +95,29 @@ struct ContentView: View {
             if let mode = LLMEvaluator.trainBenchmarkLaunchMode {
                 await llm.runTrainBenchmark(mode: mode)
                 return
+            }
+            // h6 background-scheduled training: one-shot submission of a
+            // BGProcessingTaskRequest, then exit. The wake itself is handled
+            // by `handleBGTrainTask(_:)`, registered via
+            // `BGTaskScheduler.register` in `LLMEvalApp.init()`, not here.
+            if LLMEvaluator.bgTrainSubmitLaunchMode {
+                llm.submitBGTrainRequest(
+                    user: LLMEvaluator.bgTrainSubmitUser,
+                    condition: LLMEvaluator.bgTrainSubmitCondition)
+                exit(0)
+            }
+            // h6: one-shot cancellation of any pending BGProcessingTaskRequest
+            // (stops the self-perpetuating wake chain without touching
+            // on-disk data — see `cancelBGTrainRequest()`'s doc comment).
+            if LLMEvaluator.bgTrainCancelLaunchMode {
+                llm.cancelBGTrainRequest()
+                exit(0)
+            }
+            // h6: one-shot re-arm without touching config/checkpoint — see
+            // `resubmitBGTrainRequest()`'s doc comment.
+            if LLMEvaluator.bgTrainResubmitLaunchMode {
+                llm.resubmitBGTrainRequest()
+                exit(0)
             }
             do {
                 // pre-load the weights on launch to speed up the first generation

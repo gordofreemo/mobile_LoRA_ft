@@ -19,6 +19,22 @@ private let benchLog = Logger(subsystem: "mobile.lora.bench", category: "inferen
 @MainActor
 class LLMEvaluator {
 
+    // Shared instance so a real BGProcessingTask wake (`handleBGTrainTask`
+    // in `LLMEvaluator+BGTrain.swift`) reuses whatever model ContentView
+    // already loaded, instead of building an independent second copy.
+    // h6 investigation (2026-07-15): a fresh `LLMEvaluator()` per wake meant
+    // a still-resident foreground session's already-loaded ~1.73GB model
+    // and the wake's own freshly-loaded ~1.73GB model were BOTH live at
+    // once — peak memory measured at ~3.46GB, exactly 2x the on-disk model
+    // size, matching to the byte across every wake checked. This also
+    // matches the realistic deployment scenario directly: a user opens the
+    // app (model loads once into `.shared`), backgrounds it, and the
+    // eventual BGProcessingTask wake finds `loadState` already `.loaded`
+    // (see `load()` below) — reusing the warm model, no second load, no
+    // doubled memory, and the ~9.5-10s model-load cost is skipped entirely
+    // inside the tight granted window.
+    static let shared = LLMEvaluator()
+
     var running = false
 
     var includeWeatherTool = false

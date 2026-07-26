@@ -1,0 +1,24 @@
+{
+  "source": "/Users/andrewgeyko/Documents/Research/mobile_LoRA_ft/ios/BGProbe/BGProbe/ContentView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "BGProbe",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 6
+        }
+      },
+      {
+        "comment": "",
+        "key": "Minimal BGProcessingTask probe for the h6 grant-size investigation. No UI interaction needed beyond first launch.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 8
+        }
+      }
+    ]
+  },
+  "version": 1
+}
