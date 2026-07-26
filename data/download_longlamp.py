@@ -55,7 +55,20 @@ TASKS = {
 # ['train', 'val', 'test'].`).
 SPLITS = {"train": "train.json", "val": "val.json", "test": "test.json"}
 
-DEFAULT_OUT_DIR = Path(__file__).parent / "longlamp"
+# Hardcoded absolute default (project-wide convention -- see PROJECT_ROOT in
+# every other script here), NOT Path(__file__)-relative: __file__ resolves
+# inside Condor's ephemeral sandbox copy of the executable under
+# should_transfer_files, not the real repo path, so a __file__-relative
+# default silently writes into a scratch dir that never makes it back. This
+# was latent since LL1 (masked only because LL1's original sub file happened
+# to set LONGLAMP_OUT_DIR explicitly) and surfaced for real once the LL2/LL3
+# sub stopped doing that per-task (cluster 177628 wrote both downloads into
+# /raid/condor/.../execute/dir_*/longlamp/ instead of data/longlamp/).
+PROJECT_ROOT = os.environ.get(
+    "PROJECT_ROOT",
+    "/home/ange00008/projects/mobileFT_distill",
+)
+DEFAULT_OUT_DIR = Path(PROJECT_ROOT) / "data" / "longlamp"
 
 
 def parse_args():

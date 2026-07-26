@@ -19,7 +19,13 @@
 universe              = docker
 docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = data/download_longlamp.py
-arguments             = --task $(task)
+# --out-dir passed explicitly (absolute path) rather than relying on the
+# script's own Path(__file__)-relative default -- __file__ resolves inside
+# Condor's ephemeral sandbox copy of the executable, not the real repo path,
+# so the unqualified default silently wrote LL2/LL3's first download attempt
+# into a scratch dir that never made it back (cluster 177628; caught by
+# checking data/longlamp/ on disk after the job reported success).
+arguments             = --task $(task) --out-dir /home/ange00008/projects/mobileFT_distill/data/longlamp/$(task)
 
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(task).$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(task).$(ClusterId).$(ProcId).err
