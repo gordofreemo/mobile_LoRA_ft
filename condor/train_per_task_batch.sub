@@ -1,0 +1,53 @@
+# Per-Task-LoRA batch training — 7-row queue, one row per LaMP task.
+#
+# Trains a single-task Task-LoRA per task (not mixed, unlike A1-lamp's
+# 3-task mix or One-LoRA FT's 7-task mix). Same recipe for all 7
+# (r=4 q/k/v/o+mlp, alpha=8, 1 epoch, verbatim from a1_lamp_1ep.json/
+# a2_lamp_1ep.json) — only dataset_path/output_dir differ per config, so
+# only step count differs per task (each single-task corpus is a different
+# size). See experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md,
+# pinned design axis 1/2/3, execution Step 4.
+#
+# LaMP-3 was smoked first (condor/train_per_task_lamp3_smoke.sub, cluster
+# 177626 — clean: adapter_config.json r=4/alpha=8/7 target modules, non-NaN
+# loss, dataset_path confirmed single-task) before this full batch.
+#
+# Outputs: train/checkpoints/per_task_<tag>_1ep_seed0/final/ for each of the
+# 7 tasks.
+#
+# Submit (after committing this file):
+#   condor_submit condor/train_per_task_batch.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config /home/ange00008/projects/mobileFT_distill/train/config/per_task_$(tag)_1ep.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_per_task_batch.$(tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_per_task_batch.$(tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_per_task_batch.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+# Largest single-task corpus (LaMP-3, 20000 examples) is half of A1-lamp's
+# 3-task mix — same 8h window as train_1ep.sub is generous headroom, not a
+# tight bound.
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue tag in (lamp1 lamp2_movies lamp2_news lamp3 lamp4 lamp5 lamp7)
