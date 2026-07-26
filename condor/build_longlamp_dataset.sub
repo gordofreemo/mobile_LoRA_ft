@@ -27,9 +27,14 @@ log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_
 should_transfer_files = YES
 environment           = "LONGLAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/longlamp DATA_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
 
-# CPU-only — no GPU needed for BM25 + JSONL write.
+# CPU-only — no GPU needed for BM25 + JSONL write. 8G was enough for
+# product_review_user (LL1) and abstract_generation_user (LL2, 92s clean),
+# but topic_writing_user (LL3) OOM'd at 8G (cluster 177647.1, held with
+# "Docker job has gone over memory limit of 8192 Mb") -- Reddit-post
+# profiles apparently run larger/more numerous per user than the other two
+# tasks' profiles. Bumped with real headroom rather than a minimal nudge.
 request_CPUs          = 2
-request_memory        = 8G
+request_memory        = 24G
 request_disk          = 2G
 requirements          = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted   = true
