@@ -2,7 +2,7 @@
 """
 LongLaMP evaluation harness — baseline zero-shot and LongLaMP-LoRA adapters.
 
-Runs SmolLM3-3B over a LongLaMP split, conditions on the reviewer's profile
+Runs SmolLM3-3B over a LongLaMP split, conditions on the user's profile
 via BM25 retrieval into the system prompt (PPEP-templated, paper-verbatim),
 generates deterministically, and scores ROUGE-1 + ROUGE-L.
 
@@ -12,18 +12,18 @@ per-user LongLaMP work exists yet), but is a separate script per the LL1 plan
 (experiments/2026-07-17-longlamp-review-ll1-plan.md, decision #4): LaMP's
 harness stays untouched.
 
-Only task supported this round: product_review_user (LL1, Personalized
-Review Writing, cold-start/user split). Unlike LaMP, LongLaMP's `input` field
-is already a fully-templated instruction (verified via the HF
-datasets-server API) — build_messages() does not construct a task
+Three tasks supported: product_review_user (LL1), abstract_generation_user
+(LL2), topic_writing_user (LL3) — all user (cold-start) split. Unlike LaMP,
+LongLaMP's `input` field is already a fully-templated instruction (verified
+via the HF datasets-server API) — build_messages() does not construct a task
 instruction, it only prepends the retrieved profile as a system message
 ahead of `input` verbatim. Train/eval role-layout and BM25 MUST match
 train/build_longlamp_dataset.py exactly (same cardinal rule as LaMP).
 
 Usage (run inside the training Docker image):
     python eval/eval_longlamp.py --task product_review_user --split dev --k 4 --seed 0
-    python eval/eval_longlamp.py --task product_review_user --split dev --no-profile   # floor
-    python eval/eval_longlamp.py --task product_review_user --split dev --limit 5       # smoke
+    python eval/eval_longlamp.py --task abstract_generation_user --split dev --no-profile   # floor
+    python eval/eval_longlamp.py --task topic_writing_user --split dev --limit 5             # smoke
     python eval/eval_longlamp.py --task product_review_user --split test --adapter /path/to/lora
 """
 
@@ -55,35 +55,67 @@ PROJECT_ROOT = os.environ.get(
 )
 
 # Local split filenames (data/download_longlamp.py). LongLaMP's own HF split
-# key is "validation"; we call it "dev" in the CLI to match eval_lamp.py's
-# shape, and read it from val.json on disk.
+# key is "val"; we call it "dev" in the CLI to match eval_lamp.py's shape,
+# and read it from val.json on disk.
 SPLIT_FILES = {"dev": "val.json", "test": "test.json"}
 
 # --- Per-task configuration ---------------------------------------------------
-# index_field: profile-entry text BM25 matches the query against.
-# format:      PPEP template (paper-verbatim, plan decision #8).
+# index_field / query / format / connector: ported verbatim from the LongLaMP
+# authors' own training code (github.com/LongLaMP-Benchmark/LongLaMP-Benchmark,
+# longLaMP/prompts/prompts.py), fetched directly rather than guessed -- see
+# train/build_longlamp_dataset.py's module docstring for the same rationale
+# and the LL1-vs-LL2/LL3 quote-mark fidelity note. MUST match
+# build_longlamp_dataset.py's TASKS dict exactly (same cardinal rule as LaMP).
 # max_new_tokens / metric: generation budget and scoring method.
 TASKS = {
     "product_review_user": {
         "index_field": lambda it: " ".join([
-            str(it.get("description", "")),
-            str(it.get("summary", "")),
-            str(it.get("reviewText", "")),
+            str(it.get("overall", "")), str(it.get("summary", "")),
+            str(it.get("description", "")), str(it.get("reviewText", "")),
         ]),
+        "query": lambda inp: inp,
         "format": lambda it: (
-            f'{it.get("overall", "?")} is a rating for the product with '
-            f'description {it.get("description", "")}. '
-            f'{it.get("summary", "")} is summary for {it.get("reviewText", "")}'
+            f'"{it.get("overall", "?")}" is a rating for the product with '
+            f'description "{it.get("description", "")}". '
+            f'"{it.get("summary", "")}" is summary for "{it.get("reviewText", "")}"'
+        ),
+        "connector": ". Following the given patterns ",
+        "max_new_tokens": 1024,
+        "metric": "rouge",
+    },
+    "abstract_generation_user": {
+        "index_field": lambda it: " ".join([str(it.get("title", "")), str(it.get("abstract", ""))]),
+        "query": lambda inp: (
+            inp[inp.find("items:") + len("items:"):].strip() if "items:" in inp else inp
+        ),
+        # Abstract text truncated to its first 750 words before injection into
+        # the prompt (paper's `extract_first_750_words`), NOT for BM25 indexing
+        # (index_field above stays untruncated, matching the paper).
+        "format": lambda it: (
+            f'"{" ".join(str(it.get("abstract", "")).split()[:750])}" is the '
+            f'abstract for the title "{it.get("title", "")}"'
+        ),
+        "connector": (
+            ". Use the above abstracts as context to understand the style "
+            "and language of the user and, "
         ),
         "max_new_tokens": 1024,
         "metric": "rouge",
     },
+    "topic_writing_user": {
+        # HF's summary/content fields correspond to the paper's own internal
+        # input/output profile-entry fields by semantic role -- see
+        # build_longlamp_dataset.py's TASKS dict comment.
+        "index_field": lambda it: " ".join([str(it.get("summary", "")), str(it.get("content", ""))]),
+        "query": lambda inp: inp,
+        "format": lambda it: (
+            f'"{it.get("summary", "")}" is a summary for "{it.get("content", "")}"'
+        ),
+        "connector": ". Following the given patterns, ",
+        "max_new_tokens": 1024,
+        "metric": "rouge",
+    },
 }
-
-SYSTEM_PREAMBLE = (
-    "The following are examples of this user's past activity. "
-    "Use them to match this user's preferences and writing style.\n\n"
-)
 
 
 # --- BM25 (pure Python, no dependency; identical to LaMP's) ------------------
@@ -144,19 +176,27 @@ def build_messages(task: str, record: dict, k: int, no_profile: bool) -> list:
     """Turn a LongLaMP record into chat-template messages.
 
     Unlike LaMP, `record["input"]` is already the complete task instruction
-    (verified against the real schema — see the plan doc), so the user turn
-    is `input` verbatim; only the system message (retrieved profile) is
-    built here.
+    (verified against the real schema), so the user turn is `input` verbatim;
+    only the system message (retrieved profile) is built here. The paper's
+    own per-task query construction (full input, except abstract_generation's
+    items-list extraction) and PPEP template/connector are ported verbatim --
+    see the TASKS dict above. The project's own system/user chat-role split
+    (system=profile context, user=task input) is kept for consistency with
+    every other task in this project; the paper itself concatenates the
+    profile block and input into one string with no role split.
     """
     user_content = record["input"]
     if no_profile:
         return [{"role": "user", "content": user_content}]
-    retrieved = retrieve_profile(task, user_content, record.get("profile", []), k)
+    cfg = TASKS[task]
+    query = cfg["query"](user_content)
+    retrieved = retrieve_profile(task, query, record.get("profile", []), k)
     if not retrieved:
         return [{"role": "user", "content": user_content}]
-    lines = "\n".join(TASKS[task]["format"](it) for it in retrieved)
+    lines = ", and ".join(cfg["format"](it) for it in retrieved)
+    system = lines + cfg["connector"]
     return [
-        {"role": "system", "content": SYSTEM_PREAMBLE + lines},
+        {"role": "system", "content": system},
         {"role": "user", "content": user_content},
     ]
 

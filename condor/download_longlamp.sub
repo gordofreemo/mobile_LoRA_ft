@@ -1,27 +1,32 @@
-# LongLaMP Product Review (user split) download — one-time CPU job.
+# LongLaMP task download — one-time CPU job, one proc per task.
 #
-# Pulls LongLaMP/LongLaMP config product_review_user (train/validation/test)
-# via the HF `datasets` library and writes local JSON files under
-# data/longlamp/product_review_user/. See data/download_longlamp.py and
-# experiments/2026-07-17-longlamp-review-ll1-plan.md (Step 2).
+# Pulls a LongLaMP/LongLaMP config's train/val/test splits via the HF
+# `datasets` library and writes local JSON files under data/longlamp/<task>/.
+# See data/download_longlamp.py.
+#
+# product_review_user (LL1) is already downloaded -- this queue list covers
+# only the two new tasks (LL2 Abstract Generation, LL3 Topic Writing). To
+# re-run product_review_user, override at submit time:
+#   condor_submit -a 'task=product_review_user' condor/download_longlamp.sub
 #
 # Smoke first if you want:
 #   condor_submit -i condor/interactive.sub
 #   cd /home/ange00008/projects/mobileFT_distill
-#   python data/download_longlamp.py --limit 20
-# Then submit for the real download:
+#   python data/download_longlamp.py --task abstract_generation_user --limit 20
+# Then submit for the real downloads:
 #   condor_submit condor/download_longlamp.sub
 
 universe              = docker
 docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
 executable            = data/download_longlamp.py
+arguments             = --task $(task)
 
-output                = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(ClusterId).$(ProcId).out
-error                 = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(ClusterId).$(ProcId).err
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(task).$(ClusterId).$(ProcId).err
 log                   = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp.$(ClusterId).log
 
 should_transfer_files = YES
-environment           = "LONGLAMP_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/longlamp/product_review_user CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+environment           = "CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
 
 # CPU-only — no GPU needed for an HF dataset download.
 request_CPUs          = 2
@@ -31,4 +36,4 @@ requirements          = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true
 
-queue 1
+queue task in (abstract_generation_user topic_writing_user)

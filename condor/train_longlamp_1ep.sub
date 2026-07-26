@@ -1,0 +1,55 @@
+# LongLaMP-LoRA Task-LoRA training run — LL2 (Abstract) / LL3 (Topic), one
+# proc each, single-GPU jobs.
+#
+# Sister of train_longlamp_review_1ep.sub (LL1) -- same recipe verbatim
+# (r=4, all 7 target modules, 1 epoch, max_seq_length=8192,
+# per_device_train_batch_size=2, gradient_accumulation_steps=16), per user
+# decision to reuse LL1's recipe rather than adjust it after LL1's
+# repetition-loop finding. See train/config/longlamp_{abstract,topic}_1ep.json
+# and experiments/2026-07-25-longlamp-review-ll1.md.
+#
+# Outputs go to train/checkpoints/longlamp_lora_{abstract,topic}_1ep_seed0/ —
+# fresh directories, don't touch LL1's or any LaMP checkpoint.
+#
+# Blackwell capability-range guard included from the start, matching LL1's sub.
+#
+# Smoke first in an interactive session before submitting the real run:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/train.py --config train/config/longlamp_abstract_1ep.json --limit 64 --max_steps 4
+#   python train/train.py --config train/config/longlamp_topic_1ep.json --limit 64 --max_steps 4
+# Then submit the real runs:
+#   condor_submit condor/train_longlamp_1ep.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/longlamp_$(task)_1ep.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_$(task)_1ep.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_$(task)_1ep.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_$(task)_1ep.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 40000
+gpus_minimum_capability = 8.0
+# Capability *range*, not just a floor — see condor/eval_lamp_llama.sub for
+# the full rationale (Blackwell sm_120 nodes crash ver4's PyTorch 2.5.1+cu124).
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (abstract topic)

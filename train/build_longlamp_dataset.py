@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """
-Build the LongLaMP Product Review (user split) training corpus for
-LongLaMP-LoRA (Review) — LL1's Task-LoRA (see
-experiments/2026-07-17-longlamp-review-ll1-plan.md).
+Build a LongLaMP task's training corpus (user split) for its Task-LoRA.
 
-Reads data/longlamp/product_review_user/train.json (written by
-data/download_longlamp.py), does BM25 top-k retrieval of each reviewer's
-profile entries, and writes a compact JSONL ready for train/train.py.
+Reads data/longlamp/<task>/train.json (written by data/download_longlamp.py),
+does BM25 top-k retrieval of each user's profile entries, and writes a
+compact JSONL ready for train/train.py.
+
+Supports three tasks (LL1/LL2/LL3): product_review_user, abstract_generation_user,
+topic_writing_user. Per-task BM25 index/query construction and PPEP profile-entry
+templates are sourced from the LongLaMP authors' own training code
+(github.com/LongLaMP-Benchmark/LongLaMP-Benchmark, longLaMP/prompts/prompts.py),
+fetched directly rather than guessed — see per-task comments below. LL1's
+product_review_user template originally omitted the literal quote marks the
+real template wraps every interpolated value in (found only once this repo
+was located, after LL1 had already trained/evaluated); this is now corrected
+here for LL2/LL3 but LL1's already-built corpus/checkpoint were not rebuilt
+-- the effect size that mattered for LL1 (the repetition-loop regression) is
+far too large to plausibly hinge on quote marks. See
+experiments/2026-07-25-longlamp-review-ll1.md.
 
 BM25 + role layout here MUST match eval/eval_longlamp.py exactly (same
 cardinal rule as LaMP's build_dataset.py / eval_lamp.py pair) — the relevant
@@ -15,21 +26,25 @@ from eval_longlamp.py rather than imported, same rationale as LaMP's harness
 (this script needs to run standalone in a Condor sandbox with no
 import-path gymnastics).
 
-Unlike LaMP, LongLaMP's `input` field is already a fully-templated
-instruction (verified via the HF datasets-server API, not guessed — see the
-plan doc). So the query for BM25 retrieval is the full `input` string, and
-the `user` turn is `input` verbatim — no task-instruction template is built
-here.
+Every task's `input` field is already a fully-templated instruction
+(verified via the HF datasets-server API) — the `user` turn is `input`
+verbatim, no task-instruction template is built here. The one exception is
+BM25 *query* construction for abstract_generation_user, which uses only the
+text after "items:" in `input` (the bulleted keyword list), matching the
+paper's `extract_before_bullets` exactly -- product_review_user and
+topic_writing_user both query on the full `input` string (also matching the
+paper's own `generate_query_for_product_review_writing` /
+`generate_query_for_topic_writing`, the latter via an identity function).
 
 Each line is one training example:
-    {"task": "LongLaMP_review_user", "id": "<reviewerId>-<index>",
+    {"task": "LongLaMP_<task>", "id": "<user_id>-<index>",
      "system": "<PPEP-formatted retrieved profile context>",
      "user":   "<input>",
      "assistant": "<output>"}
 
 Usage (CPU is enough — no GPU needed for BM25 + JSONL write):
-    python train/build_longlamp_dataset.py --k 4 --seed 0
-    python train/build_longlamp_dataset.py --limit 100   # smoke
+    python train/build_longlamp_dataset.py --task product_review_user --k 4 --seed 0
+    python train/build_longlamp_dataset.py --task abstract_generation_user --limit 100   # smoke
 """
 
 import argparse
@@ -55,41 +70,92 @@ PROJECT_ROOT = os.environ.get(
     "/home/ange00008/projects/mobileFT_distill",
 )
 
-TASK = "product_review_user"
-TASK_TAG = "LongLaMP_review_user"
 
-# Same preamble every other task in this project uses ahead of the retrieved
-# profile context (see train/build_dataset.py / eval/eval_lamp.py). LongLaMP's
-# `input` already carries the task instruction, so this preamble is the only
-# framing text the profile context needs.
-SYSTEM_PREAMBLE = (
-    "The following are examples of this user's past activity. "
-    "Use them to match this user's preferences and writing style.\n\n"
-)
+def _first_750_words(text: str) -> str:
+    """Verbatim port of the paper's `extract_first_750_words` -- applied only
+    to the abstract text injected into the PPEP prompt (create_abstract_paper_prompt),
+    NOT to the BM25 index (generation_abstract_query_corpus_maker indexes the
+    full untruncated abstract)."""
+    return " ".join(str(text).split()[:750])
 
 
-def index_text(entry: dict) -> str:
-    """BM25-indexed text for one profile entry: description + summary + reviewText,
-    concatenated. See plan decision #17 / "BM25 query construction" — LongLaMP's
-    `input` has no separable raw fields to query against cleanly, so we index
-    the profile entry's full text rather than trying to parse the templated
-    instruction."""
-    return " ".join([
-        str(entry.get("description", "")),
-        str(entry.get("summary", "")),
-        str(entry.get("reviewText", "")),
-    ])
+def _extract_after_items(input_string: str):
+    """Verbatim port of the paper's `extract_before_bullets` (its name is
+    misleading -- despite the name, it returns the text AFTER "items:", i.e.
+    the bulleted keyword list itself, not the title sentence before it).
+    Falls back to the full input if "items:" isn't found (shouldn't happen
+    on real data, but avoids a None query crashing BM25 on a malformed row)."""
+    idx = input_string.find("items:")
+    if idx == -1:
+        return input_string
+    return input_string[idx + len("items:"):].strip()
 
 
-def format_entry(entry: dict) -> str:
-    """PPEP template, verbatim from the LongLaMP paper (plan decision #8):
-    "{overall} is a rating for the product with description {description}.
-    {summary} is summary for {reviewText}" """
-    return (
-        f'{entry.get("overall", "?")} is a rating for the product with '
-        f'description {entry.get("description", "")}. '
-        f'{entry.get("summary", "")} is summary for {entry.get("reviewText", "")}'
-    )
+# --- Per-task configuration ---------------------------------------------------
+# id_field:     the on-disk record field holding the user id (differs per task
+#               on purpose -- see data/download_longlamp.py, which keeps each
+#               task's original HF field name rather than a renamed alias).
+# index_field:  profile-entry text BM25 indexes against (paper's own corpus
+#               construction, ported verbatim).
+# query:        how to build the BM25 query string from `input` (paper's own
+#               generate_query_for_* functions, ported verbatim).
+# format:       PPEP template per profile entry (paper's own create_*_prompt
+#               functions, ported verbatim, quote marks included).
+# connector:    trailing text joining the profile block to `input` (paper's
+#               own per-task wording, verbatim including punctuation).
+# Short filename tag per task -- kept as an explicit table (not derived from
+# the task key) so `--task product_review_user` reuses the exact path LL1
+# already built (`longlamp_train_review_user_*`), not a renamed one.
+FILE_TAGS = {
+    "product_review_user": "review",
+    "abstract_generation_user": "abstract",
+    "topic_writing_user": "topic",
+}
+
+TASKS = {
+    "product_review_user": {
+        "id_field": "reviewerId",
+        "index_field": lambda p: " ".join([
+            str(p.get("overall", "")), str(p.get("summary", "")),
+            str(p.get("description", "")), str(p.get("reviewText", "")),
+        ]),
+        "query": lambda inp: inp,
+        "format": lambda p: (
+            f'"{p.get("overall", "?")}" is a rating for the product with '
+            f'description "{p.get("description", "")}". '
+            f'"{p.get("summary", "")}" is summary for "{p.get("reviewText", "")}"'
+        ),
+        "connector": ". Following the given patterns ",
+    },
+    "abstract_generation_user": {
+        "id_field": "name",
+        "index_field": lambda p: " ".join([str(p.get("title", "")), str(p.get("abstract", ""))]),
+        "query": _extract_after_items,
+        "format": lambda p: (
+            f'"{_first_750_words(p.get("abstract", ""))}" is the abstract for '
+            f'the title "{p.get("title", "")}"'
+        ),
+        "connector": (
+            ". Use the above abstracts as context to understand the style "
+            "and language of the user and, "
+        ),
+    },
+    "topic_writing_user": {
+        "id_field": "author",
+        # The paper's raw per-profile-entry fields are named input/output
+        # internally (generate_query_for_topic_writing indexes on
+        # f'{x["input"]} {x["output"]}'); the public HF release renames
+        # these to summary/content respectively (matched by semantic role --
+        # see the download script's docstring and the LL2/LL3 build commit
+        # message for the reasoning).
+        "index_field": lambda p: " ".join([str(p.get("summary", "")), str(p.get("content", ""))]),
+        "query": lambda inp: inp,
+        "format": lambda p: (
+            f'"{p.get("summary", "")}" is a summary for "{p.get("content", "")}"'
+        ),
+        "connector": ". Following the given patterns, ",
+    },
+}
 
 
 # --- BM25 (identical algorithm to eval/eval_longlamp.py) ---------------------
@@ -135,28 +201,32 @@ class BM25:
         return [i for _, i in scored[:k]]
 
 
-def retrieve_profile(query: str, profile: list, k: int) -> list:
+def retrieve_profile(task: str, query: str, profile: list, k: int) -> list:
     if not profile or k <= 0:
         return []
-    docs = [tokenize(index_text(it)) for it in profile]
+    index_field = TASKS[task]["index_field"]
+    docs = [tokenize(index_field(it)) for it in profile]
     bm25 = BM25(docs)
     idxs = bm25.top_k(tokenize(query), k)
     return [profile[i] for i in idxs]
 
 
-def build_example(record: dict, idx: int, k: int) -> dict:
-    query = record["input"]
-    retrieved = retrieve_profile(query, record.get("profile", []), k)
+def build_example(task: str, record: dict, idx: int, k: int) -> dict:
+    cfg = TASKS[task]
+    raw_input = record["input"]
+    query = cfg["query"](raw_input)
+    retrieved = retrieve_profile(task, query, record.get("profile", []), k)
     if retrieved:
-        lines = "\n".join(format_entry(it) for it in retrieved)
-        system = SYSTEM_PREAMBLE + lines
+        lines = ", and ".join(cfg["format"](it) for it in retrieved)
+        system = lines + cfg["connector"]
     else:
         system = ""
+    user_id = record.get(cfg["id_field"], "unk")
     return {
-        "task": TASK_TAG,
-        "id": f'{record.get("reviewerId", "unk")}-{idx}',
+        "task": f"LongLaMP_{task}",
+        "id": f"{user_id}-{idx}",
         "system": system,
-        "user": query,
+        "user": raw_input,
         "assistant": str(record["output"]),
     }
 
@@ -196,6 +266,7 @@ def collect_provenance() -> dict:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--task", required=True, choices=list(TASKS.keys()))
     parser.add_argument("--k", type=int, default=4, help="BM25 profile entries per example")
     parser.add_argument("--seed", type=int, default=0, help="seed for the shuffle (deterministic)")
     parser.add_argument("--limit", type=int, default=0, help="cap examples (smoke testing)")
@@ -207,16 +278,14 @@ def main():
 
     provenance = collect_provenance()
     suffix = f"bm25k{args.k}"
-    # Smoke runs (--limit > 0) get an _limitN suffix so they can never collide
-    # with the full-run output path, matching this project's standard
-    # refuse-to-overwrite convention (see e.g. train/build_dataset.py).
+    task_short = FILE_TAGS[args.task]
     limit_tag = f"_limit{args.limit}" if args.limit > 0 else ""
-    out_path = Path(DATA_OUT_DIR) / f"longlamp_train_review_user_{suffix}{limit_tag}.jsonl"
-    meta_path = Path(DATA_OUT_DIR) / f"longlamp_train_review_user_{suffix}{limit_tag}.meta.json"
+    out_path = Path(DATA_OUT_DIR) / f"longlamp_train_{task_short}_user_{suffix}{limit_tag}.jsonl"
+    meta_path = Path(DATA_OUT_DIR) / f"longlamp_train_{task_short}_user_{suffix}{limit_tag}.meta.json"
 
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
-        f"[run] build_longlamp_dataset task={TASK} k={args.k} seed={args.seed} "
+        f"[run] build_longlamp_dataset task={args.task} k={args.k} seed={args.seed} "
         f"limit={args.limit} commit={commit_short} "
         f"condor={provenance.get('condor_cluster_id') or '-'}."
         f"{provenance.get('condor_proc_id') or '-'} "
@@ -236,7 +305,7 @@ def main():
         )
         sys.exit(1)
 
-    train_path = Path(LONGLAMP_DIR) / TASK / "train.json"
+    train_path = Path(LONGLAMP_DIR) / args.task / "train.json"
     if not train_path.exists():
         print(f"ERROR: {train_path} not found — run data/download_longlamp.py first.",
               file=sys.stderr)
@@ -251,7 +320,7 @@ def main():
     t0 = time.time()
     lines = []
     for i, r in enumerate(records):
-        ex = build_example(r, i, args.k)
+        ex = build_example(args.task, r, i, args.k)
         lines.append(json.dumps(ex) + "\n")
         if (i + 1) % 2000 == 0:
             rate = (i + 1) / max(time.time() - t0, 1e-6)
@@ -259,7 +328,7 @@ def main():
 
     # Deterministic shuffle, matching build_dataset.py's mixed-corpus convention
     # (this corpus is single-task, but the shuffle still decorrelates training
-    # order from the source file's on-disk reviewer ordering).
+    # order from the source file's on-disk user ordering).
     import random
 
     rng = random.Random(args.seed)
@@ -270,11 +339,11 @@ def main():
             out.write(line)
 
     size_mb = out_path.stat().st_size / 1e6
-    print(f"{TASK}: {len(lines)} examples ({size_mb:.1f} MB) -> {out_path}")
+    print(f"{args.task}: {len(lines)} examples ({size_mb:.1f} MB) -> {out_path}")
 
     meta = {
         "schema_version": 1,
-        "task": TASK,
+        "task": args.task,
         "k": args.k,
         "retriever": "bm25",
         "seed": args.seed,
