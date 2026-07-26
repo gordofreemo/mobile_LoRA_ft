@@ -316,7 +316,12 @@ extension LLMEvaluator {
     /// the latter).
     static func handleBGTrainTask(_ task: BGProcessingTask) {
         let work = Task {
-            await LLMEvaluator().runBGTrainWake()
+            // `.shared` (not a fresh `LLMEvaluator()`) — reuses whatever
+            // model is already loaded if the app is resident from a recent
+            // foreground session (the realistic deployment scenario: user
+            // opens the app, backgrounds it, the wake fires later in the
+            // same process). See the doc comment on `LLMEvaluator.shared`.
+            await LLMEvaluator.shared.runBGTrainWake()
         }
         task.expirationHandler = {
             work.cancel()
@@ -473,6 +478,28 @@ extension LLMEvaluator {
                 "active_mem_bytes": Memory.snapshot().activeMemory,
             ])
 
+        // h6 schema v8 (2026-07-15): localizes the ~2x memory doubling
+        // (~3.46GB peak vs ~1.73GB on-disk quantized weight size, v7
+        // instrumentation) to a specific internal stage of `loadWeights`
+        // (vendored `Load.swift`, MLXLMCommon) — one record per stage:
+        // loadWeights_entry, safetensors_read, sanitize_complete,
+        // quantize_applied, parameters_updated, eval_complete. Drained
+        // here (not inside `loadWeights` itself, which has no knowledge
+        // of the app's JSONL bench logging) immediately after `load()`
+        // returns, so every stage from this specific wake's model load
+        // is captured before the next wake's `GPU.resetPeakMemory()`
+        // could overwrite the picture.
+        for stage in LoadWeightsDiagnostics.shared.drain() {
+            Self.appendBGMarker(
+                ctx, recordType: "load_stage",
+                extra: [
+                    "stage": stage.stage,
+                    "wake_elapsed_s": stage.capturedAtReferenceDate - wakeStart,
+                    "peak_mem_bytes": stage.peakMemBytes,
+                    "active_mem_bytes": stage.activeMemBytes,
+                ])
+        }
+
         var terminationReason = "voluntary_yield"
         var wakeError: String? = nil
         // Snapshotted for capture into the `perform` closure below — that
@@ -555,7 +582,7 @@ extension LLMEvaluator {
                 }
 
                 if TrainBenchConstants.gradientCheckpointing {
-                    (mc.model as? SmolLM3Model)?.useGradientCheckpoint = true
+                    (mc.model as? SmolLM3Model)?.checkpointGroupSize = 1
                 }
 
                 let weightsURL = Self.bgWeightsURL(user: ctx.user)
@@ -591,7 +618,8 @@ extension LLMEvaluator {
                     GPU.resetPeakMemory()
                 }
 
-                let capTrain = Self.capExamples(trainData, cap: ctx.seqCap, tokenizer: mc.tokenizer)
+                let (capTrain, capCacheHit) = Self.cachedCapExamples(
+                    trainData, cap: ctx.seqCap, tokenizer: mc.tokenizer, user: ctx.user)
                 let capValid = Array(capTrain.prefix(1))
 
                 // Fresh optimizer every wake — see the accepted deviation
@@ -616,6 +644,7 @@ extension LLMEvaluator {
                     extra: [
                         "resume_from_iter": initialIterationsCompleted,
                         "wake_elapsed_s": Date.timeIntervalSinceReferenceDate - wakeStart,
+                        "cap_examples_cache_hit": capCacheHit,
                     ])
 
                 // ONE chunk per wake, then a voluntary clean return — schema
@@ -800,6 +829,46 @@ extension LLMEvaluator {
             guard toks.count > cap else { return s }
             return tokenizer.decode(tokenIds: Array(toks.prefix(cap)))
         }
+    }
+
+    private struct CappedExamplesCache: Codable {
+        let cap: Int
+        let count: Int
+        let examples: [String]
+    }
+
+    private nonisolated static func cappedExamplesCacheURL(user: String) -> URL {
+        URL.documentsDirectory.appendingPathComponent("bg_capped_examples_\(user).json")
+    }
+
+    /// Disk-cached wrapper around `capExamples` — h6 schema v10. Tokenizing +
+    /// truncating + detokenizing all `nUser` training examples measured at
+    /// ~20-27s on EVERY wake (the dominant chunk of the
+    /// `lora_apply_complete` → `chunk_start` gap in the v6-v9 telemetry) —
+    /// pure harness overhead unrelated to the recipe being measured, paid
+    /// fresh every wake purely because nothing persisted the result. Caches
+    /// the transformed `[String]` array (not raw token ids —
+    /// `LoRATrain.train` takes strings) keyed by `cap`/`count` so a config
+    /// change or different user's data can't silently reuse stale output;
+    /// falls back to recomputing (and rewriting the cache) on any mismatch
+    /// or read/decode failure. First wake after a restart still pays the
+    /// full cost; every wake after that should be near-instant.
+    private nonisolated static func cachedCapExamples(
+        _ data: [String], cap: Int, tokenizer: Tokenizer, user: String
+    ) -> (examples: [String], cacheHit: Bool) {
+        let url = cappedExamplesCacheURL(user: user)
+        if let cached = try? Data(contentsOf: url),
+            let decoded = try? JSONDecoder().decode(CappedExamplesCache.self, from: cached),
+            decoded.cap == cap, decoded.count == data.count
+        {
+            return (decoded.examples, true)
+        }
+        let examples = capExamples(data, cap: cap, tokenizer: tokenizer)
+        let toCache = CappedExamplesCache(cap: cap, count: data.count, examples: examples)
+        if let encoded = try? JSONEncoder().encode(toCache) {
+            try? encoded.write(to: url, options: .atomic)
+        }
+        return (examples, false)
     }
 
     // MARK: - JSONL record builders (h6 schema)

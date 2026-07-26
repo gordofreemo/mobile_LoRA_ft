@@ -14,10 +14,60 @@
 
 import BackgroundTasks
 import Foundation
+import Metal
 import SwiftUI
 
 let bgProbeTaskId = "mlx.bgprobe.test"
 let bgProbeFileLock = NSLock()
+
+// h6 investigation follow-up (2026-07-16): BGProbe's original heartbeat-only
+// loop proved the OS grants 240s+ to a near-zero-footprint app at the SAME
+// wake instants LLMEval's real GPU-compute work dies within ~1-30s. That
+// ruled out a platform-level grant-length ceiling but never tested whether
+// *any* real GPU submission — independent of LLMEval's model/LoRA/training
+// specifics — is itself the trigger. External research (2026-07-16) found a
+// real, current iOS behavior: a backgrounded app's in-flight Metal command
+// buffer can have its GPU access revoked mid-flight
+// (`MTLCommandBufferErrorDomain Code=8 'accessRevoked'`), and on iOS 26.2+
+// this is reported to cause a hard process abort rather than a graceful,
+// catchable error — plain `BGProcessingTaskRequest` (what both BGProbe and
+// LLMEval use) has no background-GPU resource assertion mechanism at all
+// (that's `BGContinuedProcessingTaskRequest`'s job, a different,
+// foreground-initiated API). Raw Metal (not MLX) deliberately, to keep this
+// a minimal, dependency-free, LLMEval-independent test of the platform
+// mechanism itself.
+let mtlDevice = MTLCreateSystemDefaultDevice()
+let mtlQueue = mtlDevice?.makeCommandQueue()
+
+/// One trivial real GPU submission: allocate a small shared buffer,
+/// blit-fill it, commit, wait for completion. If iOS revokes GPU access
+/// mid-command-buffer as a hard abort, this call (or the process itself)
+/// may never return — in that case the heartbeat log will simply stop
+/// mid-tick, the same silent-death signature seen in every LLMEval death.
+/// If it fails gracefully instead, `cmdBuffer.error`'s description is
+/// logged directly, which would name the exact Metal error (e.g.
+/// `accessRevoked`) rather than leaving it inferred.
+func runTrivialGPUOp() -> (success: Bool, detail: String) {
+    guard let device = mtlDevice else { return (false, "no MTLDevice") }
+    guard let queue = mtlQueue else { return (false, "no command queue") }
+    guard let buffer = device.makeBuffer(length: 4096, options: .storageModeShared) else {
+        return (false, "no buffer")
+    }
+    guard let cmdBuffer = queue.makeCommandBuffer() else {
+        return (false, "no command buffer")
+    }
+    guard let blit = cmdBuffer.makeBlitCommandEncoder() else {
+        return (false, "no blit encoder")
+    }
+    blit.fill(buffer: buffer, range: 0..<4096, value: 7)
+    blit.endEncoding()
+    cmdBuffer.commit()
+    cmdBuffer.waitUntilCompleted()
+    if let error = cmdBuffer.error {
+        return (false, "\(error)")
+    }
+    return (true, "status=\(cmdBuffer.status.rawValue)")
+}
 
 @main
 struct BGProbeApp: App {
@@ -71,15 +121,18 @@ func runProbeWake() async {
     let sessionId = UUID().uuidString
     appendProbeLine(["event": "wake_start", "session": sessionId, "ts": isoNow()])
 
-    // Trivial work only: a 0.2s-resolution heartbeat loop, no model, no
-    // real CPU/GPU load. If this also dies at ~9.5s, the LLMEval-specific
-    // resource footprint is ruled out as the cause.
+    // Heartbeat loop, now with one trivial real Metal GPU submission per
+    // tick (see `runTrivialGPUOp` above) — isolates whether real GPU work
+    // itself (not LLMEval's model/LoRA/training specifics) is what
+    // triggers termination during a plain BGProcessingTask wake.
     var tick = 0
     while !Task.isCancelled {
         let elapsed = Date.timeIntervalSinceReferenceDate - wakeStart
+        let gpuResult = runTrivialGPUOp()
         appendProbeLine([
             "event": "heartbeat", "session": sessionId, "elapsed_s": elapsed,
             "tick": tick, "ts": isoNow(),
+            "gpu_op_success": gpuResult.success, "gpu_op_detail": gpuResult.detail,
         ])
         tick += 1
         if elapsed > 240 { break }  // defensive cap, well above anything observed so far

@@ -22,7 +22,7 @@ enum TrainBenchConstants {
     /// `cap_start` sentinel marks the OOM'd cap).
     /// h4 (2026-06-30): GRADIENT-CHECKPOINTING variant. Per-transformer-block
     /// gradient checkpointing (all 28 blocks) added via a local mlx-swift-lm SPM
-    /// override (`ios/mlx-swift-lm-local`, `SmolLM3Model.useGradientCheckpoint`).
+    /// override (`ios/mlx-swift-lm-local`, `SmolLM3Model.checkpointGroupSize`).
     /// Same cap sweep as h3 + cap=1024 stretch. Writes a SEPARATE JSONL
     /// (`train_bench_metrics_gc.jsonl`) so a mid-run jetsam can't corrupt the
     /// naive records. See experiments/2026-06-29-ondevice-training-gc-plan.md.
@@ -42,7 +42,7 @@ enum TrainBenchConstants {
     /// Build-time git provenance, stamped by hand at build time (same discipline
     /// as the inference harness — avoids fragile project.pbxproj build-phase
     /// surgery). Update alongside `appBuild` when re-baking before a run.
-    static let gitCommit = "3047aff"
+    static let gitCommit = "457d30a"
     static let gitDirty = true
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
@@ -264,8 +264,94 @@ enum TrainBenchConstants {
     // heartbeat tick before a silent death now gives both a tighter
     // elapsed-time bound AND an actual memory reading at approximately the
     // moment of death.
+    // h6 schema v7 (2026-07-15): first REAL behavior change (not just
+    // instrumentation) since the footprint investigation began. Traced the
+    // vendored model-load path (`mlx-swift-lm-local/Libraries/
+    // MLXLMCommon/Load.swift`): the loaded-weights dictionary stays alive
+    // through `model.update(parameters:)` and the final `eval(model)` that
+    // materializes the whole model at once — if `update` doesn't just swap
+    // references, both the loaded-from-disk copy and the model's own
+    // parameter storage could be resident simultaneously right at the peak
+    // moment. Added one line, `weights.removeAll()`, right after `update`
+    // succeeds and before `eval(model)`, to let ARC release the loaded
+    // copy before the materialization spike.
+    // RESULT: no-op. Two v7 wakes both showed peak_mem_bytes IDENTICAL to
+    // the pre-fix baseline (3,459,923,896 bytes, to the byte). Explained
+    // by reading `Module.update` in mlx-swift's `Module.swift`: the
+    // leaf-array case calls `p._updateInternal(newArray)`, a reference
+    // swap, not a copy — the model's own parameter storage and
+    // `weights[key]` already point at the SAME MLXArray after `update`,
+    // so dropping the `weights` dict reference frees nothing (the model
+    // still holds the only reference that matters). Also confirmed
+    // on-device there's no duplicate model file inflating this (pulled
+    // `Library/Caches/huggingface/hub/.../blobs/` directly — exactly one
+    // ~1.73GB blob, matching the published repo's `model.safetensors`
+    // byte-for-byte, no stray/duplicate copies on disk).
+    // h6 schema v8 (2026-07-15): removed the disproven `weights.removeAll()`
+    // line. Added `LoadWeightsDiagnostics` (new type in vendored
+    // `Load.swift`) — a memory snapshot at each of `loadWeights`'s 5
+    // internal stages (`loadWeights_entry`, `safetensors_read`,
+    // `sanitize_complete`, `quantize_applied`, `parameters_updated`,
+    // `eval_complete`), drained by `runBGTrainWake()` right after `load()`
+    // returns and logged as one `load_stage` JSONL record per stage
+    // (`peak_mem_bytes`/`active_mem_bytes`/`wake_elapsed_s` each). Directly
+    // localizes which specific stage the ~2x jump (1.73GB on-disk → 3.46GB
+    // resident) happens at, rather than continuing to guess from the
+    // outside. Leading candidate going in: `quantize(model:)` calls
+    // `QuantizedLinear.init(weight:...)` on the model's own freshly
+    // constructed (random-init, full-precision, lazy) Linear/Embedding
+    // layers BEFORE the real loaded weights are applied — if that graph
+    // gets materialized somehow before being replaced by `update`, it'd
+    // produce a same-sized second quantized copy. Unconfirmed; this is
+    // what the v8 trace is for.
+    // h6 schema v9 (2026-07-15): v8's own first wake ANSWERED the
+    // question — `load_stage` showed `loadWeights` ran TWICE within one
+    // wake: a first load ~514s before `wakeStart` (timing matches a
+    // `--bg-train-resubmit` foreground launch shortly before), cleanly
+    // materializing to 1.73GB, immediately followed by the wake's own
+    // load STARTING from that already-resident 1.73GB baseline and
+    // reaching 3.46GB at its own `eval_complete`. Root cause, confirmed
+    // by reading the code (not guessed): `handleBGTrainTask` instantiated
+    // a brand-new `LLMEvaluator()` on every wake
+    // (`await LLMEvaluator().runBGTrainWake()`), completely independent
+    // of `ContentView`'s own `@State var llm = LLMEvaluator()`, which
+    // eagerly loads the model via `.task { llm.load() }` on every normal
+    // app launch. If the process stays resident between a foreground
+    // launch and the next OS-granted wake, both models end up loaded
+    // simultaneously. Fix: `LLMEvaluator.shared` (new static singleton,
+    // `ViewModels/LLMEvaluator.swift`) — both `ContentView` and
+    // `handleBGTrainTask` now reference the SAME instance. `load()`
+    // already had correct caching via its `loadState` enum
+    // (idle/loading/loaded) — it just never had a chance to apply across
+    // instances before. This also matches the realistic deployment story
+    // better than the artificial one this investigation ran under: a real
+    // user opens the app, backgrounds it, and the eventual wake reuses
+    // the already-warm model — one load, correct footprint, and the
+    // ~9.5-10s load cost is skipped entirely inside the tight granted
+    // window rather than repeated every wake.
+    // h6 schema v10 (2026-07-16): v9 fixed the memory doubling, but 32
+    // consecutive wakes over ~16.5h on the clean v9 restart still banked
+    // ZERO checkpoints — 13/32 reached `chunk_start` (~29s in) but none
+    // finished a 10-iteration chunk, ruling out memory pressure as the
+    // (sole) driver of the dominant failure. Two real, complementary
+    // fixes, not more diagnostics: (1) `cachedCapExamples` (new, near
+    // `capExamples`) disk-caches the tokenize+truncate+detokenize pass
+    // over all `nUser` examples — measured at ~20-27s on every wake
+    // (the dominant chunk of the `lora_apply_complete` → `chunk_start`
+    // gap) despite being pure harness overhead unrelated to the recipe,
+    // paid fresh every wake for no reason. Cached to
+    // `bg_capped_examples_<user>.json`, keyed by `cap`/`count` so a
+    // config or data change can't silently reuse stale output; adds a
+    // `cap_examples_cache_hit` field to `training_setup_complete`. (2)
+    // `bgChunkIterations` dropped 10→3 (see its own doc comment) — needs
+    // proportionally less training time to reach a checkpoint, so a
+    // partial window has a real chance to bank something instead of an
+    // all-or-nothing loss. Neither change touches the recipe itself
+    // (LR/rank/batch/seq_cap/epochs all unchanged) — both are pure
+    // harness efficiency, matching the standing rule that fixes here
+    // shouldn't compromise the faithful-recipe comparison to h5.
     static let bgAppBuild = "smollm3-ondevice-train-bg-h6"
-    static let bgSchemaVersion = 6
+    static let bgSchemaVersion = 10
 
     /// Defensive wall-clock ceiling (from `wakeStart`) checked alongside
     /// `Task.isCancelled` at every setup-path step boundary — independent
@@ -311,10 +397,193 @@ enum TrainBenchConstants {
     /// Chunk size for the ONE `LoRATrain.train(iterations: bgChunkIterations)`
     /// call attempted per wake (schema v5 — previously looped for multiple
     /// chunks per wake whenever time allowed; now always stops after exactly
-    /// one, see the v5 changelog above). Matches `e2eStepsPerReport` (10) so
-    /// one JSONL record = one checkpoint = one chunk = one wake's worth of
-    /// work. `LoRATrain.train` is a single blocking call — checkpointing only
-    /// happens after the chunk completes, so worst case ~10 iterations of
-    /// work is lost on a hard SIGKILL rather than a clean expiration.
-    static let bgChunkIterations = 10
+    /// one, see the v5 changelog above). `LoRATrain.train` is a single
+    /// blocking call — checkpointing only happens after the chunk completes,
+    /// so worst case `bgChunkIterations` iterations of work is lost on a
+    /// hard SIGKILL rather than a clean expiration.
+    //
+    // h6 schema v10 (2026-07-16): dropped 10→3. After the clean v9 restart,
+    // 32 consecutive wakes over ~16.5h banked ZERO checkpoints — 13/32 got
+    // as far as `chunk_start` (~29s in) but none finished a 10-iteration
+    // chunk (~45-56s of training on top of that, needing a ~75-85s window
+    // that never showed up). A smaller chunk needs proportionally less
+    // training time to reach a checkpoint, giving partial-window wakes a
+    // real chance to bank something instead of an all-or-nothing loss.
+    // Paired with the `capExamples` disk-cache below (same schema bump) —
+    // together they attack both halves of "does this wake get far enough
+    // AND finish once it's training." Quadruples chunk count for the
+    // 1215-iteration run (~122 → ~405) but that's cheap relative to a wake
+    // (checkpoint write is fast); worth it if completion rate actually
+    // moves off zero.
+    static let bgChunkIterations = 3
+
+    // =========================================================================
+    // Token-time cost model (h7) — per-iteration wall-time as a function of
+    // synthetic example token count, under the exact h5 recipe (AdamW lr=1e-5
+    // wd=0.01 bias-corrected, r=8 q+v, GC on, batch=1). Constants used only by
+    // `runTokenTimeBenchmark` in `LLMEvaluator+TrainBenchmark.swift`; h1-h6
+    // constants above are unchanged. Purpose: fit `seconds/iter ≈ a + b×tokens`
+    // to predict real E2E (h5) per-user wall time from a user's example
+    // token-length distribution. Pinned via `/grill_me` 2026-07-24; see
+    // experiments/2026-07-24-ondevice-tokentime-plan.md for the full design
+    // rationale (locked decisions, don't relitigate without cause).
+    static let tokentimeAppBuild = "smollm3-ondevice-train-tokentime-h7"
+    /// v2 (2026-07-24, same day): grid changed from the coarse `seqCaps`
+    /// (32,64,128,256,512,1024 — log-ish spacing) to a uniform 50-token-step
+    /// grid, 50...1000 (20 cells), per explicit user request for finer
+    /// resolution. All 6 caps up to 1024 were already OOM-free under GC
+    /// (v1's own result), so this is purely a resolution change, not a new
+    /// feasibility question. Upper bound rounded down to 1000 (nearest
+    /// multiple of 50) rather than tacking a non-uniform 1024 onto the end.
+    /// v3 (2026-07-24, same day): added the COLD regime (`runTokenTimeColdBenchmark`,
+    /// `tokentimeColdMetricsFileName`) — see that constant's doc comment.
+    /// v4 (2026-07-25): raised the cold regime's cooldown cap
+    /// (`tokentimeColdCooldownCapSeconds`, 120s→300s) after v3's own data
+    /// showed 120s was insufficient above ~200 tokens — see that constant's
+    /// doc comment for the evidence.
+    static let tokentimeSchemaVersion = 4
+
+    /// Uniform 50-token-step grid, 50...1000 (20 cells) — locked design v2.
+    static let tokentimeTokenCounts = Array(stride(from: 50, through: 1000, by: 50))
+
+    /// 21 iterations/cell; iteration index 0 is discarded (MLX graph compile /
+    /// first-allocation overhead, plus `LoRATrain.train`'s forced validation
+    /// pass which always fires at iteration 0 regardless of `stepsPerEval`),
+    /// the remaining 20 are kept for the per-cell mean + stddev.
+    static let tokentimeIterationsPerCell = 21
+
+    /// Filler phrase tiled to exceed each target token count, then truncated
+    /// via tokenizer encode/decode to the *exact* count (locked design:
+    /// synthetic, not real corpus text — content is irrelevant to
+    /// attention/FFN compute cost, only sequence shape matters).
+    static let tokentimeFillerPhrase = "The quick brown fox jumps over the lazy dog. "
+
+    /// Deliberate warm-up burst before cell 1 (discarded, no records written)
+    /// so ALL cells — including the smallest token count — are measured under
+    /// representative sustained-training thermal conditions, not an
+    /// artificial cold-start advantage for the first cell (locked design:
+    /// explicit user call, opposite of h3/h4's cooldown-to-nominal pattern —
+    /// this cost model is meant to represent real sustained E2E training).
+    /// Duration matches the inference benchmark's observed ~90s throttle knee.
+    static let tokentimeWarmupSeconds: Double = 75.0
+    static let tokentimeWarmupSeqCap = 512
+    /// Upper bound on warm-up iterations so a stalled/slow device can't loop
+    /// forever; the progress callback stops early via `.stop` once
+    /// `tokentimeWarmupSeconds` elapses — this is just a safety ceiling.
+    static let tokentimeWarmupMaxIterations = 400
+
+    /// Output JSONL — separate from every other harness file (h1-h6
+    /// convention: a mid-run failure in one harness can't corrupt another's
+    /// data, and each is pulled/aggregated independently).
+    static let tokentimeMetricsFileName = "train_bench_metrics_tokentime.jsonl"
+
+    /// v3 (2026-07-24, same day): COLD variant — explicit user request for
+    /// the opposite thermal regime from the hot/no-cooldown sweep above. Each
+    /// cell is isolated by a cooldown-to-nominal gate (reuses `trainCooldown()`,
+    /// same mechanism/cap as h3/h4) both BEFORE the sweep starts (in case the
+    /// device is still hot from a prior run) and AFTER every cell — no
+    /// deliberate warm-up burst (that would defeat the point: this run
+    /// measures each token count from as close to a clean nominal baseline as
+    /// the device will give in `cooldownCapSeconds`). Same grid, same 21
+    /// iterations/cell, same recipe as the hot sweep — only the thermal
+    /// regime between cells differs, so the two are directly comparable.
+    /// Separate JSONL (own file, not a wipe-and-reuse of the hot file) so
+    /// both regimes' data persist independently and can't be conflated by an
+    /// aggregator that groups by token count alone.
+    static let tokentimeColdMetricsFileName = "train_bench_metrics_tokentime_cold.jsonl"
+
+    /// v4 (2026-07-25): the v3 cold run's own data showed the shared h3/h4
+    /// `cooldownCapSeconds` (120s) is genuinely too short once cell training
+    /// time (and therefore heat output) grows with token count — verified
+    /// against the raw per-iteration `thermal_state` series, not guessed:
+    /// cells ≤200 tokens recovered to `nominal` every time (clean), but
+    /// cap=250 flipped `nominal`→`fair` mid-cell, cap=400 was `fair` for 19/20
+    /// iterations then `serious`, and cap=950 never got below `serious` at
+    /// all despite the 120s wait before it. A dedicated (larger) cap for this
+    /// regime only — NOT a change to the shared `cooldownCapSeconds`, which
+    /// h3/h4 still use unmodified via `trainCooldown()`'s default parameter.
+    /// True recovery time at the high end of the grid is unknown (this is the
+    /// first attempt at raising it), so 300s (2.5×) is a first bump, not a
+    /// verified-sufficient value — the rerun's own thermal_state column is
+    /// the check for whether it was enough.
+    static let tokentimeColdCooldownCapSeconds: Double = 300.0
+
+    // =========================================================================
+    // GC granularity sweep (h8) — how per-iteration throughput, peak activation
+    // memory, and thermal trajectory respond to gradient-checkpointing
+    // GRANULARITY: K consecutive transformer blocks grouped between checkpoint
+    // boundaries (`SmolLM3Model.checkpointGroupSize`), at a fixed cap=1024.
+    // Direct follow-on to h4 (per-block GC, K=1 only). No pre-registered
+    // hypothesis — pure systems characterization. Constants used only by
+    // `runGranularityBenchmark` in `LLMEvaluator+TrainBenchmark.swift`; h1-h7
+    // constants above are unchanged. Pinned via `/grill_me` 2026-07-25; see
+    // experiments/2026-07-25-ondevice-gc-granularity-plan.md.
+    //
+    // KNOWN, ACCEPTED DEVIATION FROM h1-h7: the shared `loraLayers` constant
+    // above (28) was discovered to be a bug during h8 implementation — the
+    // real SmolLM3-3B has 36 hidden layers (verified against
+    // data/models/SmolLM3-3B-mlx-4bit/config.json's `num_hidden_layers`), and
+    // `LoRAContainer.from` takes a SUFFIX of `numLayers` blocks (verified
+    // against `LoRAContainer.swift`'s `lora.loraLayers.suffix(configuration
+    // .numLayers)`), so every on-device round through h7 actually trained
+    // LoRA on only the LAST 28 of 36 blocks, not "all layers" as their doc
+    // comments claim. The cluster-side R5/R6 recipe this was supposed to
+    // match (`train/config/user_lora_lamp3_oppu_template.json`) has no such
+    // restriction — PEFT's `target_modules: ["q_proj","v_proj"]` applies to
+    // every matching submodule, i.e. genuinely all 36. Explicit user call:
+    // fix this FOR h8 ONLY (`granularityLoraLayers` below, =36), leaving the
+    // shared `loraLayers`/h1-h7 untouched (their results are closed/written
+    // up and not being re-run). Because of this, h8 also does NOT reuse h4's
+    // K=1 cell verbatim (the design doc's original plan) — K=1 is re-run
+    // fresh under h8's own (correct, 36-layer) LoRA config so all 9 K values
+    // in the sweep are mutually apples-to-apples.
+    static let granularityAppBuild = "smollm3-ondevice-train-granularity-h8"
+    static let granularitySchemaVersion = 1
+
+    /// h8-specific LoRA layer count — see the deviation note above. NOT the
+    /// same as the shared `loraLayers` (28, still used unmodified by h1-h7).
+    static let granularityLoraLayers = 36
+
+    /// All 9 divisors of 36, ascending. K=1 is re-run fresh (not reused from
+    /// h4 — see deviation note above), so every cell in this list is a real
+    /// on-device run.
+    static let granularityKValues = [1, 2, 3, 4, 6, 9, 12, 18, 36]
+
+    /// Fixed sequence-length cap for every cell (locked design: the most
+    /// demanding/thermally-bound cell from h4 — 0.07 iter/s, 4014 MB peak,
+    /// `serious` throughout at K=1 — where a compute/memory tradeoff knob
+    /// matters most, and closest to real LaMP user-history lengths). No cap
+    /// sweep this round.
+    static let granularitySeqCap = 1024
+
+    /// 100 steps/cell — half of h4's 200 (h4's steady-state stats stabilize
+    /// well before 200 steps end; halves wall-clock/thermal cost per cell and
+    /// surfaces an OOM sooner if one occurs).
+    static let granularityIterations = 100
+
+    /// One system-metrics record every 5 steps → 20 windows/cell.
+    static let granularityStepsPerReport = 5
+
+    /// AdamW lr=1e-5 (locked design). Weight decay / bias correction left at
+    /// `AdamW`'s own defaults (0.01 / false) — the design doc specifies only
+    /// the learning rate, and this round measures compute/memory/thermal
+    /// cost, not loss, so the optimizer's other hyperparameters don't affect
+    /// the measured quantities.
+    static let granularityLearningRate: Float = 1e-5
+
+    /// Inter-cell cooldown: poll `thermalState` once/minute until `nominal`
+    /// (UNCAPPED — no timed backstop, unlike h3/h4's 120s or h7 cold's 300s,
+    /// both found insufficient at high heat/token counts; explicit user call:
+    /// "impossible for the phone not to cool down"), then wait this many
+    /// additional seconds as a fixed buffer before starting the next cell.
+    static let granularityCooldownPollSeconds: Double = 60.0
+    static let granularityCooldownBufferSeconds: Double = 600.0
+
+    /// Output JSONL — separate from every other harness file (h1-h7
+    /// convention: a mid-run failure in one harness can't corrupt another's
+    /// data). One process launch per K (Mac-driven orchestration — see the
+    /// driver script), so every cell's records persist independently even if
+    /// a later K jetsams; a jetsam/OOM at a given K is itself valid data, not
+    /// a failure to retry.
+    static let granularityMetricsFileName = "train_bench_metrics_granularity.jsonl"
 }

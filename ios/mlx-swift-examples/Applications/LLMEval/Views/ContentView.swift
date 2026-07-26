@@ -10,7 +10,10 @@ import Tokenizers
 struct ContentView: View {
     @Environment(DeviceStat.self) private var deviceStat
 
-    @State var llm = LLMEvaluator()
+    // `.shared`, not a fresh instance — a BGProcessingTask wake reuses
+    // this same loaded model if it fires while the app is still resident
+    // in the background (see `LLMEvaluator.shared`'s doc comment).
+    @State var llm = LLMEvaluator.shared
 
     enum DisplayStyle: String, CaseIterable, Identifiable {
         case plain, markdown

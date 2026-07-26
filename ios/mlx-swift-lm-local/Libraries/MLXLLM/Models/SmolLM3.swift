@@ -143,16 +143,21 @@ public class SmolLM3ModelInner: Module {
     fileprivate let layers: [SmolLM3TransformerBlock]
     let norm: RMSNorm
 
-    /// When true, each transformer block's forward is wrapped in a gradient
-    /// checkpoint: its activations are NOT retained for backward and are
-    /// recomputed on the backward pass instead. Trades compute for a large
-    /// reduction in peak activation memory during training. Set this ONLY for
-    /// training (it is pure overhead during cached generation). Toggled via
-    /// `SmolLM3Model.useGradientCheckpoint`. See the Phase 3 on-device
-    /// gradient-checkpointing experiment.
-    var useGradientCheckpoint = false
+    /// Gradient-checkpoint granularity: `checkpointGroupSize` consecutive
+    /// transformer blocks share one checkpoint boundary (nil = no
+    /// checkpointing). A group's activations are NOT retained for backward and
+    /// are recomputed together on the backward pass instead. Trades compute for
+    /// a reduction in peak activation memory during training — larger groups
+    /// mean fewer, bigger recomputes; K=1 is per-block checkpointing (the
+    /// original behavior) and falls out as a degenerate case of the same
+    /// grouped construction, no parallel code path. `layers.count` must be
+    /// evenly divisible by the group size. Set this ONLY for training (it is
+    /// pure overhead during cached generation). Toggled via
+    /// `SmolLM3Model.checkpointGroupSize`. See the Phase 3 on-device
+    /// gradient-checkpointing / checkpointing-granularity experiments (h4, h8).
+    var checkpointGroupSize: Int? = nil
 
-    /// Keeps each step's per-block `CustomFunction` wrappers (and the MLX C
+    /// Keeps each step's per-group `CustomFunction` wrappers (and the MLX C
     /// closures they own) alive until the *next* forward begins — by which time
     /// the previous step's backward, which invokes the custom VJP, has long
     /// completed. Without this the wrappers could be released before backward
@@ -174,10 +179,18 @@ public class SmolLM3ModelInner: Module {
 
         let mask = createAttentionMask(h: h, cache: cache?.first)
 
-        if useGradientCheckpoint {
+        if let groupSize = checkpointGroupSize {
+            precondition(
+                layers.count % groupSize == 0,
+                "checkpointGroupSize (\(groupSize)) must evenly divide layer count (\(layers.count))"
+            )
             checkpointRetainer.removeAll(keepingCapacity: true)
-            for (i, layer) in layers.enumerated() {
-                h = checkpointedBlock(layer, h, mask: mask, cache: cache?[i])
+            var start = 0
+            while start < layers.count {
+                let group = Array(layers[start ..< start + groupSize])
+                let groupCaches = (start ..< start + groupSize).map { cache?[$0] }
+                h = checkpointedGroup(group, h, mask: mask, caches: groupCaches)
+                start += groupSize
             }
         } else {
             for (i, layer) in layers.enumerated() {
@@ -188,37 +201,51 @@ public class SmolLM3ModelInner: Module {
         return norm(h)
     }
 
-    /// One transformer block's forward, wrapped as a gradient checkpoint.
+    /// `checkpointGroupSize` consecutive transformer blocks' forward, wrapped
+    /// as ONE gradient checkpoint. Generalizes the original per-block
+    /// checkpoint (K=1) to a group of `blocks.count` blocks sharing a single
+    /// checkpoint boundary: the whole group's forward runs inside a custom
+    /// primitive so its activation tape is dropped, and the VJP re-runs the
+    /// same multi-block forward under `vjp` to rematerialise activations for
+    /// the group's backward, then frees them. Larger groups mean fewer,
+    /// bigger recomputes and less retained cross-block-boundary state.
     ///
     /// Built on the public MLX `CustomFunction` + `vjp` API rather than the raw
     /// `mlx_checkpoint` C symbol (which is unreachable from Swift: `Cmlx` is not
     /// a public product of mlx-swift). The construction is equivalent to
-    /// `mx.checkpoint`: the forward runs inside a custom primitive so its
-    /// activation tape is dropped, and the VJP re-runs the same forward under
-    /// `vjp` to rematerialise activations only for this single block's backward,
-    /// then frees them.
+    /// `mx.checkpoint`.
     ///
-    /// Mirrors mlx_lm's `grad_checkpoint`: the block's trainable (LoRA)
-    /// parameters are threaded through the checkpoint as explicit differentiable
-    /// inputs (`[h] + params`) so their gradients propagate across the recompute
-    /// boundary; captured frozen base weights are constants and need no grad.
-    private func checkpointedBlock(
-        _ block: SmolLM3TransformerBlock, _ x: MLXArray,
-        mask: MLXFast.ScaledDotProductAttentionMaskMode, cache: KVCache?
+    /// Mirrors mlx_lm's `grad_checkpoint`: every block's trainable (LoRA)
+    /// parameters in the group are threaded through the checkpoint as explicit
+    /// differentiable inputs (`[h] + params`, concatenated in block order) so
+    /// their gradients propagate across the recompute boundary; captured
+    /// frozen base weights are constants and need no grad.
+    private func checkpointedGroup(
+        _ blocks: [SmolLM3TransformerBlock], _ x: MLXArray,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode, caches: [KVCache?]
     ) -> MLXArray {
-        let flat = block.trainableParameters().flattened()
-        let keys = flat.map { $0.0 }
-        let paramArrays = flat.map { $0.1 }
+        // Flatten every block's trainable params, keeping per-block key sets so
+        // `run` can restore each block's own slice after unflattening.
+        let perBlockFlat = blocks.map { $0.trainableParameters().flattened() }
+        let perBlockKeys = perBlockFlat.map { $0.map { $0.0 } }
+        let paramArrays = perBlockFlat.flatMap { $0.map { $0.1 } }
 
-        // Re-runs the block forward from saved inputs. Used both for the forward
-        // pass and for the VJP recompute. `inputs[0]` is `h`; the rest are the
-        // trainable parameters in `keys` order.
+        // Re-runs the group's forward from saved inputs. Used both for the
+        // forward pass and for the VJP recompute. `inputs[0]` is `h`; the rest
+        // are every block's trainable parameters, concatenated in block order.
         func run(_ inputs: [MLXArray]) -> [MLXArray] {
-            let h = inputs[0]
-            let restored = NestedDictionary<String, MLXArray>.unflattened(
-                Array(zip(keys, inputs.dropFirst())))
-            block.update(parameters: restored)
-            return [block(h, mask: mask, cache: cache)]
+            var h = inputs[0]
+            var offset = 1
+            for (idx, pair) in zip(blocks, perBlockKeys).enumerated() {
+                let (block, keys) = pair
+                let blockParams = Array(inputs[offset ..< offset + keys.count])
+                offset += keys.count
+                let restored = NestedDictionary<String, MLXArray>.unflattened(
+                    Array(zip(keys, blockParams)))
+                block.update(parameters: restored)
+                h = block(h, mask: mask, cache: caches[idx])
+            }
+            return [h]
         }
 
         let checkpointed = CustomFunction {
@@ -263,14 +290,16 @@ public class SmolLM3Model: Module, LLMModel, KVCacheDimensionProvider {
         }
     }
 
-    /// Enable per-transformer-block gradient checkpointing for subsequent
-    /// forward passes. Set `true` ONLY for training: it recomputes each block's
-    /// activations on the backward pass to cut peak memory, which is pure
-    /// overhead during cached generation. See the Phase 3 on-device
-    /// gradient-checkpointing experiment.
-    public var useGradientCheckpoint: Bool {
-        get { model.useGradientCheckpoint }
-        set { model.useGradientCheckpoint = newValue }
+    /// Enable gradient checkpointing for subsequent forward passes, grouping
+    /// this many consecutive transformer blocks per checkpoint boundary (nil =
+    /// off). Set ONLY for training: it recomputes each group's activations on
+    /// the backward pass to cut peak memory, which is pure overhead during
+    /// cached generation. K=1 is per-block checkpointing (the original
+    /// behavior). See the Phase 3 on-device gradient-checkpointing /
+    /// checkpointing-granularity experiments (h4, h8).
+    public var checkpointGroupSize: Int? {
+        get { model.checkpointGroupSize }
+        set { model.checkpointGroupSize = newValue }
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
