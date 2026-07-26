@@ -1,0 +1,48 @@
+# Per-Task-LoRA batch — LaMP-3 smoke test before queuing the full 7-row
+# training batch (condor/train_per_task_batch.sub, not yet written).
+#
+# Per experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md, Step 3:
+# smoke one task (LaMP-3, since it's also PT1's base) with a --limit/
+# --max_steps override before queuing all 7 real training jobs — a bad
+# config would otherwise burn 7 GPU jobs before being caught.
+#
+# Acceptance:
+#   - train/checkpoints/per_task_lamp3_1ep_seed0_limit64_steps4/final/adapter_config.json
+#     exists
+#   - loss non-NaN and decreasing across the 4 steps
+#   - train_meta.json's dataset_path is data/lamp_train_LaMP_3_bm25k4.jsonl
+#     (the single-task corpus, not the mixed/mixed7 corpus)
+#
+# Submit (after committing this file):
+#   condor_submit condor/train_per_task_lamp3_smoke.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config /home/ange00008/projects/mobileFT_distill/train/config/per_task_lamp3_1ep.json --limit 64 --max_steps 4
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_per_task_lamp3_smoke.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_per_task_lamp3_smoke.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_per_task_lamp3_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+max_job_retirement_time = 600
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
