@@ -1,0 +1,44 @@
+# One-LoRA FT no-profile ablation — smoke test. Batch (non-interactive)
+# equivalent of running `python eval/eval_lamp.py --task <t> --split test
+# --no-profile --adapter train/checkpoints/a2_lamp_1ep_seed0/final --limit 5`
+# for each of the 7 tasks. --limit 5 makes eval_lamp.py append a `_limit5`
+# suffix to its output filenames, so this can never collide with the real
+# full-run results.
+#
+# Confirms: --no-profile combined with an adapter (never run together before —
+# every existing noprofile result is base-model-only) produces a sane prompt
+# and generates without error, before committing to the full test-split sweep.
+#
+# See experiments/2026-07-16-one-lora-ft-noprofile-ablation.md.
+#
+# Submit directly, no interactive session needed:
+#   condor_submit condor/eval_lamp_a2_noprofile_smoke.sub
+# Then check:
+#   cat runlogs/eval_lamp_a2_noprofile_smoke.<task>.<cluster>.<proc>.out
+#   ls results/LaMP_*_test_a2_lamp_1ep_seed0_final_noprofile_seed0_limit5.*
+#
+# Once this looks right, submit the real sweep (existing floor subs, adapter
+# override, no new file needed):
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a2_lamp_1ep_seed0/final' condor/eval_lamp_floor_test.sub
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a2_lamp_1ep_seed0/final' condor/eval_lamp_floor_test_r7_newtasks.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+arguments             = --task $(task) --split test --no-profile --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/a2_lamp_1ep_seed0/final --limit 5
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_a2_noprofile_smoke.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_a2_noprofile_smoke.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_a2_noprofile_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (LaMP_1 LaMP_2_movies LaMP_2_news LaMP_3 LaMP_4 LaMP_5 LaMP_7)
