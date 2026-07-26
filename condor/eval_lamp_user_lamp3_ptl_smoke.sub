@@ -26,7 +26,7 @@ error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_l
 log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp3_ptl_smoke.$(ClusterId).log
 
 should_transfer_files = YES
-environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
 
 request_GPUs          = 1
 request_CPUs          = 2
