@@ -1,0 +1,53 @@
+{
+  "_doc": "Per-Task-LoRA (LaMP-3, rating prediction) — single-task Task-LoRA, trained on LaMP-3 alone (not mixed with any other task), as opposed to A1-lamp (3-task mixed) and One-LoRA FT (7-task mixed). Recipe reused verbatim from a1_lamp_1ep.json/a2_lamp_1ep.json (r=4 q/k/v/o+mlp, alpha=8, 1 epoch) — only dataset_path/output_dir/condition/run_name changed. This is PT1's base Task-LoRA — User-LoRA gets stacked on this checkpoint via --base-adapter. Part of the 7-task Per-Task-LoRA batch build, see experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md.",
+
+  "condition": "per_task_lamp3_1ep",
+  "seed": 0,
+  "model_name_or_path": "data/models/SmolLM3-3B",
+  "dataset_path": "data/lamp_train_LaMP_3_bm25k4.jsonl",
+  "output_dir": "train/checkpoints/per_task_lamp3_1ep_seed0",
+
+  "lora": {
+    "r": 4,
+    "lora_alpha": 8,
+    "lora_dropout": 0.05,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+
+  "data": {
+    "max_seq_length": 2048
+  },
+
+  "trainer": {
+    "num_train_epochs": 1,
+    "per_device_train_batch_size": 4,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 3e-4,
+    "weight_decay": 0.0,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_epsilon": 1e-8,
+    "max_grad_norm": 1.0,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.03,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "gradient_checkpointing_kwargs": {"use_reentrant": false},
+    "save_strategy": "steps",
+    "save_steps": 200,
+    "save_total_limit": null,
+    "logging_steps": 10,
+    "optim": "adamw_torch",
+    "report_to": "none",
+    "remove_unused_columns": false,
+    "dataloader_num_workers": 2
+  },
+
+  "wandb": {
+    "_doc": "Disabled — report_to above is 'none'. Flip report_to to 'wandb' and run `wandb login` once on the login node to re-enable.",
+    "project": "mobileFT_distill",
+    "run_name": "per_task_lamp3_1ep_seed0"
+  }
+}
