@@ -36,8 +36,26 @@ enum TrainBenchConstants {
     /// in a multi-hour run leaves every completed window on disk. The h1–h4
     /// cap-sweep path (`runTrainBenchmark`) is untouched. See
     /// experiments/2026-07-03-ondevice-e2e-training-plan.md.
+    /// h9 (2026-07-26): ENERGY characterization round — adds CPU-utilization
+    /// sampling to the existing periodic `battery` record (`cpu_util_pct`,
+    /// aggregate %busy since the previous sample via
+    /// `host_statistics`/`HOST_CPU_LOAD_INFO` — a simpler aggregate-across-
+    /// all-cores read than per-core `host_processor_info`, sufficient for a
+    /// secondary sanity-check signal; no public per-process GPU-utilization
+    /// API exists on iOS, so this can't be a full power model on its own) +
+    /// a new `idle_baseline` mode (`--benchmark-idle-baseline
+    /// --user <fp> --baseline-duration-seconds <N>`, `runIdleBaselineBenchmark`)
+    /// for paired energy-baseline runs (screen on, no training, same
+    /// sampling cadence) used to subtract non-training drain from the real
+    /// C2 training runs. See experiments/2026-07-26-ondevice-energy-h9-plan.md
+    /// (pinned via `/grill_me` 2026-07-26). `appBuild` kept UNCHANGED
+    /// (schema-only bump, same convention as h6's v1-v10 progression under
+    /// one `bgAppBuild`) since the e2e TRAINING path itself is not modified —
+    /// only the periodic-sample record gains a field and a new sibling mode
+    /// is added; the still-pending E2E (h5) backlog runs stay correctly
+    /// tagged h5.
     static let appBuild = "smollm3-ondevice-train-e2e-h5"
-    static let schemaVersion = 2
+    static let schemaVersion = 3
 
     /// Build-time git provenance, stamped by hand at build time (same discipline
     /// as the inference harness — avoids fragile project.pbxproj build-phase

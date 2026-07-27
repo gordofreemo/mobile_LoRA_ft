@@ -68,6 +68,7 @@ extension LLMEvaluator {
         // E2E (h5), token-time (h7, hot/cold), and granularity (h8) are
         // distinct exact args — check the more specific "-cold" flag before
         // the plain one.
+        if args.contains("--benchmark-idle-baseline") { return .idleBaseline }
         if args.contains("--benchmark-train-e2e") { return .e2e }
         if args.contains("--benchmark-train-tokentime-cold") { return .tokentimeCold }
         if args.contains("--benchmark-train-tokentime") { return .tokentime }
@@ -97,6 +98,13 @@ extension LLMEvaluator {
         /// per process launch — Mac-driven orchestration loops K across many
         /// launches. See runGranularityBenchmark.
         case granularity
+        /// Idle energy baseline (h9): no model load, no training — just the
+        /// same battery/thermal/CPU sampling cadence as the E2E battery
+        /// sampler, for a fixed wall-clock duration
+        /// (`--baseline-duration-seconds`). Paired with a real C2 training
+        /// run (same `--user`, matched starting charge band) so its drain
+        /// rate can be subtracted out. See runIdleBaselineBenchmark.
+        case idleBaseline
     }
 
     /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
@@ -127,6 +135,15 @@ extension LLMEvaluator {
         return Int(v)
     }
 
+    /// `--baseline-duration-seconds <N>` — target wall-clock duration for the
+    /// idle energy baseline (h9). Required for `.idleBaseline`; no default,
+    /// since it should be chosen to roughly match its paired training run's
+    /// expected duration (Mac-side orchestration's job, not baked in here).
+    static var trainBenchmarkBaselineDurationSeconds: Double? {
+        guard let v = launchArgValue("--baseline-duration-seconds") else { return nil }
+        return Double(v)
+    }
+
     // MARK: - Per-window sample (collected off-actor, written on main)
 
     /// One stepsPerReport window. All fields value types → `Sendable`, so the
@@ -155,6 +172,15 @@ extension LLMEvaluator {
 
     /// Run the training benchmark and exit. Safe to call once on launch.
     func runTrainBenchmark(mode: TrainBenchLaunchMode) async {
+        // Idle energy baseline (h9) is a separate orchestration path (no
+        // model, no training); the cap-sweep below is untouched.
+        if mode == .idleBaseline {
+            await runIdleBaselineBenchmark(
+                user: Self.trainBenchmarkUser,
+                condition: Self.trainBenchmarkCondition,
+                durationSeconds: Self.trainBenchmarkBaselineDurationSeconds)
+            return
+        }
         // E2E (h5) is a separate orchestration path (real user, to completion,
         // save adapter, timed battery); the cap-sweep below is untouched.
         if mode == .e2e {
@@ -511,15 +537,21 @@ extension LLMEvaluator {
         // Timed battery sampler on the main actor (UIDevice is @MainActor). Runs
         // concurrently with the off-actor training loop; cancelled at the end.
         let batterySampler = Task { @MainActor in
+            // h9: threaded across iterations so each sample's cpu_util_pct is
+            // %busy since the PREVIOUS sample, not since boot.
+            var previousCPUTicks = Self.cpuTicks()
             while !Task.isCancelled {
                 let snap = Self.batterySnapshot()
+                let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+                previousCPUTicks = newTicks
                 Self.appendE2EBattery(
                     ctx,
                     elapsed: Date.timeIntervalSinceReferenceDate - benchStart,
                     level: snap.level, charging: snap.charging,
                     thermal: Self.thermalString(),
                     lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
-                    peak: Memory.snapshot().peakMemory)
+                    peak: Memory.snapshot().peakMemory,
+                    cpuUtilPct: cpuPct)
                 try? await Task.sleep(for: .seconds(TrainBenchConstants.e2eBatterySampleSeconds))
             }
         }
@@ -617,6 +649,135 @@ extension LLMEvaluator {
         finishTrainBenchmark()
     }
 
+    // MARK: - Idle energy baseline (h9)
+
+    struct IdleBaselineContext: Sendable {
+        let user: String
+        let condition: String
+        let sessionId: String
+    }
+
+    /// No model load, no training — just screen-on idle with the same
+    /// battery/thermal/CPU sampling cadence as the E2E battery sampler, for a
+    /// fixed target duration. Paired with a real C2 training run (same
+    /// `--user`, matched starting charge band per the h9 design) so the
+    /// training run's drain rate can have this baseline's non-training drain
+    /// rate subtracted out. Writes into the SAME
+    /// `train_bench_metrics_e2e.jsonl` as the E2E path (h9 extends h5's
+    /// schema rather than adding a parallel file), tagged with distinct
+    /// `record_type`s (`idle_baseline_start`/`idle_baseline`/
+    /// `idle_baseline_end`) so an aggregator can't confuse it with a real
+    /// training run.
+    func runIdleBaselineBenchmark(user: String?, condition: String, durationSeconds: Double?) async {
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        guard let user, !user.isEmpty else {
+            tlog("idle-baseline: missing --user <fingerprint>")
+            benchLogLine("idle-baseline FAILED: missing --user <fingerprint>")
+            finishTrainBenchmark()
+            return
+        }
+        guard let durationSeconds, durationSeconds > 0 else {
+            tlog("idle-baseline: missing/invalid --baseline-duration-seconds <N>")
+            benchLogLine("idle-baseline FAILED: missing/invalid --baseline-duration-seconds")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("idle-baseline start session=\(sessionId) user=\(user) condition=\(condition) "
+            + "target_duration=\(durationSeconds)s build=\(TrainBenchConstants.appBuild)")
+        benchLogLine(
+            "idle-baseline start session=\(sessionId) user=\(user) duration=\(durationSeconds)s")
+
+        let ctx = IdleBaselineContext(user: user, condition: condition, sessionId: sessionId)
+        let benchStart = Date.timeIntervalSinceReferenceDate
+
+        let batteryStart = Self.batterySnapshot()
+        Self.appendIdleBaselineMarker(
+            ctx, recordType: "idle_baseline_start",
+            extra: [
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "thermal_state": Self.thermalString(),
+                "target_duration_s": durationSeconds,
+            ])
+
+        var previousCPUTicks = Self.cpuTicks()
+        while Date.timeIntervalSinceReferenceDate - benchStart < durationSeconds {
+            try? await Task.sleep(for: .seconds(TrainBenchConstants.e2eBatterySampleSeconds))
+            let snap = Self.batterySnapshot()
+            let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+            previousCPUTicks = newTicks
+            Self.appendIdleBaselineSample(
+                ctx,
+                elapsed: Date.timeIntervalSinceReferenceDate - benchStart,
+                level: snap.level, charging: snap.charging,
+                thermal: Self.thermalString(),
+                lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                cpuUtilPct: cpuPct)
+        }
+
+        let elapsed = Date.timeIntervalSinceReferenceDate - benchStart
+        let batteryEnd = Self.batterySnapshot()
+        Self.appendIdleBaselineMarker(
+            ctx, recordType: "idle_baseline_end",
+            extra: [
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "thermal_state": Self.thermalString(),
+                "elapsed_s": elapsed,
+            ])
+        tlog("idle-baseline complete user=\(user) elapsed=\(elapsed)s")
+        benchLogLine("idle-baseline complete user=\(user) elapsed=\(elapsed)s")
+        finishTrainBenchmark()
+    }
+
+    private nonisolated static func idleBaselineBaseRecord(
+        _ c: IdleBaselineContext, recordType: String
+    ) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "user_fingerprint": c.user,
+            "condition": c.condition,
+            "app_build": TrainBenchConstants.appBuild,
+            "bench_schema_version": TrainBenchConstants.schemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": c.sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    private nonisolated static func appendIdleBaselineSample(
+        _ c: IdleBaselineContext, elapsed: Double, level: Double, charging: Bool,
+        thermal: String, lpm: Bool, cpuUtilPct: Double?
+    ) {
+        var r = idleBaselineBaseRecord(c, recordType: "idle_baseline")
+        r["elapsed_s"] = elapsed
+        r["battery_level"] = level
+        r["charging"] = charging
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
+        emitE2E(r)
+    }
+
+    private nonisolated static func appendIdleBaselineMarker(
+        _ c: IdleBaselineContext, recordType: String, extra: [String: Any]
+    ) {
+        var r = idleBaselineBaseRecord(c, recordType: recordType)
+        for (k, v) in extra { r[k] = v }
+        emitE2E(r)
+    }
+
     // MARK: - E2E data + adapter paths
 
     /// Load the side-loaded `{"text": ...}` per-user dataset from
@@ -689,7 +850,7 @@ extension LLMEvaluator {
 
     private nonisolated static func appendE2EBattery(
         _ c: E2ERunContext, elapsed: Double, level: Double, charging: Bool,
-        thermal: String, lpm: Bool, peak: Int
+        thermal: String, lpm: Bool, peak: Int, cpuUtilPct: Double?
     ) {
         var r = e2eBaseRecord(c, recordType: "battery")
         r["elapsed_s"] = elapsed
@@ -698,6 +859,8 @@ extension LLMEvaluator {
         r["thermal_state"] = thermal
         r["low_power_mode"] = lpm
         r["peak_mem_bytes"] = peak
+        // h9: secondary diagnostic only, see cpuUtilizationPercent's doc comment.
+        r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
         emitE2E(r)
     }
 
@@ -1360,6 +1523,51 @@ extension LLMEvaluator {
         let id = mirror.children.compactMap { ($0.value as? Int8) }
             .filter { $0 != 0 }.map { String(UnicodeScalar(UInt8($0))) }.joined()
         return id.isEmpty ? "unknown" : id
+    }
+
+    // MARK: - CPU utilization (h9 energy round — secondary diagnostic only,
+    // NOT part of the joules computation; see
+    // experiments/2026-07-26-ondevice-energy-h9-plan.md. Aggregate across all
+    // cores via `host_statistics`/`HOST_CPU_LOAD_INFO` (simpler than the
+    // per-core `host_processor_info`, which needs a dynamically-allocated
+    // out-array + `vm_deallocate` — unnecessary for a sanity-check signal).
+    // No public per-process GPU-utilization API exists on iOS, so this can
+    // never be a full power model by itself.
+
+    /// Raw cumulative tick counts since boot, aggregated across all cores.
+    /// `nil` on the (unexpected) failure path so a bad read degrades to a
+    /// missing `cpu_util_pct` rather than a crash.
+    private nonisolated static func cpuTicks() -> host_cpu_load_info_data_t? {
+        var info = host_cpu_load_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { ptr -> kern_return_t in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return info
+    }
+
+    /// %busy (user+system+nice / total) over the interval between `previous`
+    /// and a fresh read taken now. Returns the fresh read alongside so the
+    /// caller can thread it into the next call — ticks are cumulative since
+    /// boot, so a single snapshot alone says nothing about the sampling
+    /// window. `pct` is `nil` on the first call of a run (no previous
+    /// reading yet) or on a read failure.
+    private nonisolated static func cpuUtilizationPercent(
+        previous: host_cpu_load_info_data_t?
+    ) -> (pct: Double?, current: host_cpu_load_info_data_t?) {
+        guard let current = cpuTicks() else { return (nil, nil) }
+        guard let previous else { return (nil, current) }
+        let userDelta = Double(current.cpu_ticks.0 &- previous.cpu_ticks.0)
+        let systemDelta = Double(current.cpu_ticks.1 &- previous.cpu_ticks.1)
+        let idleDelta = Double(current.cpu_ticks.2 &- previous.cpu_ticks.2)
+        let niceDelta = Double(current.cpu_ticks.3 &- previous.cpu_ticks.3)
+        let total = userDelta + systemDelta + idleDelta + niceDelta
+        guard total > 0 else { return (nil, current) }
+        return (100.0 * (userDelta + systemDelta + niceDelta) / total, current)
     }
 
     // MARK: - Battery (main actor — UIDevice is @MainActor)
