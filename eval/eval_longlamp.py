@@ -7,13 +7,22 @@ via BM25 retrieval into the system prompt (PPEP-templated, paper-verbatim),
 generates deterministically, and scores ROUGE-1 + ROUGE-L.
 
 Mirrors eval/eval_lamp.py's CLI shape and conventions (provenance banner,
-refuse-to-overwrite, --resume, --user-records-style filters omitted — no
-per-user LongLaMP work exists yet), but is a separate script per the LL1 plan
+refuse-to-overwrite, --resume), but is a separate script per the LL1 plan
 (experiments/2026-07-17-longlamp-review-ll1-plan.md, decision #4): LaMP's
 harness stays untouched.
 
-Three tasks supported: product_review_user (LL1), abstract_generation_user
-(LL2), topic_writing_user (LL3) — all user (cold-start) split. Unlike LaMP,
+Three `_user` (cold-start split) tasks supported: product_review_user (LL1),
+abstract_generation_user (LL2), topic_writing_user (LL3). Three more
+`_temporal` tasks added for the LL4-LL6 User-LoRA round
+(experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md): product_review_temporal,
+abstract_generation_temporal, topic_writing_temporal — same schema/BM25/PPEP
+config as their `_user` counterparts (confirmed via the HF datasets-server
+API), just a different split/directory. `--user-records` / `--user-records-from-file`
+(added for LL4-LL6, mirroring eval_lamp.py's R5/R8 filters exactly) only make
+sense against a `_temporal` task, since per-user eligibility/record indices
+come from data/longlamp_user_stats.py, which only analyses `_temporal` splits.
+
+Unlike LaMP,
 LongLaMP's `input` field is already a fully-templated instruction (verified
 via the HF datasets-server API) — build_messages() does not construct a task
 instruction, it only prepends the retrieved profile as a system message
@@ -53,11 +62,26 @@ PROJECT_ROOT = os.environ.get(
     "PROJECT_ROOT",
     "/home/ange00008/projects/mobileFT_distill",
 )
+USER_STATS_DIR = os.environ.get(
+    "LONGLAMP_USER_STATS_DIR",
+    "/home/ange00008/projects/mobileFT_distill/data/longlamp_user_stats",
+)
 
 # Local split filenames (data/download_longlamp.py). LongLaMP's own HF split
 # key is "val"; we call it "dev" in the CLI to match eval_lamp.py's shape,
 # and read it from val.json on disk.
 SPLIT_FILES = {"dev": "val.json", "test": "test.json"}
+
+# task -> short tag (review/abstract/topic), matching build_longlamp_dataset.py's
+# FILE_TAGS and data/longlamp_user_stats.py's TASKS keys. Only the `_temporal`
+# tasks have stats files (data/longlamp_user_stats.py only analyses `_temporal`
+# splits) -- used to locate <tag>_user_records.json / <tag>_top100_users.json
+# for --user-records / --user-records-from-file.
+TASK_TO_TAG = {
+    "product_review_temporal": "review",
+    "abstract_generation_temporal": "abstract",
+    "topic_writing_temporal": "topic",
+}
 
 # --- Per-task configuration ---------------------------------------------------
 # index_field / query / format / connector: ported verbatim from the LongLaMP
@@ -116,6 +140,15 @@ TASKS = {
         "metric": "rouge",
     },
 }
+
+# `_temporal` tasks (LL4-LL6) reuse their `_user` counterpart's config exactly
+# -- same schema, same BM25/PPEP construction, only a different split/directory
+# (data/longlamp/<task>_temporal/ vs .../_user/). Aliasing rather than
+# duplicating keeps this file the single source of truth alongside
+# build_longlamp_dataset.py's / build_longlamp_user_dataset.py's own copies.
+TASKS["product_review_temporal"] = TASKS["product_review_user"]
+TASKS["abstract_generation_temporal"] = TASKS["abstract_generation_user"]
+TASKS["topic_writing_temporal"] = TASKS["topic_writing_user"]
 
 
 # --- BM25 (pure Python, no dependency; identical to LaMP's) ------------------
@@ -288,6 +321,18 @@ def collect_provenance() -> dict:
     }
 
 
+# --- User-id tagging (LL4-LL6) -----------------------------------------------
+# Raw user ids (reviewerId/name/author) can contain spaces/punctuation --
+# duplicated from train/build_longlamp_user_dataset.py's safe_user_tag so
+# result filenames stay filesystem-safe; keep both in sync.
+_UNSAFE_USER_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def safe_user_tag(user_id: str) -> str:
+    tag = _UNSAFE_USER_CHARS.sub("_", user_id).strip("_")
+    return tag or "user"
+
+
 # --- Adapter-path tagging ------------------------------------------------------
 def derive_adapter_tag(adapter_path: str) -> str:
     if adapter_path.lower() == "none":
@@ -374,8 +419,26 @@ def main():
         "--base-adapter",
         default="none",
         help="optional pre-existing LoRA adapter to merge into the base before "
-        "attaching --adapter on top. 'none' disables. (No LongLaMP User-LoRA "
-        "exists yet — kept for CLI-shape parity with eval_lamp.py and future use.)",
+        "attaching --adapter on top (User-LoRA stacking pattern, LL4-LL6). "
+        "'none' disables.",
+    )
+    parser.add_argument(
+        "--user-records",
+        default=None,
+        help="user id (raw reviewerId/name/author, e.g. as it appears in "
+        "data/longlamp_user_stats/<tag>_user_records.json); filter questions to "
+        "that user's records for --task's split (only meaningful for a "
+        "`_temporal` task). Default: no filter.",
+    )
+    parser.add_argument(
+        "--user-records-from-file",
+        default=None,
+        help="path to a top-K-users JSON (e.g. "
+        "data/longlamp_user_stats/review_top100_users.json); filter questions "
+        "to the union of test_record_ids across all listed users. Used for a "
+        "single batch baseline job covering the whole K=100 subset at once "
+        "(mirrors eval_lamp.py's R8 optimization). Mutually exclusive with "
+        "--user-records.",
     )
     parser.add_argument("--k", type=int, default=4, help="BM25 profile entries to retrieve")
     parser.add_argument("--no-profile", action="store_true", help="non-personalized floor")
@@ -422,6 +485,11 @@ def main():
         print("ERROR: --resume and --overwrite are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
 
+    if args.user_records and args.user_records_from_file:
+        print("ERROR: --user-records and --user-records-from-file are mutually exclusive.",
+              file=sys.stderr)
+        sys.exit(1)
+
     provenance = collect_provenance()
     cond_label = "noprofile" if args.no_profile else f"bm25k{args.k}"
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
@@ -452,7 +520,15 @@ def main():
     # path unchanged, and lets the penalty condition live at its own path
     # instead of colliding or requiring --overwrite.
     rp_tag = f"_rp{args.repetition_penalty}" if args.repetition_penalty != 1.0 else ""
-    stem = f"LongLaMP_{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{rp_tag}{limit_tag}"
+    if args.user_records:
+        user_tag = f"_user{safe_user_tag(args.user_records)}"
+    elif args.user_records_from_file:
+        src_stem = Path(args.user_records_from_file).stem
+        m = re.search(r"_top(\d+)_users$", src_stem)
+        user_tag = f"_topK{m.group(1)}" if m else f"_{src_stem}"
+    else:
+        user_tag = ""
+    stem = f"LongLaMP_{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{rp_tag}{user_tag}{limit_tag}"
     out_path = Path(RESULTS_DIR) / f"{stem}.json"
     pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
     if not args.overwrite and not args.resume and (out_path.exists() or pred_path.exists()):
@@ -485,6 +561,71 @@ def main():
 
     questions, golds = load_split(args.task, args.split)
     n_total_records = len(questions)
+
+    # Optional per-user filter (LL4-LL6): keep only one user's records, per
+    # data/longlamp_user_stats.py's <tag>_user_records.json. Mirrors
+    # eval_lamp.py's --user-records exactly, adapted to LongLaMP's
+    # file-order synthetic ids (no real record-id field) and its train/test
+    # index-list shape (vs LaMP's per-split id lists).
+    if args.user_records:
+        tag = TASK_TO_TAG.get(args.task)
+        if tag is None:
+            print(f"ERROR: --user-records requires a `_temporal` --task "
+                  f"(got {args.task!r}); no stats file exists for a `_user` task.",
+                  file=sys.stderr)
+            sys.exit(1)
+        records_json = Path(USER_STATS_DIR) / f"{tag}_user_records.json"
+        if not records_json.exists():
+            print(f"ERROR: --user-records set but {records_json} missing — "
+                  f"run data/longlamp_user_stats.py first.", file=sys.stderr)
+            sys.exit(1)
+        user_map = json.loads(records_json.read_text())
+        if args.user_records not in user_map:
+            print(f"ERROR: user {args.user_records!r} not in {records_json}.",
+                  file=sys.stderr)
+            sys.exit(1)
+        split_key = "test" if args.split == "test" else "train"
+        wanted_ids = {str(i) for i in user_map[args.user_records].get(split_key, [])}
+        if not wanted_ids:
+            print(f"ERROR: user {args.user_records} has 0 records in split "
+                  f"{args.split}.", file=sys.stderr)
+            sys.exit(1)
+        questions = [q for q in questions if q["id"] in wanted_ids]
+        print(f"[filter] user={args.user_records} {args.split}: "
+              f"{len(questions)}/{n_total_records} records kept", flush=True)
+
+    # Multi-user subset filter (LL4-LL6): read test_record_ids across every
+    # user in a top-K-users JSON. Mirrors eval_lamp.py's
+    # --user-records-from-file (R8's single-batch-job optimization) --
+    # every user contributes possibly >1 test record here (LongLaMP has no
+    # single-representative-record convention, unlike LaMP's R5/R8 selection).
+    if args.user_records_from_file:
+        path = Path(args.user_records_from_file)
+        if not path.exists():
+            print(f"ERROR: --user-records-from-file path not found: {path}",
+                  file=sys.stderr)
+            sys.exit(1)
+        data = json.loads(path.read_text())
+        if "users" not in data or not data["users"]:
+            print(f"ERROR: {path} has no 'users' list.", file=sys.stderr)
+            sys.exit(1)
+        wanted_ids = {
+            str(rid) for u in data["users"] for rid in u.get("test_record_ids", [])
+        }
+        questions = [q for q in questions if q["id"] in wanted_ids]
+        n_filtered = len(questions)
+        if n_filtered == 0:
+            print(f"ERROR: --user-records-from-file matched 0/{len(wanted_ids)} "
+                  f"ids from {path.name} against {args.task}/{args.split}. "
+                  f"Split-source mismatch: this file's ids are indices into the "
+                  f"`_temporal` split's test.json, so --split must be 'test'.",
+                  file=sys.stderr)
+            sys.exit(1)
+        if n_filtered != len(wanted_ids):
+            print(f"WARN: matched {n_filtered}/{len(wanted_ids)} ids from "
+                  f"{path.name} against {args.task}/{args.split}.", file=sys.stderr)
+        print(f"[filter] {path.name} {args.split}: "
+              f"{n_filtered}/{n_total_records} records kept", flush=True)
 
     if args.limit > 0:
         questions = questions[: args.limit]
@@ -598,6 +739,8 @@ def main():
         "base_adapter_name": base_adapter_tag,
         "stacked_adapter_name": stacked_tag,
         "n_total_records": n_total_records,
+        "user_records": args.user_records,
+        "user_records_from_file": args.user_records_from_file,
         "no_profile": args.no_profile,
         "retriever": "none" if args.no_profile else "bm25",
         "k": 0 if args.no_profile else args.k,

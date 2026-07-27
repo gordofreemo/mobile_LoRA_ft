@@ -1,0 +1,62 @@
+# Per-user LongLaMP training-corpus build for the LL4-LL6 User-LoRA round --
+# 300 parallel CPU procs (3 tasks x K=100 users).
+#
+# Each proc invokes train/build_longlamp_user_dataset.py for its assigned
+# (tag, user_id), emitting:
+#     data/longlamp_user_train_<tag>_<user_tag>_bm25k4.jsonl
+#     data/longlamp_user_train_<tag>_<user_tag>_bm25k4.meta.json
+#
+# Plan: experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md, Execution
+# Step 4. Per pinned design #8 ("records" framing): each user's temporal-
+# TRAIN records become training examples, system slot = BM25 top-k over that
+# record's own embedded profile.
+#
+# REQUIRES, in order: condor/download_longlamp_temporal.sub (data on disk)
+# then condor/longlamp_user_stats.sub (<tag>_top100_users.json +
+# <tag>_user_records.json on disk).
+#
+# Smoke first, one user, one task (per plan Execution Step 4 discipline --
+# inspect BM25 retrieval by eye before the full 300-job submit):
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/build_longlamp_user_dataset.py --tag review --user "<smallest-profile-size user_id from review_top100_users.json>" --k 4 --limit 5
+#
+# ---- TODO before submitting the real run ----
+# The queue block below is a PLACEHOLDER. This project's convention (see
+# condor/build_user_dataset_lamp3.sub) is to embed the real per-user list
+# inline as a self-contained pre-registration artifact, generated from the
+# top-100 JSONs at commit time -- NOT read from JSON at submit time. Fill it
+# in after condor/longlamp_user_stats.sub has produced all 3
+# <tag>_top100_users.json files, via:
+#   for t in review abstract topic; do
+#     python data/longlamp_user_stats/gen_configs.py --tag $t --print-queue build
+#   done
+# and paste the output (300 lines) into the queue block, replacing the
+# placeholder. Commit before submitting.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_longlamp_user_dataset.py
+arguments             = --tag $(tag) --user "$(user_id)" --k 4 --overwrite
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_longlamp_user_dataset.$(tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_longlamp_user_dataset.$(tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_longlamp_user_dataset.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only -- BM25 over a single record's profile + JSONL write.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# PLACEHOLDER -- see "TODO before submitting" above. Format: tag, user_id, user_tag
+# (user_tag unused by arguments above -- kept as a 3rd field for readability /
+# cross-checking against the generated config filenames).
+queue tag, user_id, user_tag from (
+  # TODO: paste real (tag, user_id, user_tag) triples here, 100 per task x 3 tasks.
+)

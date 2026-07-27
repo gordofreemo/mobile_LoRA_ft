@@ -1,0 +1,71 @@
+# LongLaMP eval -- LL4-LL6 personalized arm (Task-LoRA + User-LoRA stacked +
+# BM25), 300 parallel GPU procs (3 tasks x K=100 users, one per user's
+# distinct trained adapter).
+#
+# Delta over condor/eval_longlamp_user_lora_baseline.sub: --adapter is that
+# user's own User-LoRA checkpoint (condor/train_longlamp_user_lora.sub
+# output), --base-adapter is still the task's Task-LoRA, and
+# --user-records pins eval to exactly that user's `_temporal`-test records
+# (a user may have >1, unlike LaMP-3's R5/R8 single-representative-record
+# convention -- see plan decision #7).
+#
+# Plan: experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md, Execution
+# Step 6.
+#
+# REQUIRES condor/train_longlamp_user_lora.sub to have completed (all 300
+# per-user adapters on disk) and condor/eval_longlamp_user_lora_baseline.sub
+# to have run (not a hard dependency to submit, but needed before Step 7
+# aggregation can compare the two arms).
+#
+# Smoke ONE user per task first:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python eval/eval_longlamp.py --task product_review_temporal --split test --k 4 --seed 0 --adapter train/checkpoints/longlamp_user_lora_review_<smallest-user_tag>_seed0/final --base-adapter train/checkpoints/longlamp_lora_review_1ep_seed0/final --user-records "<user_id>" --limit 5
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_longlamp.py
+
+task         = product_review_temporal
+base_adapter = longlamp_lora_review_1ep_seed0
+user_id      = unknown
+adapter_ckpt = longlamp_user_lora_review_unknown_seed0
+
+arguments    = --task $(task) --split test --k 4 --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/$(adapter_ckpt)/final --base-adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/$(base_adapter)/final --user-records "$(user_id)"
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp_user_lora.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp_user_lora.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp_user_lora.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LONGLAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/longlamp CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+max_job_retirement_time = 1800
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# ---- TODO before submitting the real run ----
+# PLACEHOLDER queue block. Fill in after condor/train_longlamp_user_lora.sub
+# has produced all 300 adapters, via:
+#   for t in review abstract topic; do
+#     python data/longlamp_user_stats/gen_configs.py --tag $t --print-queue eval
+#   done
+# and paste the output (300 rows: task, user_id, adapter_ckpt_path) below,
+# setting task to the `_temporal` task name (product_review_temporal /
+# abstract_generation_temporal / topic_writing_temporal) and base_adapter to
+# that task's longlamp_lora_<tag>_1ep_seed0. Commit before submitting.
+queue task, base_adapter, user_id, adapter_ckpt from (
+  # TODO: paste real (task, base_adapter, user_id, adapter_ckpt) rows here.
+)
