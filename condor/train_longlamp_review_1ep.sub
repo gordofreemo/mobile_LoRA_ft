@@ -1,0 +1,62 @@
+# LongLaMP-LoRA (Review) Task-LoRA training run — LL1, single-GPU job.
+#
+# Separate adapter family from One-LoRA FT (plan decision #3) — trains from
+# the frozen base, not stacked on any existing LaMP adapter. Recipe reused
+# verbatim from a1_lamp_1ep.json (plan decision #10-11): r=4, all 7 target
+# modules, 1 epoch. See train/config/longlamp_review_1ep.json and
+# experiments/2026-07-17-longlamp-review-ll1-plan.md (Step 4).
+#
+# max_seq_length raised 2048->8192 after a Step-4 smoke (2026-07-20) showed
+# 75% truncation-drop at 2048 (LongLaMP's PPEP profile + input routinely
+# exceed it); per_device_train_batch_size dropped 4->2 accordingly to keep
+# memory manageable at 4x context — see the config's _doc. gpus_minimum_memory
+# bumped 32000->40000 for the same reason (R5/R8's own 7168-context per-user
+# LoRA training fits in 32000 at per_device=2; 8192 is a further ~14% and adds
+# more LoRA target modules, so a bit of headroom).
+#
+# Outputs go to train/checkpoints/longlamp_lora_review_1ep_seed0/ — a fresh
+# directory, doesn't touch any LaMP checkpoint.
+#
+# Blackwell capability-range guard included from the start (plan decision,
+# scaffolding item 5) rather than retrofitted after a failure, unlike
+# LaMP-4's original subs.
+#
+# Smoke first in an interactive session before submitting the real run:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/train.py --config train/config/longlamp_review_1ep.json --limit 64 --max_steps 4
+# Then submit the real run:
+#   condor_submit condor/train_longlamp_review_1ep.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/longlamp_review_1ep.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_review_1ep.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_review_1ep.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_review_1ep.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 40000
+gpus_minimum_capability = 8.0
+# Capability *range*, not just a floor — see condor/eval_lamp_llama.sub for
+# the full rationale (Blackwell sm_120 nodes crash ver4's PyTorch 2.5.1+cu124).
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

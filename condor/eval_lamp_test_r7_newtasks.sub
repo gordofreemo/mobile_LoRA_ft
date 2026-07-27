@@ -1,0 +1,39 @@
+# R7 (A2-lamp) LaMP evaluation, TEST split — sibling of eval_lamp_test.sub,
+# scoped to only the 4 NEW task-tracks (LaMP_1, LaMP_2_movies, LaMP_2_news,
+# LaMP_5). See eval_lamp_r7_newtasks.sub for why this is a separate sub file
+# rather than an edit to the original.
+#
+# Smoke-test FIRST in an interactive session before submitting the full sweep:
+#   condor_submit -i condor/interactive.sub
+#   python eval/eval_lamp.py --task LaMP_1 --split test --k 4 --limit 5
+# Then submit this for the full test numbers (bare model + profile):
+#   condor_submit condor/eval_lamp_test_r7_newtasks.sub
+#
+# For the (not-yet-trained) A2-lamp adapter, once it lands:
+#   condor_submit -a 'adapter=/home/ange00008/projects/mobileFT_distill/train/checkpoints/a2_lamp_1ep_seed0/<checkpoint>' condor/eval_lamp_test_r7_newtasks.sub
+#
+# For the non-personalized floor on test, see eval_lamp_floor_test_r7_newtasks.sub.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+adapter               = none
+
+arguments             = --task $(task) --split test --k 4 --seed 0 --adapter $(adapter)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_test_r7_newtasks.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_test_r7_newtasks.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_test_r7_newtasks.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (LaMP_1 LaMP_2_movies LaMP_2_news LaMP_5)

@@ -1,0 +1,61 @@
+# A2-lamp-1ep Task-LoRA training run (R7, LaMP coverage expansion) —
+# single-GPU job.
+#
+# Sister of train_1ep.sub. Same script, same image, same hyperparameters
+# (r=4/alpha=8/7 target modules, LR=3e-4 cosine+3% warmup, per-device bs=4 x
+# grad_accum=8, 1 epoch, save_steps=200, save_total_limit=null) — the only
+# difference is the config it reads: train/config/a2_lamp_1ep.json, which
+# points at the 7-task corpus (data/lamp_train_mixed7_bm25k4.jsonl, 72,062
+# examples) built in Step 4, vs A1-lamp's 3-task 42,964-example corpus. Full
+# retrain from the frozen base, NOT warm-started from A1-lamp. One shared
+# adapter across all 7 tasks (not per-task) — see
+# experiments/2026-07-10-lamp-coverage-expansion-r7-a2lamp-plan.md.
+#
+# Outputs go to train/checkpoints/a2_lamp_1ep_seed0/ — separate dir, does NOT
+# touch A1-lamp's checkpoints (train/checkpoints/a1_lamp_1ep_seed0/), which
+# stay on disk untouched/historical per the plan.
+#
+# Expected wall time: ~4.2h (72,062/42,964 = 1.68x A1-lamp-1ep's ~2.5h, same
+# effective batch size and per-step cost) -> ~2252 steps for 1 epoch (vs
+# A1-lamp-1ep's ~1333), so expect ~11 checkpoints (200/400/.../2200/final)
+# rather than ~7.
+#
+# Smoke first in an interactive session before submitting the real run:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python train/train.py --config train/config/a2_lamp_1ep.json --limit 64 --max_steps 4
+# Then submit the real run:
+#   condor_submit condor/train_a2_lamp.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = --config train/config/a2_lamp_1ep.json
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_a2_lamp_1ep.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_a2_lamp_1ep.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_a2_lamp_1ep.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# Same GPU selection as train_1ep.sub — see comments there for rationale.
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+
+# Longer run than train_1ep.sub (~4.2h vs ~2.5h) — keep the same 8h
+# preemption window; still comfortably inside it.
+max_job_retirement_time = 28800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

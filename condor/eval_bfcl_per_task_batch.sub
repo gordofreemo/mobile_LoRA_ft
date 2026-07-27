@@ -1,0 +1,36 @@
+# Per-Task-LoRA batch — BFCL AST regression, one job per task's adapter.
+#
+# Project convention: every Task-LoRA gets a BFCL check. Directly
+# informative here — R7 found the BFCL regression concentrated in
+# multi-call scenarios and correlated with task-mixing (One-LoRA FT's
+# 7-task mix regressed further than A1-lamp's 3-task mix); single-task
+# adapters across all 7 tasks are a natural, broad comparison point. See
+# experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md, execution
+# Step 5. Depends on condor/train_per_task_batch.sub (cluster 177627)
+# having produced all 7 checkpoints first.
+#
+# Submit (after committing this file, and after training completes):
+#   condor_submit condor/eval_bfcl_per_task_batch.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_bfcl.py
+
+arguments             = --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/per_task_$(tag)_1ep_seed0/final
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl_per_task_batch.$(tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl_per_task_batch.$(tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl_per_task_batch.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
+require_gpus          = Capability >= 8.0 && Capability < 10.0
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue tag in (lamp1 lamp2_movies lamp2_news lamp3 lamp4 lamp5 lamp7)

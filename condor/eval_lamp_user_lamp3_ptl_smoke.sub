@@ -1,0 +1,45 @@
+# PT1 — smoke eval of both arms (C2''' baseline, C3''' stacked), restricted
+# to the one smoke user (u00008075) trained by
+# condor/train_user_lora_lamp3_ptl_smoke.sub (cluster 177648). Confirms both
+# eval paths work before submitting the K=100 baseline
+# (eval_lamp_user_lamp3_ptl_baseline.sub) and per-user
+# (eval_lamp_user_lamp3_ptl.sub) batches. Per the PT1 plan §Execution
+# sequence Step 7.
+#
+# baseline row: Per-Task-LoRA(LaMP-3) alone (--adapter set, --base-adapter
+# none — same pattern as the full C2''' batch job, just restricted via
+# --user-records to 1 user instead of --user-records-from-file for the
+# full K=100).
+# stacked row: Per-Task-LoRA(LaMP-3) + User-LoRA-PT1 stacked
+# (--base-adapter + --adapter), same as a single row of the full C3'''
+# per-user batch.
+#
+# Submit (after committing this file):
+#   condor_submit condor/eval_lamp_user_lamp3_ptl_smoke.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp3_ptl_smoke.$(arm).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp3_ptl_smoke.$(arm).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_user_lamp3_ptl_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
+require_gpus          = Capability >= 8.0 && Capability < 10.0
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+arguments = --task LaMP_3 --split test --k 4 --seed 0 --limit 5 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/per_task_lamp3_1ep_seed0/final --base-adapter none --user-records u00008075
+arm       = baseline
+queue 1
+
+arguments = --task LaMP_3 --split test --k 4 --seed 0 --limit 5 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/user_lora_lamp3_u00008075_ptl_seed0/final --base-adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/per_task_lamp3_1ep_seed0/final --user-records u00008075
+arm       = stacked
+queue 1

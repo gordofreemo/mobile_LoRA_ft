@@ -23,8 +23,12 @@ executable            = eval/eval_bfcl.py
 # Default: bare model. Override with `condor_submit -a 'adapter=<path>'` for an
 # adapter eval. eval_bfcl.py treats "none" as "no adapter".
 adapter               = none
+# Smoke testing: override with `condor_submit -a 'limit=5' ...` to cap
+# per-category examples (appends _limitN to the output filename, so it can
+# never collide with the real full-run results). Default 0 = full run.
+limit                 = 0
 
-arguments             = --seed 0 --adapter $(adapter)
+arguments             = --seed 0 --adapter $(adapter) --limit $(limit)
 
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl.$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_bfcl.$(ClusterId).$(ProcId).err

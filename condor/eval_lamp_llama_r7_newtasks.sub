@@ -1,0 +1,78 @@
+# Llama-family scale comparison, R7 EXTENSION — full test-set eval for
+# Llama-3.1-8B and Llama-3.1-70B Instruct, both `noprofile` and `bm25k4`
+# conditions, scoped to only the 4 NEW LaMP task-tracks (LaMP_1,
+# LaMP_2_movies, LaMP_2_news, LaMP_5). 16 jobs total.
+#
+# Sibling of eval_lamp_llama.sub (which covers the original LaMP_3/4/7 and
+# already has results on disk from the 2026-06-30 comparison — reused as-is,
+# not re-run, since methodology is identical: test split, BM25 k=4, seed 0).
+# Kept as a separate sub file rather than extending the original's queue so
+# this can't waste a GPU slot re-running tasks whose baseline results already
+# exist (refuse-to-overwrite would just exit 1).
+#
+# Together with eval_lamp_llama.sub's existing results, this completes the
+# full 7-task Llama-vs-SmolLM3+One-LoRA-FT comparison (Table 1 only — the
+# K=100 personalization-hard comparison, Table 2, is NOT extended here; it
+# needs User-LoRA retrained on the new checkpoint first, which hasn't
+# happened).
+#
+# Submit:
+#   condor_submit condor/eval_lamp_llama_r7_newtasks.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+arguments             = --task $(task) --split test --seed 0 --model-dir /home/ange00008/projects/mobileFT_distill/data/models/Llama-3.1-$(model_tag)-Instruct --device-map $(device_map) --resume $(cond_flag)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_r7_newtasks.$(model_tag).$(task).$(cond_tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_r7_newtasks.$(model_tag).$(task).$(cond_tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_llama_r7_newtasks.$(ClusterId).log
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+environment             = "CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 4
+request_memory        = 64G
+
+requirements            = UidDomain == "cs.uni-saarland.de"
+gpus_minimum_memory     = 80000
+# See eval_lamp_llama.sub for the rationale — Blackwell sm_120 is incompatible
+# with the ver4 Docker image's PyTorch 2.5.1+cu124, so cap at < 10.0.
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+max_job_retirement_time = 600
++WantGPUHomeMounted     = true
++WantScratchMounted     = true
+
+# --- 8B: single 80GB+ GPU, single-device placement ---------------------------
+model_tag    = 8B
+device_map   = cuda
+request_GPUs = 1
+queue task, cond_tag, cond_flag from (
+    LaMP_1        noprofile --no-profile
+    LaMP_1        bm25k4    --k 4
+    LaMP_2_movies noprofile --no-profile
+    LaMP_2_movies bm25k4    --k 4
+    LaMP_2_news   noprofile --no-profile
+    LaMP_2_news   bm25k4    --k 4
+    LaMP_5        noprofile --no-profile
+    LaMP_5        bm25k4    --k 4
+)
+
+# --- 70B: 2× 80GB+ GPUs, accelerate device_map="auto" dispatch ---------------
+model_tag    = 70B
+device_map   = auto
+request_GPUs = 2
+queue task, cond_tag, cond_flag from (
+    LaMP_1        noprofile --no-profile
+    LaMP_1        bm25k4    --k 4
+    LaMP_2_movies noprofile --no-profile
+    LaMP_2_movies bm25k4    --k 4
+    LaMP_2_news   noprofile --no-profile
+    LaMP_2_news   bm25k4    --k 4
+    LaMP_5        noprofile --no-profile
+    LaMP_5        bm25k4    --k 4
+)

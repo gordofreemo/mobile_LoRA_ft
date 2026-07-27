@@ -14,6 +14,13 @@ Output files:
     data/lamp_train_mixed_bm25k4.jsonl    interleaved + deterministically shuffled
     data/lamp_train_mixed_bm25k4.meta.json  provenance sidecar
 
+The mixed-corpus filename is tagged by task count: exactly the legacy 3-task
+set (LaMP_3,LaMP_4,LaMP_7) keeps the original "mixed" name (so existing
+invocations of this script are byte-for-byte unaffected); any other --tasks
+combination gets "mixed<N>" (e.g. the R7 7-task run writes
+lamp_train_mixed7_bm25k4.jsonl) so it can never collide with A1-lamp's
+existing training corpus.
+
 Each line is one training example:
     {"task": "LaMP_3", "id": "201",
      "system": "<profile context block>",
@@ -79,6 +86,8 @@ def trim(text: str, n: int = ENTRY_CHARS) -> str:
 
 
 # --- Per-task config (MUST stay in sync with eval/eval_lamp.py) --------------
+# Only index_field/format are needed here (no metric/label_universe — this
+# script builds training examples, it doesn't score them).
 TASKS = {
     "LaMP_3": {
         "index_field": lambda it: it.get("text", ""),
@@ -92,7 +101,28 @@ TASKS = {
         "index_field": lambda it: it.get("text", ""),
         "format": lambda it: f'- "{trim(it.get("text", ""))}"',
     },
+    "LaMP_1": {
+        "index_field": lambda it: it.get("abstract", "") or it.get("title", ""),
+        "format": lambda it: f'- "{trim(it.get("title", ""), TITLE_CHARS)}": {trim(it.get("abstract", ""))}',
+    },
+    "LaMP_2_movies": {
+        "index_field": lambda it: it.get("description", ""),
+        "format": lambda it: f'- Movie: "{trim(it.get("description", ""))}" — tagged "{it.get("tag", "?")}"',
+    },
+    "LaMP_2_news": {
+        "index_field": lambda it: it.get("text", ""),
+        "format": lambda it: f'- Article: "{trim(it.get("title", ""), TITLE_CHARS)}": "{trim(it.get("text", ""))}" — categorized "{it.get("category", "?")}"',
+    },
+    "LaMP_5": {
+        "index_field": lambda it: it.get("abstract", "") or it.get("title", ""),
+        "format": lambda it: f'- "{trim(it.get("title", ""), TITLE_CHARS)}": {trim(it.get("abstract", ""))}',
+    },
 }
+
+# The legacy default --tasks set. Used only to decide the mixed-corpus
+# filename tag (see module docstring) — kept as a set so --tasks order
+# doesn't matter.
+LEGACY_MIXED_TASKS = {"LaMP_3", "LaMP_4", "LaMP_7"}
 
 SYSTEM_PREAMBLE = (
     "The following are examples of this user's past activity. "
@@ -320,8 +350,12 @@ def main():
     per_task_paths = {
         t: Path(DATA_OUT_DIR) / f"lamp_train_{t}_{suffix}.jsonl" for t in tasks
     }
-    mixed_path = Path(DATA_OUT_DIR) / f"lamp_train_mixed_{suffix}.jsonl"
-    meta_path = Path(DATA_OUT_DIR) / f"lamp_train_mixed_{suffix}.meta.json"
+    # Mixed-corpus filename tag: legacy 3-task set keeps "mixed" (byte-for-byte
+    # unaffected default behavior); any other --tasks combo (e.g. R7's 7-task
+    # run) gets "mixed<N>" so it never collides with the existing corpus.
+    mixed_tag = "mixed" if set(tasks) == LEGACY_MIXED_TASKS else f"mixed{len(tasks)}"
+    mixed_path = Path(DATA_OUT_DIR) / f"lamp_train_{mixed_tag}_{suffix}.jsonl"
+    meta_path = Path(DATA_OUT_DIR) / f"lamp_train_{mixed_tag}_{suffix}.meta.json"
 
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
@@ -333,20 +367,26 @@ def main():
         flush=True,
     )
 
-    # Refuse-to-overwrite — preprocessing output is the input to every training
-    # run, so silently clobbering it would invalidate every downstream
-    # checkpoint and result.
-    existing = [
-        p
-        for p in (list(per_task_paths.values()) + [mixed_path, meta_path])
-        if p.exists()
-    ]
+    # Refuse-to-overwrite on the two OUTPUTS of this specific invocation (the
+    # mixed corpus + its meta sidecar) — silently clobbering those would
+    # invalidate every downstream checkpoint and result. Per-task JSONLs are
+    # NOT part of this check: a task's per-task file is keyed only on
+    # {task}_{k}, not on the --tasks combination that produced it, so e.g.
+    # building the R7 7-task corpus legitimately reuses LaMP_3/4/7's per-task
+    # files already on disk from A1-lamp's build. Those are handled by the
+    # skip-if-exists logic in the per-task pass below (same convention as
+    # data/download_lamp.py) rather than refused here — refusing would force
+    # --overwrite, which risks silently regenerating (and diverging from) an
+    # existing task's canonical training corpus if the code has drifted since
+    # it was originally built.
+    existing = [p for p in (mixed_path, meta_path) if p.exists()]
     if existing and not args.overwrite:
         print("ERROR: refusing to overwrite existing files:", file=sys.stderr)
         for p in existing:
             print(f"  {p}", file=sys.stderr)
         print(
-            "\nPass --overwrite to replace, or change --k / --seed to write a new path.",
+            "\nPass --overwrite to replace, or change --k / --seed / --tasks to "
+            "write a new path.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -356,8 +396,23 @@ def main():
     # --- Per-task pass: stream raw JSON → write compact JSONL ----------------
     per_task_counts = {}
     per_task_skipped = {}
+    per_task_reused = {}
     t0 = time.time()
     for task in tasks:
+        if per_task_paths[task].exists() and not args.overwrite:
+            # Reuse an already-built per-task corpus untouched — e.g.
+            # LaMP_3/4/7 were already built for A1-lamp under this exact
+            # {task}_{k} filename. Never rebuild it just because a *different*
+            # --tasks combination now includes it (see the refuse-to-overwrite
+            # comment above for why).
+            n_written = sum(1 for _ in per_task_paths[task].open())
+            per_task_counts[task] = n_written
+            per_task_skipped[task] = None  # unknown — file wasn't rebuilt this run
+            per_task_reused[task] = True
+            print(f"{task}: reusing existing {per_task_paths[task]} "
+                  f"({n_written} examples)")
+            continue
+        per_task_reused[task] = False
         q_path = Path(LAMP_DIR) / task / "train_questions.json"
         o_path = Path(LAMP_DIR) / task / "train_outputs.json"
         if not q_path.exists() or not o_path.exists():
@@ -428,6 +483,7 @@ def main():
         "limit": args.limit,
         "per_task_counts": per_task_counts,
         "per_task_skipped": per_task_skipped,
+        "per_task_reused": per_task_reused,
         "total_count": len(mixed_lines),
         "per_task_files": {t: str(per_task_paths[t]) for t in tasks},
         "mixed_file": str(mixed_path),

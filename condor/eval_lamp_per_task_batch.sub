@@ -1,0 +1,43 @@
+# Per-Task-LoRA batch — full test-split eval, one job per task, each using
+# its own single-task Task-LoRA checkpoint.
+#
+# Fair comparison against A1-lamp's/One-LoRA FT's per-task numbers: same
+# BM25 k=4, greedy, seed 0 methodology, full test split. See
+# experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md, execution
+# Step 5. Depends on condor/train_per_task_batch.sub (cluster 177627)
+# having produced all 7 train/checkpoints/per_task_<tag>_1ep_seed0/final/
+# checkpoints first.
+#
+# Submit (after committing this file, and after training completes):
+#   condor_submit condor/eval_lamp_per_task_batch.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_lamp.py
+
+arguments             = --task $(task) --split test --k 4 --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/per_task_$(tag)_1ep_seed0/final
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_per_task_batch.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_per_task_batch.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/eval_lamp_per_task_batch.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "MODEL_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/models/SmolLM3-3B CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
+require_gpus          = Capability >= 8.0 && Capability < 10.0
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task, tag from (
+    LaMP_1        lamp1
+    LaMP_2_movies lamp2_movies
+    LaMP_2_news   lamp2_news
+    LaMP_3        lamp3
+    LaMP_4        lamp4
+    LaMP_5        lamp5
+    LaMP_7        lamp7
+)

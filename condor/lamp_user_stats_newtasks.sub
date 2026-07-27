@@ -1,0 +1,51 @@
+# Per-user viability analysis for the 4 new LaMP tasks — one-shot CPU job.
+#
+# R10-R13 prep (LaMP-1, LaMP-2-movies, LaMP-2-news, LaMP-5 first-time
+# User-LoRA rounds): before any per-task recipe can be designed, need the
+# same per-user record-count / seen-by-Task-LoRA analysis that originally
+# decided LaMP-3 was viable via profile-entry reframing, LaMP-4 was viable
+# record-level, and LaMP-7 was a dead end (stuck at 1-2 examples/user).
+#
+# Streams data/lamp/<task>/train_questions.json (up to ~657 MB for LaMP-1)
+# and data/lamp_time/<task>/{train,dev,test}_questions.json (up to ~1.5 GB
+# for LaMP-5) via data/lamp_user_stats.py's custom streaming JSON parser —
+# same login-node-OOM risk as condor/build_dataset.sub, hence Condor, not
+# run directly on conduit.
+#
+# data/lamp_user_stats.py extended 2026-07-20 to add these 4 tasks to its
+# TASKS list (previously hardcoded to LaMP_{3,4,7} only). First submit
+# (cluster 176230) failed immediately: FileNotFoundError, because the
+# script resolved its data paths via `Path(__file__).parent.parent`, which
+# breaks under Condor's should_transfer_files=YES sandbox (executable runs
+# from a scratch dir, not the repo checkout) — this script had only ever
+# been run directly on a login node before, where that assumption happened
+# to hold. Fixed by adding the same PROJECT_ROOT/LAMP_DIR env-var override
+# pattern train/build_dataset.py already uses; env vars below supply it.
+#
+# Submit (after committing this file):
+#   condor_submit condor/lamp_user_stats_newtasks.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = data/lamp_user_stats.py
+arguments             = --tasks LaMP_1 LaMP_2_movies LaMP_2_news LaMP_5
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/lamp_user_stats_newtasks.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/lamp_user_stats_newtasks.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/lamp_user_stats_newtasks.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill LAMP_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp LAMP_TIME_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_time USER_STATS_OUT_DIR=/home/ange00008/projects/mobileFT_distill/data/lamp_user_stats CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only — no GPU needed for streaming JSON + union-find + CSV/JSON write.
+# LaMP-5's 1.5 GB train file + the union-find's in-memory record list are the
+# dominant cost; 16G is comfortable headroom (build_dataset.sub uses 12G for
+# a comparable 2.9 GB streaming read).
+request_CPUs          = 2
+request_memory        = 16G
+request_disk          = 4G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
