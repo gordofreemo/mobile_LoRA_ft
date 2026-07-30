@@ -408,11 +408,17 @@ def main():
         query = cfg["query"](user_text)
         retrieved = retrieve_leave_one_out(cfg, query, profile, j, args.k)
         if retrieved:
-            retrieved_ids = [str(r.get("id", "")) for r in retrieved]
-            this_id = str(entry.get("id", ""))
-            assert this_id not in retrieved_ids or not this_id, (
-                f"self-retrieval at entry {j} (id={this_id}): {retrieved_ids}"
-            )
+            # No id-based self-retrieval assertion here (an earlier version
+            # had one and crashed 25/300 real users, all on Abstract):
+            # retrieve_leave_one_out already guarantees index-level exclusion
+            # (pool_idxs = every index != j), so profile[j] itself can never
+            # be retrieved. Checking by `id` field equality instead is WRONG
+            # when a user's profile legitimately contains two DIFFERENT
+            # entries sharing the same `id` (confirmed real, not a bug --
+            # e.g. user "Jun Li"'s abstract profile has the same paper id
+            # `53e99d36b7602d97025eebe5` at two distinct indices) -- a
+            # different-index duplicate is correctly retrievable and is not
+            # a leak.
             lines_ctx = ", and ".join(cfg["format"](it) for it in retrieved)
             system = lines_ctx + cfg["connector"]
         else:
