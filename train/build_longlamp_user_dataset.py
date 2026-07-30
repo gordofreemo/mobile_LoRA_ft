@@ -3,32 +3,58 @@
 Build a single-user training corpus for LongLaMP User-LoRA fine-tuning
 (LL4 Review, LL5 Abstract, LL6 Topic Writing).
 
-Per-user companion to `train/build_longlamp_dataset.py`, mirroring
-`train/build_user_dataset.py`'s "records" framing (LaMP's Round-4/R5/R6/R8
-convention) -- pinned design #8 in
-experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md: training examples
-are the user's own real (input, output) records from the `_temporal`-split
-TRAIN partition (there may be several per user), each with a `system` slot
-populated by BM25 top-k retrieval over THAT RECORD'S OWN embedded profile
-(LongLaMP profiles aren't a single stable per-user snapshot the way LaMP's
-are -- each record carries its own `profile` field, presumed by the dataset's
-own "temporal" partitioning to already be the historically-appropriate one
-for that record; see plan decision #4). This is simpler than LaMP's records
-framing (train/build_user_dataset.py's emit_record_bm25), which asserts a
-single shared profile across all of a user's records -- no such assertion is
-made or needed here.
+REVISED 2026-07-28 (see the addendum in
+experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md, re-grilled via
+/grill_me): the original "records" framing (train on the user's distinct
+temporal-TRAIN records) turned out to be non-viable -- real data from
+data/longlamp_user_stats.py showed n_train_records==1 for literally every
+eligible user on Review and Abstract, not "several per user" as first
+assumed. Training a 3-epoch LoRA on one example isn't personalization
+training. Fixed the same way LaMP-2-movies/5 fixed an analogous dead end:
+**profile-entry reframing** -- each user's snapshot record (the one temporal-
+TRAIN record with the largest profile, per
+data/longlamp_user_stats.py's `train_snapshot_idx`) has a `profile` field
+with many entries (up to 823 for Review, 2458 for Abstract, in the eligible
+pools seen so far). Each profile entry is reframed into its own training
+example, using THAT TASK'S OWN input/output template applied to the entry's
+fields -- verified structurally viable for all 3 tasks by reading real data:
 
-BM25 index/query/format/connector per task is duplicated from
+  Review:   entry {overall, description, summary, reviewText} -> input =
+            task's own template (rating + description + summary) verbatim,
+            output = reviewText. Exact field-for-field match to the real
+            task's input shape.
+  Topic:    entry {summary, content} -> input = "Generate the content for a
+            reddit post {summary}", output = content. Exact match.
+  Abstract: entry {title, abstract} -> input = 'Generate an abstract for the
+            title "{title}"', output = abstract. The real task's input also
+            has a keyword ("items:") list that profile entries don't carry --
+            deliberately OMITTED from training input (accepted minor
+            train/eval input-shape deviation, decided during the grill;
+            eval itself is untouched, still uses the real held-out record's
+            full input). cfg["query"]'s "items:"-extraction gracefully falls
+            back to the whole input string when "items:" isn't found, so no
+            special-casing is needed for the BM25 query side of this.
+
+Context (system slot) construction: **leave-one-out BM25** -- for profile
+entry e_j being trained on, retrieve top-k over the snapshot's OTHER profile
+entries (all i != j), no temporal ordering (LongLaMP profile entries carry
+no per-entry date field, unlike LaMP's time split -- see plan decision #4).
+Query = cfg["query"](reconstructed input text) -- same query-construction
+function used everywhere else in this project, applied to the input text we
+just built rather than a real record's `input`, for train/eval byte-shape
+consistency. Empty pool (only possible if profile_size==1, which eligibility
+now excludes via profile_size>=2) falls back to bare (system="").
+
+index_field / format / connector / query are duplicated from
 train/build_longlamp_dataset.py's TASKS dict (itself ported verbatim from
 the LongLaMP authors' training code) -- MUST stay byte-identical to that
 copy AND to eval/eval_longlamp.py's copy (same cardinal train/eval
 consistency rule as everywhere else in this project). Kept duplicated
 rather than imported so this script remains standalone in a Condor sandbox.
 
-User record indices come from data/longlamp_user_stats.py's
-<tag>_user_records.json (file-order indices into the `_temporal` split's
-train.json -- the same indexing scheme eval/eval_longlamp.py's `load_split`
-uses for its synthetic record ids, so no translation is needed at eval time).
+Snapshot record indices come from data/longlamp_user_stats.py's
+<tag>_user_records.json (`train_snapshot_idx` -- the temporal-train record,
+by file-order index, with this user's largest profile).
 
 Output format matches train/train.py's build_example (flat dict with
 `system`/`user`/`assistant` strings), same as build_longlamp_dataset.py.
@@ -65,6 +91,11 @@ USER_STATS_DIR = Path(os.environ.get(
 ))
 DATA_OUT_DIR = Path(os.environ.get("DATA_OUT_DIR", str(PROJECT_ROOT / "data")))
 
+# 3.5GB -- matches data/longlamp_user_stats.py's cap (same rationale: at
+# least one task's profile `content` field is unusually large; see that
+# script's comment for the confirmed-real-text investigation).
+MAX_PARSER_BUF_BYTES = 3584 * 1024 * 1024
+
 
 def _first_750_words(text: str) -> str:
     """Verbatim duplicate of build_longlamp_dataset.py's helper -- see that
@@ -74,7 +105,10 @@ def _first_750_words(text: str) -> str:
 
 def _extract_after_items(input_string: str):
     """Verbatim duplicate of build_longlamp_dataset.py's helper (paper's
-    misleadingly-named extract_before_bullets)."""
+    misleadingly-named extract_before_bullets). Falls back to the whole
+    input when "items:" isn't present -- exactly what happens for this
+    script's reconstructed Abstract training inputs, which deliberately
+    omit the keyword list (see module docstring)."""
     idx = input_string.find("items:")
     if idx == -1:
         return input_string
@@ -82,7 +116,9 @@ def _extract_after_items(input_string: str):
 
 
 # --- Per-task configuration (duplicated from train/build_longlamp_dataset.py
-# and eval/eval_longlamp.py -- keep all three byte-identical) ----------------
+# and eval/eval_longlamp.py -- keep index_field/query/format/connector byte-
+# identical across all three copies). target_field / build_input are NEW
+# for this script's profile-entry reframing. ---------------------------------
 TASK_CFG = {
     "review": {
         "temporal_task": "product_review_temporal",
@@ -98,6 +134,13 @@ TASK_CFG = {
             f'"{p.get("summary", "")}" is summary for "{p.get("reviewText", "")}"'
         ),
         "connector": ". Following the given patterns ",
+        "target_field": "reviewText",
+        "build_input": lambda p: (
+            f'Generate the review text written by a reviewer who has a given '
+            f'an overall rating of "{p.get("overall", "?")}" for a product '
+            f'with description "{p.get("description", "")}". The summary of '
+            f'the review text is "{p.get("summary", "")}".'
+        ),
     },
     "abstract": {
         "temporal_task": "abstract_generation_temporal",
@@ -112,6 +155,11 @@ TASK_CFG = {
             ". Use the above abstracts as context to understand the style "
             "and language of the user and, "
         ),
+        "target_field": "abstract",
+        # Real task input also has a "using the following items: ..." keyword
+        # list that profile entries don't carry -- deliberately omitted here
+        # (accepted minor train/eval deviation, decided 2026-07-28 grill).
+        "build_input": lambda p: f'Generate an abstract for the title "{p.get("title", "")}"',
     },
     "topic": {
         "temporal_task": "topic_writing_temporal",
@@ -122,6 +170,8 @@ TASK_CFG = {
             f'"{p.get("summary", "")}" is a summary for "{p.get("content", "")}"'
         ),
         "connector": ". Following the given patterns, ",
+        "target_field": "content",
+        "build_input": lambda p: f'Generate the content for a reddit post {p.get("summary", "")}',
     },
 }
 
@@ -169,25 +219,18 @@ class BM25:
         return [i for _, i in scored[:k]]
 
 
-def retrieve_profile(cfg: dict, query: str, profile: list, k: int) -> list:
-    if not profile or k <= 0:
+def retrieve_leave_one_out(cfg: dict, query: str, profile: list, exclude_idx: int, k: int) -> list:
+    """BM25 top-k over `profile` excluding index `exclude_idx` (the entry
+    being trained on) -- decision #8's revised context construction (no
+    date field to enforce strict-prior, so leave-one-out is the safest
+    simple analog)."""
+    pool_idxs = [i for i in range(len(profile)) if i != exclude_idx]
+    if not pool_idxs or k <= 0:
         return []
-    docs = [tokenize(cfg["index_field"](it)) for it in profile]
+    docs = [tokenize(cfg["index_field"](profile[i])) for i in pool_idxs]
     bm25 = BM25(docs)
-    idxs = bm25.top_k(tokenize(query), k)
-    return [profile[i] for i in idxs]
-
-
-def build_example(cfg: dict, record: dict, k: int) -> dict:
-    raw_input = record["input"]
-    query = cfg["query"](raw_input)
-    retrieved = retrieve_profile(cfg, query, record.get("profile", []), k)
-    if retrieved:
-        lines = ", and ".join(cfg["format"](it) for it in retrieved)
-        system = lines + cfg["connector"]
-    else:
-        system = ""
-    return {"system": system, "user": raw_input, "assistant": str(record["output"])}
+    top = bm25.top_k(tokenize(query), k)
+    return [profile[pool_idxs[t]] for t in top]
 
 
 # Filesystem-safe tag for a raw user id (reviewerId/name/author) -- names in
@@ -228,6 +271,55 @@ def collect_provenance() -> dict:
     }
 
 
+def find_one_record(train_path: Path, wanted_idx: int) -> dict:
+    """Stream `train_path` (a JSON array, potentially GBs) and return only
+    the record at file-order index `wanted_idx`, without materializing the
+    rest of the array. Early-exits the moment it's found. Only one record is
+    ever needed per user under profile-entry reframing (the snapshot), so
+    this is much cheaper than the earlier multi-index version this script
+    used under "records" framing."""
+    decoder = json.JSONDecoder()
+    with open(train_path, "r", encoding="utf-8") as f:
+        buf = ""
+        while "[" not in buf:
+            chunk = f.read(65536)
+            if not chunk:
+                raise RuntimeError(f"{train_path}: no top-level '[' found.")
+            buf += chunk
+        buf = buf[buf.index("[") + 1:]
+        idx = 0
+        while True:
+            buf = buf.lstrip()
+            if buf.startswith(","):
+                buf = buf[1:].lstrip()
+            if buf.startswith("]") or not buf:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    raise RuntimeError(
+                        f"{train_path}: reached end of array without finding "
+                        f"index {wanted_idx} (array has {idx} records)."
+                    )
+                buf += chunk
+                continue
+            try:
+                obj, end = decoder.raw_decode(buf)
+            except json.JSONDecodeError:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    raise
+                buf += chunk
+                if len(buf) > MAX_PARSER_BUF_BYTES:
+                    raise RuntimeError(
+                        f"{train_path}: buf grew past {MAX_PARSER_BUF_BYTES:,} "
+                        f"bytes without a successful decode at index {idx}."
+                    )
+                continue
+            if idx == wanted_idx:
+                return obj
+            buf = buf[end:]
+            idx += 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -238,10 +330,9 @@ def main():
                         help="raw user id (reviewerId/name/author) as it appears "
                              "in <tag>_user_records.json")
     parser.add_argument("--k", type=int, default=4,
-                        help="BM25 top-k profile entries per record (default 4, "
-                             "matching the Task-LoRA recipe's k -- but not yet "
-                             "locked in, see plan decision #5)")
-    parser.add_argument("--limit", type=int, default=0, help="cap records (smoke testing)")
+                        help="BM25 top-k profile entries per example (default 4, "
+                             "matching the Task-LoRA recipe's k)")
+    parser.add_argument("--limit", type=int, default=0, help="cap examples (smoke testing)")
     parser.add_argument("--overwrite", action="store_true",
                         help="overwrite existing JSONL / meta (default: refuse)")
     args = parser.parse_args()
@@ -274,47 +365,65 @@ def main():
     user_records = json.loads(records_json.read_text())
     if args.user not in user_records:
         sys.exit(f"ERROR: user {args.user!r} not in {records_json}.")
-    train_idxs = set(user_records[args.user]["train"])
-    test_idxs = set(user_records[args.user]["test"])
-    if not train_idxs:
-        sys.exit(f"ERROR: user {args.user!r} has 0 temporal-TRAIN records -- "
-                 f"nothing to build a training corpus from.")
-    print(f"[user] {args.user!r}: {len(train_idxs)} temporal-train records, "
-          f"{len(test_idxs)} temporal-test records", flush=True)
+    snapshot_idx = user_records[args.user].get("train_snapshot_idx")
+    if snapshot_idx is None:
+        sys.exit(f"ERROR: user {args.user!r} has no train_snapshot_idx (0 "
+                 f"temporal-train records with a profile) -- should have been "
+                 f"excluded by eligibility filtering upstream.")
+    print(f"[user] {args.user!r}: training snapshot = temporal-train index {snapshot_idx}",
+          flush=True)
 
     train_path = LONGLAMP_DIR / cfg["temporal_task"] / "train.json"
     if not train_path.exists():
         sys.exit(f"ERROR: {train_path} not found -- run data/download_longlamp.py "
                  f"--task {cfg['temporal_task']} first.")
-    print(f"[load] {train_path}", flush=True)
-    all_records = json.loads(train_path.read_text())
+    print(f"[scan] streaming {train_path} for index {snapshot_idx} ...", flush=True)
+    snapshot = find_one_record(train_path, snapshot_idx)
 
-    missing = [i for i in train_idxs if i >= len(all_records)]
-    if missing:
-        sys.exit(f"ERROR: {len(missing)} train indices out of range for "
-                 f"{train_path} (len={len(all_records)}); user_records.json and "
-                 f"the temporal split disagree -- e.g. {sorted(missing)[:5]}.")
+    rid = str(snapshot.get(cfg["id_field"]))
+    if rid != args.user:
+        sys.exit(f"ERROR: record index {snapshot_idx} in {train_path} has "
+                 f"{cfg['id_field']}={rid!r}, expected {args.user!r} -- "
+                 f"user_records.json is stale (rebuild via "
+                 f"data/longlamp_user_stats.py --overwrite).")
+
+    profile = snapshot.get("profile", []) or []
+    print(f"[snapshot] profile_size={len(profile)}", flush=True)
+    if len(profile) < 2:
+        sys.exit(f"ERROR: snapshot profile_size={len(profile)} < 2 -- leave-one-out "
+                 f"BM25 needs >=2 entries; eligibility should have excluded this user.")
 
     t0 = time.time()
     lines = []
     n_skipped_empty = 0
-    for idx in sorted(train_idxs):
-        rec = all_records[idx]
-        # Sanity: this record really belongs to this user.
-        rid = str(rec.get(cfg["id_field"]))
-        if rid != args.user:
-            sys.exit(f"ERROR: record index {idx} in {train_path} has "
-                     f"{cfg['id_field']}={rid!r}, expected {args.user!r} -- "
-                     f"user_records.json is stale (rebuild via "
-                     f"data/longlamp_user_stats.py --overwrite).")
+    target_field = cfg["target_field"]
+    for j, entry in enumerate(profile):
         if args.limit > 0 and len(lines) >= args.limit:
             break
-        ex = build_example(cfg, rec, args.k)
-        if not ex["user"].strip() or not ex["assistant"].strip():
+        user_text = cfg["build_input"](entry)
+        gold = str(entry.get(target_field, "")).strip()
+        if not user_text.strip() or not gold:
             n_skipped_empty += 1
             continue
-        ex["task"] = f"LongLaMP_{cfg['temporal_task']}"
-        ex["id"] = f"{args.user}-{idx}"
+        query = cfg["query"](user_text)
+        retrieved = retrieve_leave_one_out(cfg, query, profile, j, args.k)
+        if retrieved:
+            retrieved_ids = [str(r.get("id", "")) for r in retrieved]
+            this_id = str(entry.get("id", ""))
+            assert this_id not in retrieved_ids or not this_id, (
+                f"self-retrieval at entry {j} (id={this_id}): {retrieved_ids}"
+            )
+            lines_ctx = ", and ".join(cfg["format"](it) for it in retrieved)
+            system = lines_ctx + cfg["connector"]
+        else:
+            system = ""
+        ex = {
+            "task": f"LongLaMP_{cfg['temporal_task']}",
+            "id": f"{args.user}-snap{snapshot_idx}-entry{j}",
+            "system": system,
+            "user": user_text,
+            "assistant": gold,
+        }
         lines.append(json.dumps(ex) + "\n")
 
     DATA_OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -327,15 +436,15 @@ def main():
           f"input/output) -> {out_path}", flush=True)
 
     meta = {
-        "schema_version": 1,
+        "schema_version": 2,
         "tag": args.tag,
         "temporal_task": cfg["temporal_task"],
         "user_id": args.user,
         "user_tag": user_tag,
-        "framing": "records_bm25",
+        "framing": "profile_entry_bm25_leave_one_out",
         "bm25_k": args.k,
-        "n_user_train_records": len(train_idxs),
-        "n_user_test_records": len(test_idxs),
+        "snapshot_train_idx": snapshot_idx,
+        "snapshot_profile_size": len(profile),
         "n_examples": n_written,
         "n_skipped_empty": n_skipped_empty,
         "limit": args.limit,

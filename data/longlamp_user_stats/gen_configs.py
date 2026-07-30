@@ -95,17 +95,28 @@ def main():
     }
 
     if args.print_queue:
+        # IMPORTANT: Condor's `queue vars from (...)` splits each line on
+        # BOTH commas AND whitespace by default (confirmed empirically
+        # 2026-07-29/30 -- neither single- nor double-quoting a field
+        # preserves embedded spaces the way you'd expect from shell
+        # conventions; the only thing that reliably works is putting the
+        # space-containing field LAST in the variable list, where Condor's
+        # parser lets the final variable absorb the rest of the line
+        # verbatim). Abstract's user_ids are author names with spaces (e.g.
+        # "Lei Zhang"), so `user_id` must be the LAST field in every queue
+        # row below, and any field derived from it (adapter_ckpt, via
+        # safe_user_tag) must come BEFORE it, not after.
         for u in users:
             uid = u["user_id"]
             utag = safe_user_tag(uid)
             if args.print_queue == "build":
-                print(f"  {args.tag}, {uid}, {utag}")
+                print(f"  {args.tag}, {uid}")
             elif args.print_queue == "train":
                 print(f"  train/config/longlamp_user_lora_{args.tag}_{utag}_oppu.json")
             elif args.print_queue == "eval":
                 adapter_ckpt = f"longlamp_user_lora_{args.tag}_{utag}_seed0"
                 print(f"  {TEMPORAL_TASK[args.tag]}, {TASK_LORA_CKPT[args.tag]}, "
-                      f"{uid}, {adapter_ckpt}")
+                      f"{adapter_ckpt}, {uid}")
         return
 
     template_path = args.template or CONFIG_DIR / f"longlamp_user_lora_{args.tag}_oppu_template.json"

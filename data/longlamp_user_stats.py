@@ -12,7 +12,14 @@ pipeline (lamp_user_stats.py for eligibility + a per-task select_top_users_*
 script for top-K ranking) into one, since the plan names a single output
 artifact per task.
 
-Method
+Method (REVISED 2026-07-28, see the addendum in
+experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md -- re-grilled via
+/grill_me after the ORIGINAL "records" framing turned out to be non-viable:
+real data showed n_train_records==1 for literally every eligible user on
+Review and Abstract, not "several per user" as decision #8 assumed. The
+fix, mirroring LaMP-2-movies/5's own record-count dead end: train on the
+user's PROFILE ENTRIES (reframed as (input,output) pairs matching the
+task's own shape) instead of on distinct temporal-train records.)
 ------
 For each task:
   1. Load the `_user`-split TRAIN partition (data/longlamp/<task>_user/train.json)
@@ -24,34 +31,41 @@ For each task:
      is exactly the synthetic "id" eval/eval_longlamp.py's `load_split`
      assigns (`str(i)` in file order), so indices computed here line up
      with eval-time filtering without any extra translation.
-  3. Eligible = user NOT in the `_user`-split TRAIN id set (decision #7:
+  3. `profile_size` per user = max(len(profile)) over that user's
+     temporal-TRAIN records (NOT test -- profile-entry training draws from
+     a TRAIN record's profile, so that's the number that determines
+     training-corpus richness). `train_snapshot_idx` = the temporal-train
+     index that produced that max -- this record's `profile` field is what
+     train/build_longlamp_user_dataset.py trains on (a single snapshot, not
+     pooled across the user's train records, mirroring LaMP's original
+     profile-framing convention).
+  4. Eligible = user NOT in the `_user`-split TRAIN id set (decision #7:
      "not seen by Task-LoRA training") AND has >=1 temporal-TEST record
-     (something to evaluate) AND >=1 temporal-TRAIN record (something to
-     train the User-LoRA on -- the plan's "records" framing, decision #8,
-     trains on the user's own temporal-TRAIN records, so a user with zero
-     of those has no per-user training corpus at all; LaMP's R5 didn't need
-     this extra condition because its profile-framing corpus comes from a
-     single snapshot record's `profile` field, not from counting distinct
-     train-partition records).
-  4. `profile_size` per user = max(len(profile)) over that user's temporal
-     TEST records (same definition as data/select_top_users_lamp3.py: "for
-     multi-test-record users the profile_size reported is the max over the
-     user's test records"). Rank eligible users by profile_size descending,
-     take top-K.
+     (something to evaluate) AND profile_size (from TRAIN, per #3) >= 2
+     (bare minimum so leave-one-out BM25 -- decision #8's revised context
+     construction -- always has >=1 retrievable entry; NOT "n_train>=1",
+     which is now irrelevant to training-corpus size). Rank eligible users
+     by profile_size descending, take top-K.
 
 Outputs (per task, in data/longlamp_user_stats/):
     <tag>_users.csv            one row per discovered temporal-split user
                                 (user_id, n_train, n_test, seen_by_task_lora,
-                                profile_size)
-    <tag>_user_records.json    {user_id: {"train": [idx,...], "test": [idx,...]}}
+                                profile_size, train_snapshot_idx)
+    <tag>_user_records.json    {user_id: {"train": [idx,...], "test": [idx,...],
+                                "train_snapshot_idx": int}}
                                 -- consumed by train/build_longlamp_user_dataset.py
                                 and eval/eval_longlamp.py's --user-records filter.
     <tag>_top100_users.json    top-K eligible users by profile_size, shape
                                 mirroring LaMP_3_top100_users.json (see
                                 docstring in data/select_top_users_lamp3.py).
 
-Usage (CPU-only; all three tasks' temporal splits are small -- a few tens
-of MB -- so plain json.loads() is fine, no LaMP-style streaming needed):
+Usage (CPU-only; NOTE: these files are NOT small -- confirmed at run time
+2026-07-27 that `_temporal` train.json reaches 3.1 GB (abstract_generation)
+and the `_user` train.json files are already 1.2-1.9 GB each -- same order
+of magnitude as LaMP's giant per-task files, so this script streams rather
+than json.loads()'ing whole arrays, matching data/lamp_user_stats.py's own
+stream_array pattern (duplicated here so this script stays standalone in a
+Condor sandbox)):
     python data/longlamp_user_stats.py
     python data/longlamp_user_stats.py --tasks product_review --k 100
 """
@@ -68,6 +82,65 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+
+# 3.5GB, not 64/256MB -- topic_writing_user's train.json has at least one
+# profile `content` field (a per-user aggregated text blob, plausibly one
+# very prolific Reddit user's whole post history) that overflowed both the
+# original 64MB cap and a 256MB retry (confirmed 2026-07-28 via a bounded
+# `dd` byte-range sample, not a full-file load: the "unterminated string" was
+# real text, not corrupted JSON -- json.loads() on the whole file succeeded
+# previously during LL3's Task-LoRA corpus build). Set safely above the
+# largest known file size across all 3 tasks (~3.1GB, abstract_generation's
+# _temporal train.json) so no single record can ever exceed it -- still far
+# lighter than a whole-file json.loads(), which needs several times the file
+# size to hold every record simultaneously; this bounds peak growth to one
+# record at a time.
+MAX_PARSER_BUF_BYTES = 3584 * 1024 * 1024
+
+
+def stream_json_array(path):
+    """Yield each top-level object from a JSON-array file without loading the
+    whole array. Duplicated from data/lamp_user_stats.py's stream_array /
+    train/build_user_dataset.py's stream_json_array -- keep behavior in sync."""
+    decoder = json.JSONDecoder()
+    with open(path, "r", encoding="utf-8") as f:
+        buf = ""
+        while "[" not in buf:
+            chunk = f.read(65536)
+            if not chunk:
+                return
+            buf += chunk
+        buf = buf[buf.index("[") + 1:]
+        while True:
+            buf = buf.lstrip()
+            if buf.startswith(","):
+                buf = buf[1:].lstrip()
+            if buf.startswith("]"):
+                return
+            if not buf:
+                chunk = f.read(65536)
+                if not chunk:
+                    return
+                buf += chunk
+                continue
+            try:
+                obj, idx = decoder.raw_decode(buf)
+            except json.JSONDecodeError:
+                chunk = f.read(65536)
+                if not chunk:
+                    if buf.strip(" \t\r\n,]"):
+                        raise
+                    return
+                buf += chunk
+                if len(buf) > MAX_PARSER_BUF_BYTES:
+                    raise RuntimeError(
+                        f"stream_json_array: buf grew past "
+                        f"{MAX_PARSER_BUF_BYTES:,} chars without a successful "
+                        f"decode at offset {f.tell():,}."
+                    )
+                continue
+            yield obj
+            buf = buf[idx:]
 
 PROJECT_ROOT = Path(os.environ.get(
     "PROJECT_ROOT",
@@ -126,41 +199,51 @@ def collect_provenance() -> dict:
     }
 
 
-def load_json_array(path: Path) -> list:
+def _require_path(path: Path) -> Path:
     if not path.exists():
         sys.exit(f"ERROR: {path} not found -- run data/download_longlamp.py first "
                   f"(--task {path.parent.name}).")
-    return json.loads(path.read_text())
+    return path
 
 
 def build_seen_ids(user_task: str, id_field: str) -> set:
-    path = LONGLAMP_DIR / user_task / "train.json"
-    print(f"  loading _user-split TRAIN ({path}) ...", flush=True)
-    records = load_json_array(path)
-    seen = {str(r[id_field]) for r in records}
-    print(f"    -> {len(records)} records, {len(seen):,} unique user ids", flush=True)
+    path = _require_path(LONGLAMP_DIR / user_task / "train.json")
+    print(f"  streaming _user-split TRAIN ({path}) ...", flush=True)
+    seen = set()
+    n = 0
+    for r in stream_json_array(str(path)):
+        seen.add(str(r[id_field]))
+        n += 1
+    print(f"    -> {n} records, {len(seen):,} unique user ids", flush=True)
     return seen
 
 
 def analyse_task(cfg: dict, seen_ids: set) -> dict:
     """Returns {user_id: {"train": [idx,...], "test": [idx,...],
-    "profile_size": int}}."""
+    "profile_size": int, "train_snapshot_idx": int|None}}.
+
+    profile_size / train_snapshot_idx are computed over TRAIN records only
+    (not test) -- see the module docstring's 2026-07-28 revision."""
     temporal_dir = LONGLAMP_DIR / cfg["temporal_task"]
     id_field = cfg["id_field"]
-    users = defaultdict(lambda: {"train": [], "test": [], "profile_size": 0})
+    users = defaultdict(lambda: {
+        "train": [], "test": [], "profile_size": 0, "train_snapshot_idx": None,
+    })
 
     for split, fname in (("train", "train.json"), ("test", "test.json")):
-        path = temporal_dir / fname
-        print(f"  loading _temporal-split {split} ({path}) ...", flush=True)
-        records = load_json_array(path)
-        for idx, r in enumerate(records):
+        path = _require_path(temporal_dir / fname)
+        print(f"  streaming _temporal-split {split} ({path}) ...", flush=True)
+        n = 0
+        for idx, r in enumerate(stream_json_array(str(path))):
             uid = str(r[id_field])
             users[uid][split].append(idx)
-            if split == "test":
+            if split == "train":
                 psize = len(r.get("profile", []) or [])
                 if psize > users[uid]["profile_size"]:
                     users[uid]["profile_size"] = psize
-        print(f"    -> {len(records)} records", flush=True)
+                    users[uid]["train_snapshot_idx"] = idx
+            n += 1
+        print(f"    -> {n} records", flush=True)
 
     for uid, u in users.items():
         u["seen_by_task_lora"] = int(uid in seen_ids)
@@ -169,10 +252,19 @@ def analyse_task(cfg: dict, seen_ids: set) -> dict:
     return dict(users)
 
 
+MIN_ELIGIBLE_PROFILE_SIZE = 2  # bare minimum for non-degenerate leave-one-out BM25
+
+
+def is_eligible(u: dict) -> bool:
+    return (not u["seen_by_task_lora"] and len(u["test"]) >= 1
+            and u["profile_size"] >= MIN_ELIGIBLE_PROFILE_SIZE)
+
+
 def write_csv(tag: str, users: dict) -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{tag}_users.csv"
-    fields = ["user_id", "n_train", "n_test", "seen_by_task_lora", "profile_size"]
+    fields = ["user_id", "n_train", "n_test", "seen_by_task_lora", "profile_size",
+              "train_snapshot_idx"]
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -186,6 +278,7 @@ def write_csv(tag: str, users: dict) -> Path:
                 "n_test": len(u["test"]),
                 "seen_by_task_lora": u["seen_by_task_lora"],
                 "profile_size": u["profile_size"],
+                "train_snapshot_idx": u["train_snapshot_idx"],
             })
     print(f"  wrote {out} ({len(users)} rows)", flush=True)
     return out
@@ -194,17 +287,20 @@ def write_csv(tag: str, users: dict) -> Path:
 def write_records_json(tag: str, users: dict) -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{tag}_user_records.json"
-    payload = {uid: {"train": u["train"], "test": u["test"]} for uid, u in users.items()}
+    payload = {
+        uid: {
+            "train": u["train"], "test": u["test"],
+            "train_snapshot_idx": u["train_snapshot_idx"],
+        }
+        for uid, u in users.items()
+    }
     out.write_text(json.dumps(payload))
     print(f"  wrote {out} ({len(payload)} users)", flush=True)
     return out
 
 
 def write_top_k(tag: str, users: dict, k: int, provenance: dict, command: str) -> Path:
-    eligible = {
-        uid: u for uid, u in users.items()
-        if not u["seen_by_task_lora"] and len(u["test"]) >= 1 and len(u["train"]) >= 1
-    }
+    eligible = {uid: u for uid, u in users.items() if is_eligible(u)}
     ranked = sorted(eligible.items(), key=lambda kv: (-kv[1]["profile_size"], kv[0]))
     top = ranked[:k]
     if len(top) < k:
@@ -214,13 +310,19 @@ def write_top_k(tag: str, users: dict, k: int, provenance: dict, command: str) -
 
     out = OUT_DIR / f"{tag}_top{k}_users.json"
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "k": k,
         "selection_criterion": (
-            "top_by_profile_size (max over user's temporal-test records' "
-            "embedded profile length), eligible = (NOT seen by this task's "
+            "top_by_profile_size (max over user's temporal-TRAIN records' "
+            "embedded profile length -- that record is the training snapshot, "
+            "see train_snapshot_idx), eligible = (NOT seen by this task's "
             "Task-LoRA _user-split TRAIN partition) AND (n_temporal_test>=1) "
-            "AND (n_temporal_train>=1)"
+            f"AND (profile_size>={MIN_ELIGIBLE_PROFILE_SIZE}). Revised "
+            "2026-07-28 -- see experiments/2026-07-27-longlamp-user-lora-"
+            "ll4-ll6-plan.md addendum: the original n_train>=1 criterion "
+            "assumed 'records' framing, since replaced by profile-entry "
+            "reframing after real data showed n_train_records==1 for every "
+            "eligible user."
         ),
         "eligible_pool_size": len(eligible),
         "n_selected": len(top),
@@ -230,7 +332,7 @@ def write_top_k(tag: str, users: dict, k: int, provenance: dict, command: str) -
             {
                 "user_id": uid,
                 "profile_size": u["profile_size"],
-                "n_train_records": len(u["train"]),
+                "train_snapshot_idx": u["train_snapshot_idx"],
                 "test_record_ids": [str(i) for i in u["test"]],
             }
             for uid, u in top
@@ -254,16 +356,14 @@ def summarise(tag: str, users: dict) -> None:
           f"({100 * len(seen) / max(1, len(users)):5.1f}%)")
     print(f"    NOT seen by Task-LoRA:   {len(unseen):>7,} "
           f"({100 * len(unseen) / max(1, len(users)):5.1f}%)")
-    eligible = [u for u in unseen if len(u["test"]) >= 1 and len(u["train"]) >= 1]
-    print(f"    eligible (unseen, >=1 train, >=1 test): {len(eligible):>7,}")
+    eligible = [u for u in users.values() if is_eligible(u)]
+    print(f"    eligible (unseen, >=1 test, profile_size>={MIN_ELIGIBLE_PROFILE_SIZE} "
+          f"from TRAIN): {len(eligible):>7,}")
     if eligible:
         xs = sorted(u["profile_size"] for u in eligible)
         n = len(xs)
-        print(f"    profile_size over eligible: min {xs[0]} p50 {xs[n // 2]} "
-              f"p90 {xs[int(0.9 * n)]} max {xs[-1]}")
-        ntr = sorted(len(u["train"]) for u in eligible)
-        print(f"    n_train_records over eligible: min {ntr[0]} p50 {ntr[n // 2]} "
-              f"p90 {ntr[int(0.9 * n)]} max {ntr[-1]}")
+        print(f"    profile_size (TRAIN-based) over eligible: min {xs[0]} "
+              f"p50 {xs[n // 2]} p90 {xs[int(0.9 * n)]} max {xs[-1]}")
 
 
 def main():
