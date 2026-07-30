@@ -102,10 +102,69 @@ def rouge1_scorer() -> Callable[[str, str], float]:
     return lambda gold, pred: rs.score(str(gold), str(pred))["rouge1"].fmeasure
 
 
-def accuracy_scorer() -> Callable[[str, str], float]:
-    # LaMP-3 is rating prediction; per-record metric is 0/1 exact match on the
-    # normalized string. Mirrors eval_lamp.score_rating's per-example logic.
-    return lambda gold, pred: 1.0 if str(pred).strip() == str(gold).strip() else 0.0
+# --- Closed label vocabularies, duplicated from eval/eval_lamp.py -----------
+# Needed because `pred` in a predictions.jsonl is the model's RAW generated
+# text: eval_lamp.py runs it through a per-task parse function before
+# comparing to gold. Scoring accuracy here by strict string equality would
+# silently mark every prediction the model wrapped in prose ("The category is
+# politics.") as wrong, and this script's accuracy would not aggregate to the
+# accuracy eval_lamp.py reported for the same file.
+LAMP2_MOVIES_LABELS = [
+    "action", "based on a book", "classic", "comedy", "dark comedy",
+    "dystopia", "fantasy", "psychology", "romance", "sci-fi",
+    "social commentary", "thought-provoking", "true story", "twist ending",
+    "violence",
+]
+LAMP2_NEWS_LABELS = [
+    "business", "crime", "culture & arts", "education", "entertainment",
+    "food & drink", "healthy living", "parents", "politics", "religion",
+    "science & technology", "sports", "style & beauty", "travel", "women",
+]
+
+
+def parse_bracket_choice(text: str, label_universe: list):
+    """LaMP-1: first of "1"/"2", optionally bracketed. Mirrors eval_lamp.py."""
+    m = re.search(r"\[?\s*([12])\s*\]?", text)
+    return f"[{m.group(1)}]" if m else None
+
+
+def parse_closed_vocab_label(text: str, label_universe: list):
+    """LaMP-2 (both variants): exact match on the normalized string first,
+    else longest containing label. Mirrors eval_lamp.py."""
+    def norm(s: str) -> str:
+        return " ".join(str(s).lower().split())
+
+    norm_map = {norm(u): u for u in label_universe}
+    t = norm(text)
+    if t in norm_map:
+        return norm_map[t]
+    matches = [u for u_norm, u in norm_map.items() if u_norm in t]
+    return max(matches, key=len) if matches else None
+
+
+CLASSIFICATION_PARSERS = {
+    "LaMP_1": (["[1]", "[2]"], parse_bracket_choice),
+    "LaMP_2_movies": (LAMP2_MOVIES_LABELS, parse_closed_vocab_label),
+    "LaMP_2_news": (LAMP2_NEWS_LABELS, parse_closed_vocab_label),
+}
+
+
+def accuracy_scorer(task: str = "") -> Callable[[str, str], float]:
+    """Per-record 0/1 accuracy.
+
+    For the closed-vocabulary classification tasks, parse the raw prediction
+    exactly the way eval_lamp.py does, then compare. For everything else
+    (LaMP-3's ratings — the original caller, whose Round-5 audit confirmed a
+    0% parse-fail rate) fall back to strict exact match on the normalized
+    string, i.e. unchanged behavior.
+    """
+    entry = CLASSIFICATION_PARSERS.get(task)
+    if entry is None:
+        return lambda gold, pred: 1.0 if str(pred).strip() == str(gold).strip() else 0.0
+    label_universe, parse_fn = entry
+    return lambda gold, pred: (
+        1.0 if parse_fn(str(pred), label_universe) == str(gold).strip() else 0.0
+    )
 
 
 def mae_scorer() -> Callable[[str, str], float]:
@@ -219,7 +278,7 @@ def main():
     elif args.metric == "mae":
         score_fn = mae_scorer()
     else:
-        score_fn = accuracy_scorer()
+        score_fn = accuracy_scorer(args.task)
 
     pairs = []
     diffs = []

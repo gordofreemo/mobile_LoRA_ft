@@ -16,6 +16,14 @@ train/config/user_lora_lamp3_oppu_u*.json
 train/config/user_lora_lamp4_oppu_u*.json
 # LL4-LL6 per-user LongLaMP User-LoRA configs (generator: data/longlamp_user_stats/gen_configs.py)
 train/config/longlamp_user_lora_*_oppu.json
+# R10-R14 / PT3-PT7 per-user OPPU configs for the five remaining LaMP tasks
+# (generator: data/lamp_user_stats/newtask_gen_configs.py). The per-track
+# *_template.json files are NOT ignored — those are the committed recipe record.
+train/config/user_lora_lamp1_oppu_u*.json
+train/config/user_lora_lamp2movies_oppu_u*.json
+train/config/user_lora_lamp2news_oppu_u*.json
+train/config/user_lora_lamp5_oppu_u*.json
+train/config/user_lora_lamp7_oppu_u*.json
 
 # On-device phase (2026-06) — large external/build artifacts
 .venv-mlx/
