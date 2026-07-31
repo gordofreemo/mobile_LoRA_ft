@@ -10,12 +10,19 @@
 # OPPU recipe (pinned, plan decision #5, byte-identical to LaMP's R5/R6/R8):
 #   r=8, lora_alpha=16, target_modules=[q_proj, v_proj], lora_dropout=0.05
 #   LR=1e-5, weight_decay=1e-2, 3 epochs, cosine + 3% warmup
-#   per_device_batch=2, grad_accum=4
-#   max_seq_length=1024 -- PLACEHOLDER, per plan decision #5 this must be
-#   smoke-tested per task before the real run, NOT assumed to transfer from
-#   the Task-LoRA's max_seq_length=8192 (per-user records here retrieve BM25
-#   over a single record's own profile, not k=4-over-the-full-profile, so
-#   context is likely much shorter -- verify, don't guess).
+#   max_seq_length=8192, per_device_batch=1, grad_accum=8 (effective batch 8)
+#
+#   REVISED 2026-07-31: the original placeholder max_seq_length=1024 turned
+#   out badly under-provisioned -- train/check_longlamp_user_seqlen.py
+#   (cluster 178375) tokenized all 300 real per-user corpora with the actual
+#   chat template and found 1024 would truncate 100% of Review / 92% of
+#   Topic / 68% of Abstract examples. Set to 8192 uniformly (matching the
+#   Task-LoRA's own budget) -- covers ~99% Review, 100% Abstract, ~99% Topic
+#   untruncated. per_device_train_batch_size dropped 2->1 / grad_accum raised
+#   4->8 to compensate for the 8x longer sequences (mirrors LL1-LL3's own
+#   Task-LoRA adjustment for the same jump). Verified via a real Step-5
+#   smoke run (cluster 178437, one user per task, --max_steps 2): all 3
+#   trained cleanly, 0 examples dropped/truncated, no OOM.
 #
 # Plan: experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md, Execution
 # Step 5.
@@ -63,7 +70,12 @@ when_to_transfer_output = ON_EXIT_OR_EVICT
 request_GPUs          = 1
 request_CPUs          = 4
 request_memory        = 32G
-requirements          = UidDomain == "cs.uni-saarland.de"
+# tyr1 excluded -- the Step-5 smoke sub (cluster 178420) landed all 3 procs
+# on tyr1 and hit the well-documented CUDA-busy oversubscription error (see
+# project_cluster_infrastructure memory), not a real training bug. Guard
+# added here before the real 300-job run, matching this project's standing
+# practice of hardening subs once they've hit this.
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de"
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true
 

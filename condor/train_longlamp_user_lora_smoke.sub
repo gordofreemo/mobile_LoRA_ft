@@ -1,0 +1,49 @@
+# Step 5 smoke test: one user per task (smallest profile_size, per plan
+# decision #13), --max_steps 2, to confirm max_seq_length=8192 +
+# per_device_train_batch_size=1/gradient_accumulation_steps=8 (revised
+# 2026-07-31 after train/check_longlamp_user_seqlen.py found the original
+# 1024 placeholder truncated 100%/92%/68% of Review/Topic/Abstract examples)
+# doesn't OOM before committing to the real 300-job
+# condor/train_longlamp_user_lora.sub run.
+#
+# 3 procs. Output dirs get a _steps2 suffix automatically (train.py's own
+# smoke-run convention), won't collide with the real per-user run.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/train.py
+arguments             = "--config $(config_path) --max_steps 2 --no-wandb"
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_user_lora_smoke.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_user_lora_smoke.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/train_longlamp_user_lora_smoke.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+max_job_retirement_time = 1800
+
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# First attempt (cluster 178420) landed all 3 procs on tyr1 and hit the
+# well-documented CUDA-busy oversubscription error (see
+# project_cluster_infrastructure memory / CLAUDE.md's GPU-capability-ceiling
+# note) -- not a max_seq_length/OOM issue. Retried with tyr1 excluded above.
+queue config_path from (
+  train/config/longlamp_user_lora_review_A1K0I7X8P4SIYJ_oppu.json
+  train/config/longlamp_user_lora_abstract_Qionghai_Dai_oppu.json
+  train/config/longlamp_user_lora_topic_AngryBeaverEU_oppu.json
+)
