@@ -26,6 +26,22 @@ Acceptance (unchanged from R5/R6): STOP if the global max exceeds SmolLM3-3B's
 8192 positional ceiling — do not auto-truncate; write the full stats and
 surface truncation_pct for a joint decision.
 
+`--pin-max-seq-length N` records the outcome of that joint decision. It never
+fires on its own; a human passes it after reading the blocked run's stats. It
+still computes and writes every statistic, but pins N instead of the derived
+value and records `max_seq_length_override: true` plus how many examples that
+N truncates, so the deviation is visible in the artifact rather than living
+only in a chat log or a hand-edited JSON.
+
+Used 2026-07-30 for LaMP-1 (1792) and LaMP-5 (2048). Both had exactly ONE
+example above the 8192 ceiling (14,925 and 15,544 tokens) against
+next-largest per-user maxima of 1,597 and 2,048 and p95 of 322 and 918. Since
+that single outlier truncates at 8192 just as surely as at 1792/2048, pinning
+the ceiling would have preserved nothing while costing headroom on every
+batch the outlier landed in — so the pin was set from the real distribution
+(round_up_to_256 of the second-largest per-user max) instead of from one
+anomaly.
+
 Usage (CPU-only; needs the per-user corpora on disk already):
     python data/lamp_user_stats/newtask_t3_sizing.py --task LaMP_2_news --framing records
     python data/lamp_user_stats/newtask_t3_sizing.py --task LaMP_7 --framing unsupervised
@@ -120,7 +136,14 @@ def main():
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit-users", type=int, default=0,
                         help="if >0, restrict to first N users (smoke)")
+    parser.add_argument("--pin-max-seq-length", type=int, default=0,
+                        help="record an explicit human decision instead of the "
+                             "derived value (see module docstring). Only for "
+                             "resolving a run this script already blocked.")
     args = parser.parse_args()
+    if args.pin_max_seq_length and args.pin_max_seq_length > POSITIONAL_CEILING:
+        sys.exit(f"ERROR: --pin-max-seq-length {args.pin_max_seq_length} exceeds "
+                 f"the {POSITIONAL_CEILING} positional ceiling.")
 
     pool_path = args.pool or USER_STATS_DIR / POOL_FILES[args.task]
     out_path = args.out or USER_STATS_DIR / f"{args.task}_t3_sizing.json"
@@ -242,7 +265,13 @@ def main():
     n_over_ceiling = sum(1 for x in lengths if x > POSITIONAL_CEILING)
     truncation_pct = 100.0 * n_over_ceiling / len(lengths)
     over_ceiling = stats["max"] > POSITIONAL_CEILING
-    max_seq_length = None if over_ceiling else round_up_to_256(stats["max"])
+    if args.pin_max_seq_length:
+        max_seq_length = args.pin_max_seq_length
+        over_ceiling = False  # decision recorded; don't re-block on it
+    else:
+        max_seq_length = None if over_ceiling else round_up_to_256(stats["max"])
+    n_over_pinned = (sum(1 for x in lengths if x > max_seq_length)
+                     if max_seq_length else None)
 
     print(
         f"[stats] n={stats['n_examples']}, min={stats['min']}, "
@@ -268,10 +297,14 @@ def main():
                          ("min", "mean", "p50", "p95", "p99", "max")},
         "sizing_rule": "max_seq_length = round_up_to_256(min(max(input_ids_len), 8192))",
         "max_seq_length_pinned": max_seq_length,
+        "max_seq_length_override": bool(args.pin_max_seq_length),
         "positional_ceiling": POSITIONAL_CEILING,
         "max_seq_length_le_positional_ceiling": not over_ceiling,
         "n_over_ceiling": n_over_ceiling,
         "truncation_pct": truncation_pct,
+        "n_over_pinned": n_over_pinned,
+        "truncation_pct_at_pinned": (100.0 * n_over_pinned / len(lengths)
+                                     if n_over_pinned is not None else None),
         "max_users": flagged,
         "per_user_stats": per_user,
         "inputs": {
