@@ -34,7 +34,11 @@ adapter_ckpt = longlamp_user_lora_review_unknown_seed0
 # Outer double-quotes = Condor's "new" arguments syntax; single-quotes group
 # $(user_id) (may contain spaces, e.g. Abstract's author-name ids) into one
 # argument -- see the queue-syntax gotcha note near the queue block below.
-arguments    = "--task $(task) --split test --k 4 --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/$(adapter_ckpt)/final --base-adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/$(base_adapter)/final --user-records '$(user_id)'"
+# --overwrite: 3/300 results already exist from the Step-6 smoke test
+# (cluster 178501, one user per task, full real single-record evals, not
+# --limit-truncated) -- --overwrite lets this batch cover all 300 rows
+# uniformly rather than special-casing 3 skips.
+arguments    = "--task $(task) --split test --k 4 --seed 0 --adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/$(adapter_ckpt)/final --base-adapter /home/ange00008/projects/mobileFT_distill/train/checkpoints/$(base_adapter)/final --user-records '$(user_id)' --overwrite"
 
 output                = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp_user_lora.$(task).$(ClusterId).$(ProcId).out
 error                 = /home/ange00008/projects/mobileFT_distill/runlogs/eval_longlamp_user_lora.$(task).$(ClusterId).$(ProcId).err
