@@ -1,0 +1,29 @@
+# LL4-LL6 Step 7 aggregation -- per-user paired comparison (Task-LoRA+BM25
+# baseline vs. Task-LoRA+User-LoRA+BM25 stacked), one job per task.
+# See eval/paired_compare_longlamp_user.py for full rationale (new script,
+# not a generalization of eval/paired_compare_per_user.py -- that script
+# needs a LaMP-specific consolidated-predictions format with no LongLaMP
+# equivalent).
+#
+# CPU-only (scores already-generated predictions, no model inference).
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare_longlamp_user.py
+arguments             = "--tag $(tag)"
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_longlamp_user.$(tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_longlamp_user.$(tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_longlamp_user.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue tag in (review abstract topic)
