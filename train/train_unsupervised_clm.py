@@ -97,6 +97,85 @@ def _derive_adapter_tag(adapter_path: str) -> str:
     return p.name
 
 
+# --- base_adapter_mode support ----------------------------------------------
+# Byte-duplicated from train/train.py, per this script's standing convention of
+# duplicating rather than deep-branching a shared path. If you change the guards
+# here, change them there too.
+#
+# "merge"    (default, every round R5-PT7): merge the base adapter into the
+#            frozen backbone, then attach a fresh zero-initialized adapter.
+# "continue" (warm-start): load the base adapter TRAINABLE and keep training it.
+BASE_ADAPTER_MODES = ("merge", "continue")
+
+
+def _read_adapter_config(adapter_path: str) -> dict:
+    p = Path(adapter_path) / "adapter_config.json"
+    if not p.exists():
+        sys.exit(f"ERROR: {p} does not exist — not a PEFT adapter directory.")
+    return json.loads(p.read_text())
+
+
+def _assert_adapter_shape_matches(cfg_lora: dict, disk_cfg: dict, adapter_path: str):
+    """Guard 1. In "continue" mode the config's `lora` block is INERT — rank,
+    alpha and target modules all come from the adapter on disk. Refuse on
+    mismatch, or leaving OPPU's `r: 8` in a config while warm-starting an r=4
+    adapter would silently train r=4 and look entirely successful."""
+    checks = [("r", "r"), ("lora_alpha", "lora_alpha"), ("lora_dropout", "lora_dropout")]
+    mismatches = []
+    for cfg_key, disk_key in checks:
+        if cfg_key in cfg_lora and cfg_lora[cfg_key] != disk_cfg.get(disk_key):
+            mismatches.append(
+                f"{cfg_key}: config={cfg_lora[cfg_key]!r} disk={disk_cfg.get(disk_key)!r}"
+            )
+    if "target_modules" in cfg_lora:
+        want = set(cfg_lora["target_modules"])
+        have = set(disk_cfg.get("target_modules") or [])
+        if want != have:
+            mismatches.append(
+                f"target_modules: config={sorted(want)} disk={sorted(have)}"
+            )
+    if mismatches:
+        sys.exit(
+            "ERROR: base_adapter_mode='continue' but the config's `lora` block "
+            f"disagrees with the adapter on disk ({adapter_path}):\n"
+            + "".join(f"  - {m}\n" for m in mismatches)
+            + "  In 'continue' mode the on-disk adapter wins and the config's\n"
+            "  `lora` block is inert, so a mismatch means the config is lying\n"
+            "  about what is being trained. Fix the config to match, or drop\n"
+            "  the `lora` block entirely."
+        )
+
+
+def _lora_weight_hash(model) -> str:
+    """Guard 3 helper. SHA-256 over every TRAINABLE tensor, in sorted name
+    order — used to prove training actually moved the adapter.
+
+    The failure this exists to catch: a saved `adapter_config.json` carries
+    `"inference_mode": true`, so loading it without `is_trainable=True` yields
+    a frozen adapter. Training then runs, reports a loss, saves, and exits 0 —
+    having changed nothing. Across hundreds of runs that manufactures a clean,
+    plausible, entirely fake null.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    n_trainable = 0
+    for name, param in sorted(model.named_parameters(), key=lambda kv: kv[0]):
+        if not param.requires_grad:
+            continue
+        h.update(name.encode())
+        h.update(param.detach().to(torch.float32).cpu().numpy().tobytes())
+        n_trainable += 1
+    if n_trainable == 0:
+        sys.exit(
+            "ERROR: the model has ZERO trainable parameters — training would "
+            "do nothing and still exit 0. In 'continue' mode this means "
+            "is_trainable=True did not take effect (the adapter_config.json "
+            "carries inference_mode: true)."
+        )
+    return h.hexdigest()
+
+
 # --- Raw-text tokenization (no chat template, no loss mask) ------------------
 def build_example(record, tokenizer, max_length: int):
     """Render one raw-history row into (input_ids, attention_mask, labels).
@@ -279,21 +358,72 @@ def main():
     )
 
     base_adapter_path = cfg.get("base_adapter")
+    base_adapter_mode = cfg.get("base_adapter_mode", "merge")
     base_adapter_tag = None
+    loaded_adapter_shape = None
+    if base_adapter_mode not in BASE_ADAPTER_MODES:
+        sys.exit(f"ERROR: base_adapter_mode must be one of {BASE_ADAPTER_MODES}, "
+                 f"got {base_adapter_mode!r}.")
+    if base_adapter_mode == "continue" and not base_adapter_path:
+        sys.exit("ERROR: base_adapter_mode='continue' requires `base_adapter` — "
+                 "there is nothing to continue training from.")
+
+    use_gc = cfg["trainer"].get("gradient_checkpointing", False)
+
     if base_adapter_path:
         base_adapter_path = str(_resolve(base_adapter_path))
         base_adapter_tag = _derive_adapter_tag(base_adapter_path)
-        print(f"[model] merging base adapter {base_adapter_tag} from "
-              f"{base_adapter_path}", flush=True)
-        model = PeftModel.from_pretrained(model, base_adapter_path)
-        model = model.merge_and_unload()
 
-    if cfg["trainer"].get("gradient_checkpointing", False):
-        model.enable_input_require_grads()
+    if base_adapter_mode == "continue":
+        # Warm start: the base adapter is loaded TRAINABLE and becomes the thing
+        # being trained. No merge, no second adapter.
+        #
+        # NOTE for LaMP-1/LaMP-7 specifically: the Task-LoRA being continued here
+        # was trained with the chat template and loss masked to assistant tokens,
+        # while this script trains on raw untemplated text with loss on every
+        # token. Under 'merge' that mismatch was structurally harmless — the task
+        # adapter was frozen in the backbone and could not be damaged. Under
+        # 'continue' the raw-text objective rewrites it directly. This is a
+        # pre-registered risk, not an oversight; watch the parse-failure rate.
+        disk_cfg = _read_adapter_config(base_adapter_path)
+        _assert_adapter_shape_matches(cfg.get("lora") or {}, disk_cfg,
+                                      base_adapter_path)
+        if use_gc:
+            model.enable_input_require_grads()
+        print(f"[model] CONTINUING base adapter {base_adapter_tag} from "
+              f"{base_adapter_path} (is_trainable=True)", flush=True)
+        model = PeftModel.from_pretrained(model, base_adapter_path,
+                                          is_trainable=True)
+        loaded_adapter_shape = {
+            "r": disk_cfg.get("r"),
+            "lora_alpha": disk_cfg.get("lora_alpha"),
+            "lora_dropout": disk_cfg.get("lora_dropout"),
+            "target_modules": sorted(disk_cfg.get("target_modules") or []),
+        }
+        print(f"[model] loaded adapter shape (read off disk): "
+              f"r={loaded_adapter_shape['r']} "
+              f"alpha={loaded_adapter_shape['lora_alpha']} "
+              f"target_modules={loaded_adapter_shape['target_modules']}",
+              flush=True)
+    else:
+        if base_adapter_path:
+            print(f"[model] merging base adapter {base_adapter_tag} from "
+                  f"{base_adapter_path}", flush=True)
+            model = PeftModel.from_pretrained(model, base_adapter_path)
+            model = model.merge_and_unload()
 
-    lora_config = LoraConfig(**cfg["lora"])
-    model = get_peft_model(model, lora_config)
+        if use_gc:
+            model.enable_input_require_grads()
+
+        lora_config = LoraConfig(**cfg["lora"])
+        model = get_peft_model(model, lora_config)
+
     model.print_trainable_parameters()
+
+    # Guard 3 (first half): fingerprint the trainable tensors before training.
+    lora_hash_before = _lora_weight_hash(model)
+    print(f"[model] trainable-weight hash before training: {lora_hash_before[:16]}",
+          flush=True)
 
     # --- Dataset -----------------------------------------------------------
     dataset_path = _resolve(cfg["dataset_path"])
@@ -395,6 +525,23 @@ def main():
     print(f"[train] metrics streaming to {metrics_path}", flush=True)
     trainer.train(resume_from_checkpoint=True if args.resume else None)
 
+    # Guard 3 (second half): the adapter MUST have moved. An unchanged hash
+    # means the run trained nothing — otherwise invisible, since loss is still
+    # logged and the exit code is still 0.
+    lora_hash_after = _lora_weight_hash(trainer.model)
+    if lora_hash_after == lora_hash_before:
+        sys.exit(
+            "ERROR: trainable weights are byte-identical before and after "
+            f"training (hash {lora_hash_before[:16]}). Nothing was learned.\n"
+            f"  base_adapter_mode={base_adapter_mode}\n"
+            "  In 'continue' mode the usual cause is the adapter loading "
+            "frozen (adapter_config.json carries inference_mode: true, so "
+            "is_trainable=True must be passed explicitly).\n"
+            "  Refusing to save a checkpoint that would look like a clean null."
+        )
+    print(f"[model] trainable-weight hash after training:  {lora_hash_after[:16]} "
+          f"(changed — OK)", flush=True)
+
     # --- Save final adapter + run metadata ---------------------------------
     final_dir = output_dir / "final"
     final_dir.mkdir(parents=True, exist_ok=True)
@@ -407,7 +554,8 @@ def main():
     log_hist_path.write_text(json.dumps(trainer.state.log_history, indent=2))
 
     meta = {
-        "schema_version": 1,
+        # v2 adds base_adapter_mode + loaded_adapter_* + lora_weight_hash_*.
+        "schema_version": 2,
         "condition": cfg["condition"],
         "training_objective": "unsupervised_clm_right_shifted_history",
         "config_path": str(config_path),
@@ -425,6 +573,17 @@ def main():
         "global_step": trainer.state.global_step,
         "base_adapter_path": base_adapter_path,
         "base_adapter_tag": base_adapter_tag,
+        # Guard 2: the mode that ran, and the shape actually read off disk in
+        # 'continue' mode (None under 'merge', where cfg["lora"] governs).
+        "base_adapter_mode": base_adapter_mode,
+        "loaded_adapter_r": (loaded_adapter_shape or {}).get("r"),
+        "loaded_adapter_lora_alpha": (loaded_adapter_shape or {}).get("lora_alpha"),
+        "loaded_adapter_target_modules": ",".join(
+            (loaded_adapter_shape or {}).get("target_modules") or []
+        ) or None,
+        # Guard 3 evidence.
+        "lora_weight_hash_before": lora_hash_before,
+        "lora_weight_hash_after": lora_hash_after,
         **metric_summary,
         **provenance,
     }

@@ -25,6 +25,14 @@ train/config/user_lora_lamp2news_oppu_u*.json
 train/config/user_lora_lamp5_oppu_u*.json
 train/config/user_lora_lamp7_oppu_u*.json
 
+# Warm-Start round per-user configs, 7 tasks x 2 arms = 1,254 files
+# (generator: data/lamp_user_stats/warm_gen_configs.py). Deterministically
+# derivable from the pool JSONs + the two committed
+# warm_user_lora_<tag>_<arm>_template.json files per task, which are NOT
+# ignored — those are the recipe record.
+train/config/user_lora_*_u*_warm.json
+train/config/user_lora_*_u*_coldmatch.json
+
 # On-device phase (2026-06) — large external/build artifacts
 .venv-mlx/
 # mlx-swift-examples is vendored via git subtree (see ios/README.md); track the

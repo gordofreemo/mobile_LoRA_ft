@@ -316,6 +316,16 @@ def main():
     ties = sum(1 for d in diffs if d == 0)
     wins_a = sum(1 for d in diffs if d < 0)
 
+    # Direction-aware win counts (schema v2). `wins_b_over_a`/`wins_a_over_b`
+    # above are RAW SIGN COUNTS and are defined for higher-is-better metrics, so
+    # they read BACKWARDS for MAE — R5, R8 and PT1 each had to swap them by hand
+    # when writing up. The two raw fields are deliberately left as they are so
+    # those rounds' on-disk results keep meaning what they meant under
+    # schema v1; these new fields are the ones to report.
+    lower_better = args.metric in LOWER_IS_BETTER
+    wins_b_better = wins_a if lower_better else wins_b
+    wins_a_better = wins_b if lower_better else wins_a
+
     # Pre-registered gate: improvement direction AND paired t-test p < args.alpha.
     # For higher-is-better metrics (rouge1, accuracy): improvement = mean_diff > 0.
     # For lower-is-better metrics (mae): improvement = mean_diff < 0.
@@ -327,7 +337,8 @@ def main():
         passes_gate = (mean_diff > 0) and (p_val is not None and p_val < args.alpha)
 
     record = {
-        "schema_version": 1,
+        # v2 adds wins_b_better / wins_a_better (direction-aware).
+        "schema_version": 2,
         "task": args.task,
         "split": args.split,
         "metric": args.metric,
@@ -352,9 +363,16 @@ def main():
         "ci_hi_95": ci_hi,
         "n_boot": args.n_boot,
         "boot_seed": args.seed,
+        # RAW SIGN COUNTS — b>a and a>b on the raw diff. Correct only for
+        # higher-is-better metrics; kept unchanged so schema-v1 files stay
+        # comparable. Prefer wins_*_better below.
         "wins_b_over_a": wins_b,
         "ties": ties,
         "wins_a_over_b": wins_a,
+        # DIRECTION-AWARE (schema v2) — "better" accounts for metric_direction,
+        # so these are correct for MAE too. Report these.
+        "wins_b_better": wins_b_better,
+        "wins_a_better": wins_a_better,
         "passes_registered_gate": passes_gate,
         **provenance,
     }
