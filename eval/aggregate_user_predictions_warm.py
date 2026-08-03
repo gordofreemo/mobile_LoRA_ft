@@ -64,7 +64,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# NOT Path(__file__).parents[1]: under Condor's should_transfer_files sandbox
+# that resolves to the ephemeral execute dir, so every input path comes out
+# wrong (the same bug data/lamp_user_stats.py hit on its first submit). Read the
+# env var the sub files already set, matching build_dataset.py / paired_compare.py.
+PROJECT_ROOT = Path(
+    os.environ.get("PROJECT_ROOT", "/home/ange00008/projects/mobileFT_distill")
+)
 RESULTS_DIR = PROJECT_ROOT / "results"
 USER_STATS_DIR = PROJECT_ROOT / "data" / "lamp_user_stats"
 

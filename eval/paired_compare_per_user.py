@@ -182,6 +182,18 @@ def accuracy_scorer(task: str) -> Callable[[str, str], float]:
 
 
 def paired_t_test(diffs: list) -> tuple:
+    """Paired t-test of `diffs` against zero. Returns (statistic, pvalue), or
+    (None, None) in the degenerate all-zero case.
+
+    The all-zero guard is load-bearing: without it the `+ 1e-30` offset turns a
+    perfectly null result into a maximally significant one, because
+    ttest_rel([1e-30]*n, [0]*n) has zero variance (t -> ~5.7e16, p -> 0.0). A
+    comparison where every user tied would report p<0.001. `wilcoxon_signed_rank`
+    already returns (None, None) here; the t-test must agree. See the twin fix
+    in eval/paired_compare.py for the full history.
+    """
+    if all(d == 0 for d in diffs):
+        return None, None
     from scipy import stats
     res = stats.ttest_rel([d + 1e-30 for d in diffs], [0.0] * len(diffs))
     return float(res.statistic), float(res.pvalue)
@@ -418,7 +430,8 @@ def main():
         f"[done] n={n} (users) n_records_total={len(shared_ids)} "
         f"mean_a={mean_a:.4f} mean_b={mean_b:.4f} "
         f"mean_diff={mean_diff:+.4f} 95%CI=[{ci_lo:+.4f}, {ci_hi:+.4f}] "
-        f"t_p={p_val:.4f} wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
+        f"t_p={p_val if p_val is None else f'{p_val:.4f}'} "
+        f"wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
         f"wins_b={wins_b} ties={ties} wins_a={wins_a}",
         flush=True,
     )

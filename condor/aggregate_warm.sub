@@ -1,0 +1,49 @@
+# Warm-Start round — consolidate per-user predictions + emit round telemetry.
+#
+# Runs eval/aggregate_user_predictions_warm.py for one task per proc.
+#
+# Why this exists as a sub rather than a local run: the generation tasks
+# (LaMP-4, LaMP-5, LaMP-7) score with ROUGE-1, and `rouge_score` is only
+# installed in the Docker image, not on the submit host. The classification
+# tasks (LaMP-1, LaMP-2-movies, LaMP-2-news) and LaMP-3 (MAE) need no external
+# package and can be run directly with `python3 eval/aggregate_user_predictions_warm.py
+# --task <T>` if preferred.
+#
+# CPU-only, seconds per task. Reads the per-user predictions JSONLs and the
+# reused baseline, writes:
+#   results/<task>_test_warmround_{baseline,coldmatch,warm}.predictions.jsonl
+#   results/<task>_test_warmround_telemetry.{json,jsonl}
+#
+# Refuses to overwrite; pass --overwrite in `arguments` to force.
+#
+# Submit (edit the queue block to the tasks whose evals have completed):
+#   condor_submit condor/aggregate_warm.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/aggregate_user_predictions_warm.py
+arguments             = --task $(task)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/aggregate_warm.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/aggregate_warm.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/aggregate_warm.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 4G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task from (
+  LaMP_7
+)

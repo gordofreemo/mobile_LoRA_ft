@@ -184,6 +184,24 @@ def mae_scorer() -> Callable[[str, str], float]:
 
 
 def paired_t_test(diffs: list) -> tuple:
+    """Paired t-test of `diffs` against zero. Returns (statistic, pvalue), or
+    (None, None) in the degenerate all-zero case.
+
+    The all-zero guard is load-bearing, not defensive. Without it the `+ 1e-30`
+    offset below turns a perfectly null result into a maximally significant one:
+    ttest_rel([1e-30]*n, [0]*n) has zero variance, so t -> ~5.7e16 and p -> 0.0.
+    A comparison where every single user tied would be reported as p<0.001 —
+    the exact opposite of what happened. `wilcoxon_signed_rank` already returns
+    (None, None) here; the t-test must agree.
+
+    First triggered 2026-08-03 by the Warm-Start round's LaMP-1
+    coldmatch-vs-warm comparison (100/100 users tied). Earlier exact-zero
+    results (R8 5w/5l, PT4 1w/1l) had cancelling NON-zero diffs, so variance was
+    positive and the p-value came out correctly at 1.0 — which is why this sat
+    latent from R5 onward.
+    """
+    if all(d == 0 for d in diffs):
+        return None, None
     from scipy import stats
     res = stats.ttest_rel([d + 1e-30 for d in diffs], [0.0] * len(diffs))
     return float(res.statistic), float(res.pvalue)
@@ -386,7 +404,8 @@ def main():
     print(
         f"[done] n={n} mean_a={mean_a:.4f} mean_b={mean_b:.4f} "
         f"mean_diff={mean_diff:+.4f} 95%CI=[{ci_lo:+.4f}, {ci_hi:+.4f}] "
-        f"t_p={p_val:.4f} wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
+        f"t_p={p_val if p_val is None else f'{p_val:.4f}'} "
+        f"wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
         f"gate={'PASS' if passes_gate else 'FAIL'}",
         flush=True,
     )
