@@ -1,0 +1,56 @@
+# Paired comparison -- R9 (LaMP-4 User-LoRA on One-LoRA FT).
+#
+# CPU-only job. Runs eval/paired_compare_per_user.py UNMODIFIED on the
+# consolidated C2-R9 vs C3-R9 prediction files:
+#   pred-a: results/LaMP_4_test_r9_C2.predictions.jsonl
+#   pred-b: results/LaMP_4_test_r9_C3.predictions.jsonl
+#
+# Same script R6/PT2 used (eval/paired_compare_per_user.py, not the flat
+# eval/paired_compare.py R8 used) -- LaMP-4 users have 1-25 test records each,
+# so this scores ROUGE-1 per record then groups by user, pairing at the
+# per-user-mean level (K=100 paired observations).
+#
+# ROUGE-1 is higher-is-better, so paired_compare_per_user.py's
+# wins_b_over_a/wins_a_over_b read the natural way here -- the MAE sign gotcha
+# that R5/R8/PT1 each had to hand-correct does not apply to this round.
+#
+# NO pre-registered gate this round (same convention as R6/R8/PT1/PT2/R10-R14)
+# -- p-values/CI/wins-ties-losses are reported side-by-side with R6's archived
+# mean dR-1 +0.007 (ns, p=0.20) and PT2's -0.0129, not used for pass/fail.
+#
+# Read the result against the other two LaMP-4 rounds, and note that R9 is the
+# 22nd uncorrected test in this program's User-LoRA sequence -- a lone nominal
+# p<0.05 carries no more weight than R10's did.
+#
+# Must run via condor_submit, not directly -- scipy isn't on the login node.
+#
+# Submit (after committing this file, and after the aggregator has run):
+#   condor_submit condor/paired_compare_lamp4_r9.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/paired_compare_per_user.py
+
+arguments = --pred-a /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_r9_C2.predictions.jsonl --pred-b /home/ange00008/projects/mobileFT_distill/results/LaMP_4_test_r9_C3.predictions.jsonl --label-a c2_r9_bm25 --label-b c3_r9_userlora_bm25 --task LaMP_4 --split test --seed 0
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp4_r9.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp4_r9.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/paired_compare_lamp4_r9.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 0
+request_CPUs          = 1
+request_memory        = 2G
+
+max_job_retirement_time = 600
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1
