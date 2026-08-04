@@ -37,7 +37,12 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
+import MLXNN
 import MLXOptimizers
+// h11 Tier 2 only: `MTLCaptureManager.supportsDestination(_:)` is checked
+// before any `GPU.startCapture`, so a missing `MetalCaptureEnabled` Info.plist
+// key degrades to a logged marker instead of an uncatchable mlx-c error exit.
+import Metal
 
 #if canImport(UIKit)
     import UIKit
@@ -58,6 +63,15 @@ private let tokentimeFileLock = NSLock()
 /// but kept for consistency with the other write paths.
 private let granularityFileLock = NSLock()
 
+/// Serializes appends to the thermal-cooldown (h10) JSONL. Genuinely
+/// concurrent here, unlike h7/h8: the 10s passive sampler task and the
+/// soak/probe train callbacks write interleaved for the whole run.
+private let thermalFileLock = NSLock()
+
+/// Serializes appends to the per-op (h11) JSONL. Concurrent here like h10's:
+/// the 30s passive sampler task and the cell train loops write interleaved.
+private let peropFileLock = NSLock()
+
 extension LLMEvaluator {
 
     // MARK: - Launch mode
@@ -73,6 +87,13 @@ extension LLMEvaluator {
         if args.contains("--benchmark-train-tokentime-cold") { return .tokentimeCold }
         if args.contains("--benchmark-train-tokentime") { return .tokentime }
         if args.contains("--benchmark-train-granularity") { return .granularity }
+        // h11: the capture mode is a distinct exact arg, but check it first
+        // anyway so the pair reads unambiguously.
+        if args.contains("--benchmark-train-perop-capture") { return .peropCapture }
+        if args.contains("--benchmark-train-perop") { return .perop }
+        if args.contains("--benchmark-thermal-selflimit") { return .thermalSelfLimit }
+        if args.contains("--benchmark-thermal-cycle") { return .thermalCycle }
+        if args.contains("--benchmark-thermal-cooldown") { return .thermalCooldown }
         if args.contains("--benchmark-train-stress") { return .stress }
         if args.contains("--benchmark-train") { return .full }
         return nil
@@ -105,6 +126,33 @@ extension LLMEvaluator {
         /// run (same `--user`, matched starting charge band) so its drain
         /// rate can be subtracted out. See runIdleBaselineBenchmark.
         case idleBaseline
+        /// Thermal cooldown trajectory (h10): cold-reference probe → fixed
+        /// training soak → fixed 90-minute observation window probed at a
+        /// fixed cadence, measuring how training throughput RECOVERS after a
+        /// burst. See runThermalCooldownBenchmark.
+        case thermalCooldown
+        /// Sustained-cycling arm (h10c): repeat burst/rest cycles and measure
+        /// whether iterations-per-burst decays, i.e. whether the schedule
+        /// extrapolated from a single burst actually holds up over repeats.
+        /// See runThermalCycleBenchmark.
+        case thermalCycle
+        /// Self-limiting arm (h10d): ONE continuous training call, paced with a
+        /// fixed inter-iteration delay that steps through a phase schedule.
+        /// Tests whether holding the device below its throttle point sustains
+        /// more throughput than letting the governor throttle it.
+        /// See runThermalSelfLimitBenchmark.
+        case thermalSelfLimit
+        /// Per-op / per-phase decomposition (h11), Tier 1: the token grid run
+        /// twice (cool pass, then hot pass), each cell measured both FUSED
+        /// (stock trainer, the validity control) and BARRIERED (six phases
+        /// separated by explicit evals). See runPerOpBenchmark.
+        case perop
+        /// Per-op (h11), Tier 2: a single 500-token iteration with
+        /// `GPU.startCapture` brackets around each phase's eval, producing
+        /// three `.gputrace` bundles for hand analysis in Xcode's Metal
+        /// debugger. Separate launch — capture perturbs timing.
+        /// See runPerOpCaptureBenchmark.
+        case peropCapture
     }
 
     /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
@@ -142,6 +190,86 @@ extension LLMEvaluator {
     static var trainBenchmarkBaselineDurationSeconds: Double? {
         guard let v = launchArgValue("--baseline-duration-seconds") else { return nil }
         return Double(v)
+    }
+
+    /// `--soak-minutes <M>` — h10 heat-soak duration. Defaults to Run A's 60
+    /// minutes; Run C of the matrix passes 10.
+    static var trainBenchmarkSoakMinutes: Double {
+        guard let v = launchArgValue("--soak-minutes"), let d = Double(v), d > 0 else {
+            return TrainBenchConstants.thermalDefaultSoakMinutes
+        }
+        return d
+    }
+
+    /// `--burst-minutes <M>` / `--rest-seconds <S>` / `--cycles <N>` — the
+    /// h10c sustained-cycling schedule. Defaults are 10 min / 120 s / 6.
+    static var trainBenchmarkBurstMinutes: Double {
+        guard let v = launchArgValue("--burst-minutes"), let d = Double(v), d > 0 else {
+            return TrainBenchConstants.thermalCycleBurstSeconds / 60.0
+        }
+        return d
+    }
+
+    static var trainBenchmarkRestSeconds: Double {
+        guard let v = launchArgValue("--rest-seconds"), let d = Double(v), d >= 0 else {
+            return TrainBenchConstants.thermalCycleRestSeconds
+        }
+        return d
+    }
+
+    static var trainBenchmarkCycles: Int {
+        guard let v = launchArgValue("--cycles"), let n = Int(v), n > 0 else {
+            return TrainBenchConstants.thermalCycleCount
+        }
+        return n
+    }
+
+    /// `--selflimit-delay <D>` / `--selflimit-minutes <M>` — run the
+    /// self-limiting arm as a SINGLE phase at a fixed delay instead of the
+    /// built-in ascending schedule. This is the cold-start form of the
+    /// experiment: the ascending schedule can only show whether pacing cools
+    /// an already-throttled device, which is a different question from whether
+    /// pacing prevents throttling in the first place. Both args must be given
+    /// together; otherwise the built-in schedule is used.
+    static var trainBenchmarkSelfLimitSinglePhase: (delay: Double, seconds: Double)? {
+        guard let d = launchArgValue("--selflimit-delay"), let delay = Double(d),
+            let m = launchArgValue("--selflimit-minutes"), let mins = Double(m),
+            delay >= 0, mins > 0
+        else { return nil }
+        return (delay: delay, seconds: mins * 60.0)
+    }
+
+    /// `--idle-minutes <M>` — h11 honest-user-input approximate idle time since
+    /// the device's last heavy use, recorded VERBATIM in `run_start` and never
+    /// inferred. Exists because h10 Run B showed the cold-reference probe
+    /// (which measures die temperature) is necessary but NOT sufficient as a
+    /// cross-run comparability check: three sessions' cold refs agreed within
+    /// 2% while the bursts that followed differed 5.4% in total work, the
+    /// difference being how deeply idle the device had been beforehand.
+    /// `nil` when not passed — recorded as null, not as a guess.
+    static var trainBenchmarkIdleMinutes: Double? {
+        guard let v = launchArgValue("--idle-minutes") else { return nil }
+        return Double(v)
+    }
+
+    /// `--capture-tokens <N>` — h11 Tier-2 token count. Defaults to 500 (the
+    /// h7/h10 canonical anchor); the pre-registered fallback if a 500-token
+    /// capture is too large or fails is to retry at 250.
+    static var trainBenchmarkCaptureTokens: Int {
+        guard let v = launchArgValue("--capture-tokens"), let n = Int(v), n > 0 else {
+            return TrainBenchConstants.peropCaptureTokens
+        }
+        return n
+    }
+
+    /// `--probe-interval-s <S>` — h10 probe cadence during the observation
+    /// window. Defaults to Run A's 120s; Run B (the self-heating control)
+    /// passes 240.
+    static var trainBenchmarkProbeIntervalSeconds: Double {
+        guard let v = launchArgValue("--probe-interval-s"), let d = Double(v), d > 0 else {
+            return TrainBenchConstants.thermalDefaultProbeIntervalSeconds
+        }
+        return d
     }
 
     // MARK: - Per-window sample (collected off-actor, written on main)
@@ -205,6 +333,37 @@ extension LLMEvaluator {
         // cell per process launch); the cap-sweep below is untouched.
         if mode == .granularity {
             await runGranularityBenchmark(k: Self.trainBenchmarkGranularityK)
+            return
+        }
+        // Thermal cooldown (h10) is also a separate orchestration path
+        // (cold-ref probe → soak → probed observation window); the cap-sweep
+        // below is untouched.
+        if mode == .thermalCooldown {
+            await runThermalCooldownBenchmark(
+                soakMinutes: Self.trainBenchmarkSoakMinutes,
+                probeIntervalSeconds: Self.trainBenchmarkProbeIntervalSeconds)
+            return
+        }
+        if mode == .thermalSelfLimit {
+            await runThermalSelfLimitBenchmark()
+            return
+        }
+        // Per-op decomposition (h11) — two separate orchestration paths (the
+        // Tier-1 sweep and the Tier-2 Metal capture); everything above and the
+        // cap-sweep below are untouched.
+        if mode == .perop {
+            await runPerOpBenchmark(idleMinutes: Self.trainBenchmarkIdleMinutes)
+            return
+        }
+        if mode == .peropCapture {
+            await runPerOpCaptureBenchmark(targetTokens: Self.trainBenchmarkCaptureTokens)
+            return
+        }
+        if mode == .thermalCycle {
+            await runThermalCycleBenchmark(
+                burstMinutes: Self.trainBenchmarkBurstMinutes,
+                restSeconds: Self.trainBenchmarkRestSeconds,
+                cycles: Self.trainBenchmarkCycles)
             return
         }
 
@@ -1477,6 +1636,1569 @@ extension LLMEvaluator {
             TrainBenchConstants.granularityMetricsFileName)
         granularityFileLock.lock()
         defer { granularityFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash the run
+        }
+    }
+
+    // MARK: - Thermal cooldown trajectory (h10)
+
+    /// Immutable per-run context for the h10 records.
+    struct ThermalRunContext: Sendable {
+        let sessionId: String
+        let soakSeconds: Double
+        let probeIntervalSeconds: Double
+        let modelName: String
+    }
+
+    /// Measure how training throughput RECOVERS after a training burst, and
+    /// whether any burst-and-cool schedule beats running continuously.
+    ///
+    /// Sequence, one process launch = one run of the 3-run matrix:
+    ///   1. cold-reference probe (`cold_ref`) — the session's own 100%-recovered
+    ///      baseline, taken before any soak. Load-bearing: it is also the only
+    ///      cross-run comparability check, since ambient temperature is
+    ///      deliberately not recorded.
+    ///   2. heat soak (`soak`) — continuous training for `soakMinutes` at
+    ///      `thermalSoakTokens`, per-iteration records. Doubles as the HOT
+    ///      measurement: its steady state vs. the cold reference IS the
+    ///      in-session cold/hot ratio the duty-cycle arithmetic needs.
+    ///   3. observation window (`probe`) — a fixed 90 minutes, probed every
+    ///      `probeIntervalSeconds`, NO early stop.
+    /// A 10s passive sampler (`sample`) runs across all three.
+    ///
+    /// See experiments/2026-07-28-ondevice-thermal-cooldown-h10-plan.md.
+    func runThermalCooldownBenchmark(soakMinutes: Double, probeIntervalSeconds: Double) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        let soakSeconds = soakMinutes * 60.0
+        tlog(
+            "thermal start session=\(sessionId) soak=\(soakMinutes)min "
+                + "probe_interval=\(probeIntervalSeconds)s "
+                + "build=\(TrainBenchConstants.thermalAppBuild)")
+        benchLogLine(
+            "thermal start session=\(sessionId) soak=\(soakMinutes)min "
+                + "probe_interval=\(probeIntervalSeconds)s")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("thermal: model load failed: \(error)")
+            benchLogLine("thermal model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("thermal: model loaded")
+
+        let ctx = ThermalRunContext(
+            sessionId: sessionId, soakSeconds: soakSeconds,
+            probeIntervalSeconds: probeIntervalSeconds,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name)
+
+        let runStart = Date.timeIntervalSinceReferenceDate
+        let batteryStart = Self.batterySnapshot()
+        Self.appendThermalMarker(
+            ctx, recordType: "run_start",
+            extra: [
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+
+        // Passive 10s sampler, independent of the probe cadence. Runs for the
+        // whole session (cold ref + soak + observation) and is cancelled on
+        // every exit path.
+        let sampler = Task { [ctx] in
+            var previousCPUTicks = Self.cpuTicks()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(TrainBenchConstants.thermalSampleSeconds))
+                if Task.isCancelled { break }
+                let snap = Self.batterySnapshot()
+                let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+                previousCPUTicks = newTicks
+                Self.appendThermalSample(
+                    ctx, elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                    level: snap.level, charging: snap.charging,
+                    thermal: Self.thermalString(),
+                    lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                    cpuUtilPct: cpuPct)
+            }
+        }
+        defer { sampler.cancel() }
+
+        // 1. Cold reference.
+        tlog("thermal: cold-reference probe")
+        await runThermalProbe(
+            container: container, ctx: ctx, recordType: "cold_ref", probeIndex: -1,
+            cooldownElapsed: -1.0, runStart: runStart)
+
+        // 2. Heat soak.
+        tlog("thermal: soak starting (\(Int(soakMinutes))min @\(TrainBenchConstants.thermalSoakTokens) tok)")
+        benchLogLine("thermal soak starting (\(Int(soakMinutes))min)")
+        await runThermalSoak(container: container, ctx: ctx, runStart: runStart)
+        let soakEnd = Date.timeIntervalSinceReferenceDate
+        Self.appendThermalMarker(
+            ctx, recordType: "soak_end",
+            extra: [
+                "elapsed_s": soakEnd - runStart,
+                "thermal_state": Self.thermalString(),
+                "battery_level": Self.batterySnapshot().level,
+            ])
+        tlog("thermal: soak complete after \(Int(soakEnd - runStart))s")
+
+        // 3. Observation window — fixed duration, no early stop. The probe
+        // itself takes real time, so sleep the REMAINDER of each interval
+        // rather than the full interval; that keeps the cadence (and hence
+        // the probe duty cycle, the thing Run B controls for) honest.
+        var probeIndex = 0
+        while true {
+            let cooldownElapsed = Date.timeIntervalSinceReferenceDate - soakEnd
+            if cooldownElapsed >= TrainBenchConstants.thermalObservationSeconds { break }
+            let probeStart = Date.timeIntervalSinceReferenceDate
+            await runThermalProbe(
+                container: container, ctx: ctx, recordType: "probe", probeIndex: probeIndex,
+                cooldownElapsed: cooldownElapsed, runStart: runStart)
+            probeIndex += 1
+            let probeDuration = Date.timeIntervalSinceReferenceDate - probeStart
+            let remaining = probeIntervalSeconds - probeDuration
+            if remaining > 0 {
+                try? await Task.sleep(for: .seconds(remaining))
+            }
+        }
+
+        sampler.cancel()
+        let elapsed = Date.timeIntervalSinceReferenceDate - runStart
+        let batteryEnd = Self.batterySnapshot()
+        Self.appendThermalMarker(
+            ctx, recordType: "run_end",
+            extra: [
+                "elapsed_s": elapsed,
+                "probe_count": probeIndex,
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+        tlog("thermal complete session=\(sessionId) elapsed=\(Int(elapsed))s probes=\(probeIndex)")
+        benchLogLine("thermal complete session=\(sessionId) probes=\(probeIndex)")
+        finishTrainBenchmark()
+    }
+
+    /// Continuous training at `thermalSoakTokens` until `soakSeconds` of wall
+    /// clock elapses (the iteration count is only a runaway backstop). Every
+    /// iteration is logged, so the soak doubles as the HOT-regime measurement
+    /// and its own heat-up curve.
+    private func runThermalSoak(
+        container: ModelContainer, ctx: ThermalRunContext, runStart: Double,
+        durationSeconds: Double? = nil, recordType: String = "soak", cycleIndex: Int = -1
+    ) async {
+        let burstSeconds = durationSeconds ?? ctx.soakSeconds
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyThermalLoRA(to: c.model)
+                let data = [
+                    Self.syntheticExample(
+                        targetTokens: TrainBenchConstants.thermalSoakTokens,
+                        tokenizer: c.tokenizer)
+                ]
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: TrainBenchConstants.thermalSoakMaxIterations,
+                    stepsPerReport: TrainBenchConstants.thermalStepsPerReport,
+                    stepsPerEval: TrainBenchConstants.thermalSoakMaxIterations + 1,
+                    validationBatches: 0,
+                    saveEvery: TrainBenchConstants.thermalSoakMaxIterations + 1,
+                    adapterURL: nil)
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+
+                let soakStart = Date.timeIntervalSinceReferenceDate
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: c.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: c.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train(let iteration, _, let ips, let tps):
+                        Self.appendThermalTrainRecord(
+                            ctx, recordType: recordType, probeIndex: cycleIndex,
+                            iterIndex: iteration,
+                            secondsPerIter: 1.0 / ips, tokPerSec: tps,
+                            targetTokens: TrainBenchConstants.thermalSoakTokens,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            cooldownElapsed: -1.0)
+                        if Date.timeIntervalSinceReferenceDate - soakStart >= burstSeconds {
+                            return .stop
+                        }
+                    case .validation, .save:
+                        break
+                    }
+                    return .more
+                }
+            }
+        } catch {
+            tlog("thermal soak error: \(error)")
+            benchLogLine("thermal soak error: \(error)")
+        }
+    }
+
+    /// Self-limiting arm (h10d). ONE continuous `LoRATrain.train` call, paced
+    /// by sleeping a fixed delay inside the progress callback. The delay steps
+    /// through `thermalSelfLimitPhases` on wall clock, so the training loop
+    /// never stops and this arm carries none of h10c's restart/boost confound.
+    ///
+    /// The sleep is taken inside the callback deliberately: `LoraTrain.swift`
+    /// computes `iterationsPerSecond` before invoking the callback and resets
+    /// its timing origin after the callback returns, so the imposed delay is
+    /// excluded from the reported rate. Every record therefore carries the
+    /// device's true compute time per iteration (`seconds_per_iter`) alongside
+    /// the delay that was in force (`delay_s`), and the effective throughput
+    /// is `1 / (seconds_per_iter + delay_s)`.
+    func runThermalSelfLimitBenchmark() async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        // Single-phase (cold-start) form if both launch args are present,
+        // otherwise the built-in ascending schedule.
+        let phases: [(delay: Double, seconds: Double)] =
+            Self.trainBenchmarkSelfLimitSinglePhase.map { [$0] }
+            ?? TrainBenchConstants.thermalSelfLimitPhases
+        let total = phases.reduce(0.0) { $0 + $1.seconds }
+        let sessionId = UUID().uuidString
+        tlog(
+            "thermal-selflimit start session=\(sessionId) phases=\(phases.count) "
+                + "total=\(Int(total))s build=\(TrainBenchConstants.thermalSelfLimitAppBuild)")
+        benchLogLine(
+            "thermal-selflimit start session=\(sessionId) total=\(Int(total))s")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("thermal-selflimit: model load failed: \(error)")
+            benchLogLine("thermal-selflimit model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("thermal-selflimit: model loaded")
+
+        let ctx = ThermalRunContext(
+            sessionId: sessionId, soakSeconds: total, probeIntervalSeconds: 0,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name)
+
+        let runStart = Date.timeIntervalSinceReferenceDate
+        let batteryStart = Self.batterySnapshot()
+        Self.appendSelfLimitMarker(
+            ctx, recordType: "selflimit_run_start",
+            extra: [
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "phase_delays_s": phases.map { $0.delay },
+                "phase_durations_s": phases.map { $0.seconds },
+                "total_planned_s": total,
+            ])
+
+        let sampler = Task { [ctx] in
+            var previousCPUTicks = Self.cpuTicks()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(TrainBenchConstants.thermalSampleSeconds))
+                if Task.isCancelled { break }
+                let snap = Self.batterySnapshot()
+                let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+                previousCPUTicks = newTicks
+                Self.appendSelfLimitSample(
+                    ctx, elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                    level: snap.level, charging: snap.charging,
+                    thermal: Self.thermalString(),
+                    lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                    cpuUtilPct: cpuPct)
+            }
+        }
+        defer { sampler.cancel() }
+
+        // Cold reference, unpaced — the in-session baseline for "fast".
+        tlog("thermal-selflimit: cold-reference probe")
+        await runSelfLimitColdRef(container: container, ctx: ctx, runStart: runStart)
+
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyThermalLoRA(to: c.model)
+                let data = [
+                    Self.syntheticExample(
+                        targetTokens: TrainBenchConstants.thermalSoakTokens,
+                        tokenizer: c.tokenizer)
+                ]
+                let maxIters = TrainBenchConstants.thermalSelfLimitMaxIterations
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: maxIters,
+                    stepsPerReport: TrainBenchConstants.thermalSelfLimitStepsPerReport,
+                    stepsPerEval: maxIters + 1,
+                    validationBatches: 0,
+                    saveEvery: maxIters + 1,
+                    adapterURL: nil)
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+
+                let trainStart = Date.timeIntervalSinceReferenceDate
+                var phaseIndex = 0
+                var phaseEnds: [Double] = []
+                var acc = 0.0
+                for p in phases {
+                    acc += p.seconds
+                    phaseEnds.append(acc)
+                }
+
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: c.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: c.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train(let iteration, _, let ips, let tps):
+                        let sinceTrain = Date.timeIntervalSinceReferenceDate - trainStart
+                        // Advance the phase on wall clock, logging each boundary.
+                        while phaseIndex < phaseEnds.count - 1,
+                            sinceTrain >= phaseEnds[phaseIndex]
+                        {
+                            phaseIndex += 1
+                            Self.appendSelfLimitMarker(
+                                ctx, recordType: "phase_start",
+                                extra: [
+                                    "phase_index": phaseIndex,
+                                    "delay_s": phases[phaseIndex].delay,
+                                    "elapsed_s": Date.timeIntervalSinceReferenceDate - runStart,
+                                    "thermal_state": Self.thermalString(),
+                                ])
+                        }
+                        let delay = phases[phaseIndex].delay
+                        Self.appendSelfLimitTrainRecord(
+                            ctx, phaseIndex: phaseIndex, delaySeconds: delay,
+                            iterIndex: iteration, secondsPerIter: 1.0 / ips, tokPerSec: tps,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            phaseElapsed: sinceTrain
+                                - (phaseIndex == 0 ? 0.0 : phaseEnds[phaseIndex - 1]))
+                        if sinceTrain >= acc { return .stop }
+                        // Pace. Synchronous on purpose: this blocks the model
+                        // actor's thread (not the main actor, so the sampler
+                        // keeps running) and falls outside LoraTrain's timing
+                        // window, so it does not corrupt seconds_per_iter.
+                        if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+                    case .validation, .save:
+                        break
+                    }
+                    return .more
+                }
+            }
+        } catch {
+            tlog("thermal-selflimit error: \(error)")
+            benchLogLine("thermal-selflimit error: \(error)")
+        }
+
+        sampler.cancel()
+        let elapsed = Date.timeIntervalSinceReferenceDate - runStart
+        let batteryEnd = Self.batterySnapshot()
+        Self.appendSelfLimitMarker(
+            ctx, recordType: "selflimit_run_end",
+            extra: [
+                "elapsed_s": elapsed,
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+        tlog("thermal-selflimit complete session=\(sessionId) elapsed=\(Int(elapsed))s")
+        benchLogLine("thermal-selflimit complete session=\(sessionId)")
+        finishTrainBenchmark()
+    }
+
+    /// Unpaced 2-iteration cold reference, written to the self-limit JSONL.
+    private func runSelfLimitColdRef(
+        container: ModelContainer, ctx: ThermalRunContext, runStart: Double
+    ) async {
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyThermalLoRA(to: c.model)
+                let data = [
+                    Self.syntheticExample(
+                        targetTokens: TrainBenchConstants.thermalProbeTokens,
+                        tokenizer: c.tokenizer)
+                ]
+                let iters = TrainBenchConstants.thermalProbeIterations
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize, iterations: iters,
+                    stepsPerReport: 1, stepsPerEval: iters + 1, validationBatches: 0,
+                    saveEvery: iters + 1, adapterURL: nil)
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: c.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: c.tokenizer, parameters: params
+                ) { progress in
+                    if case .train(let iteration, _, let ips, let tps) = progress {
+                        Self.appendSelfLimitTrainRecord(
+                            ctx, phaseIndex: -1, delaySeconds: 0.0, iterIndex: iteration,
+                            secondsPerIter: 1.0 / ips, tokPerSec: tps,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            phaseElapsed: -1.0, recordType: "cold_ref")
+                    }
+                    return .more
+                }
+            }
+        } catch {
+            tlog("thermal-selflimit cold-ref error: \(error)")
+        }
+    }
+
+    // MARK: - Self-limit (h10d) record builders
+
+    private nonisolated static func selfLimitBaseRecord(
+        _ c: ThermalRunContext, recordType: String
+    ) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "total_planned_s": c.soakSeconds,
+            "probe_tokens": TrainBenchConstants.thermalProbeTokens,
+            "train_tokens": TrainBenchConstants.thermalSoakTokens,
+            "model": c.modelName,
+            "batch_size": TrainBenchConstants.trainBatchSize,
+            "lora_rank": TrainBenchConstants.loraRank,
+            "lora_keys": TrainBenchConstants.loraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.thermalLoraLayers,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
+            "optimizer": "adamw",
+            "learning_rate": TrainBenchConstants.e2eLearningRate,
+            "weight_decay": TrainBenchConstants.e2eWeightDecay,
+            "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
+            "app_build": TrainBenchConstants.thermalSelfLimitAppBuild,
+            "bench_schema_version": TrainBenchConstants.thermalSchemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": c.sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    private nonisolated static func appendSelfLimitTrainRecord(
+        _ c: ThermalRunContext, phaseIndex: Int, delaySeconds: Double, iterIndex: Int,
+        secondsPerIter: Double, tokPerSec: Double, elapsed: Double, phaseElapsed: Double,
+        recordType: String = "selflimit_train"
+    ) {
+        var r = selfLimitBaseRecord(c, recordType: recordType)
+        r["phase_index"] = phaseIndex
+        r["delay_s"] = delaySeconds
+        r["iter_index"] = iterIndex
+        r["seconds_per_iter"] = secondsPerIter
+        r["tok_per_sec"] = tokPerSec
+        r["elapsed_s"] = elapsed
+        r["phase_elapsed_s"] = phaseElapsed
+        // Device compute + imposed pacing. This is the quantity the whole arm
+        // exists to compare against continuous training's ~9.98 s/iter.
+        r["effective_seconds_per_iter"] = secondsPerIter + delaySeconds
+        r["peak_mem_bytes"] = Memory.snapshot().peakMemory
+        r["thermal_state"] = thermalString()
+        r["low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
+        emitSelfLimit(r)
+    }
+
+    private nonisolated static func appendSelfLimitSample(
+        _ c: ThermalRunContext, elapsed: Double, level: Double, charging: Bool,
+        thermal: String, lpm: Bool, cpuUtilPct: Double?
+    ) {
+        var r = selfLimitBaseRecord(c, recordType: "sample")
+        r["elapsed_s"] = elapsed
+        r["battery_level"] = level
+        r["charging"] = charging
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
+        emitSelfLimit(r)
+    }
+
+    private nonisolated static func appendSelfLimitMarker(
+        _ c: ThermalRunContext, recordType: String, extra: [String: Any]
+    ) {
+        var r = selfLimitBaseRecord(c, recordType: recordType)
+        for (k, v) in extra { r[k] = v }
+        emitSelfLimit(r)
+    }
+
+    private nonisolated static func emitSelfLimit(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.thermalSelfLimitMetricsFileName)
+        thermalFileLock.lock()
+        defer { thermalFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash the run
+        }
+    }
+
+    /// Sustained-cycling arm (h10c). Repeat `cycles` × (train for
+    /// `burstMinutes`, idle for `restSeconds`) and log every training
+    /// iteration tagged with its cycle index, so the aggregator can ask the
+    /// question Runs A/B/C could not: does iterations-per-burst hold up, or
+    /// decay as chassis heat accumulates across cycles?
+    ///
+    /// Runs A/B/C measured ONE burst and the recovery after it; the ~1.25×
+    /// figure for a 10-on/2-off schedule was extrapolated from that. Run B
+    /// showed burst output depends on retained chassis heat, which a
+    /// 2-minute gap does not clear even though throughput recovers — so that
+    /// extrapolation is an upper bound and this arm tests it directly.
+    ///
+    /// A cold-reference probe is taken first (same as the other arms) so the
+    /// run is comparable to A/B/C, and a short probe is taken during each
+    /// rest gap to record what throughput has recovered to before the next
+    /// burst starts.
+    func runThermalCycleBenchmark(
+        burstMinutes: Double, restSeconds: Double, cycles: Int
+    ) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        let burstSeconds = burstMinutes * 60.0
+        tlog(
+            "thermal-cycle start session=\(sessionId) burst=\(burstMinutes)min "
+                + "rest=\(restSeconds)s cycles=\(cycles) "
+                + "build=\(TrainBenchConstants.thermalAppBuild)")
+        benchLogLine(
+            "thermal-cycle start session=\(sessionId) burst=\(burstMinutes)min "
+                + "rest=\(restSeconds)s cycles=\(cycles)")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("thermal-cycle: model load failed: \(error)")
+            benchLogLine("thermal-cycle model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("thermal-cycle: model loaded")
+
+        // soakSeconds carries the BURST length so every record self-describes
+        // the schedule; cycle-specific fields are added by the markers below.
+        let ctx = ThermalRunContext(
+            sessionId: sessionId, soakSeconds: burstSeconds,
+            probeIntervalSeconds: restSeconds,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name)
+
+        let runStart = Date.timeIntervalSinceReferenceDate
+        let batteryStart = Self.batterySnapshot()
+        Self.appendThermalMarker(
+            ctx, recordType: "cycle_run_start",
+            extra: [
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "burst_seconds": burstSeconds,
+                "rest_seconds": restSeconds,
+                "cycles_planned": cycles,
+            ])
+
+        let sampler = Task { [ctx] in
+            var previousCPUTicks = Self.cpuTicks()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(TrainBenchConstants.thermalSampleSeconds))
+                if Task.isCancelled { break }
+                let snap = Self.batterySnapshot()
+                let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+                previousCPUTicks = newTicks
+                Self.appendThermalSample(
+                    ctx, elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                    level: snap.level, charging: snap.charging,
+                    thermal: Self.thermalString(),
+                    lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                    cpuUtilPct: cpuPct)
+            }
+        }
+        defer { sampler.cancel() }
+
+        tlog("thermal-cycle: cold-reference probe")
+        await runThermalProbe(
+            container: container, ctx: ctx, recordType: "cold_ref", probeIndex: -1,
+            cooldownElapsed: -1.0, runStart: runStart)
+
+        for cycle in 0..<cycles {
+            let burstStart = Date.timeIntervalSinceReferenceDate
+            tlog("thermal-cycle: burst \(cycle + 1)/\(cycles) starting")
+            await runThermalSoak(
+                container: container, ctx: ctx, runStart: runStart,
+                durationSeconds: burstSeconds, recordType: "cycle_burst",
+                cycleIndex: cycle)
+            let burstEnd = Date.timeIntervalSinceReferenceDate
+            Self.appendThermalMarker(
+                ctx, recordType: "cycle_burst_end",
+                extra: [
+                    "cycle_index": cycle,
+                    "elapsed_s": burstEnd - runStart,
+                    "burst_duration_s": burstEnd - burstStart,
+                    "thermal_state": Self.thermalString(),
+                    "battery_level": Self.batterySnapshot().level,
+                ])
+            tlog(
+                "thermal-cycle: burst \(cycle + 1) done in "
+                    + "\(Int(burstEnd - burstStart))s, resting \(Int(restSeconds))s")
+
+            guard cycle < cycles - 1 else { break }
+
+            // Rest gap. Probe near its end so we record what throughput has
+            // actually recovered to before the next burst begins — the
+            // quantity that decides whether the schedule holds up. The probe
+            // is ~13s of training, so it is taken with enough of the gap
+            // remaining that it does not overrun into the next burst.
+            let probeLead = min(20.0, restSeconds * 0.25)
+            let sleepBeforeProbe = max(0.0, restSeconds - probeLead)
+            if sleepBeforeProbe > 0 {
+                try? await Task.sleep(for: .seconds(sleepBeforeProbe))
+            }
+            await runThermalProbe(
+                container: container, ctx: ctx, recordType: "cycle_rest_probe",
+                probeIndex: cycle,
+                cooldownElapsed: Date.timeIntervalSinceReferenceDate - burstEnd,
+                runStart: runStart)
+        }
+
+        sampler.cancel()
+        let elapsed = Date.timeIntervalSinceReferenceDate - runStart
+        let batteryEnd = Self.batterySnapshot()
+        Self.appendThermalMarker(
+            ctx, recordType: "cycle_run_end",
+            extra: [
+                "elapsed_s": elapsed,
+                "cycles_completed": cycles,
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+        tlog("thermal-cycle complete session=\(sessionId) elapsed=\(Int(elapsed))s")
+        benchLogLine("thermal-cycle complete session=\(sessionId)")
+        finishTrainBenchmark()
+    }
+
+    /// One probe: `thermalProbeIterations` iterations at `thermalProbeTokens`.
+    /// EVERY iteration is logged (including index 0) — the discard rule lives
+    /// in the aggregator, per this repo's log-raw-decide-later convention.
+    private func runThermalProbe(
+        container: ModelContainer, ctx: ThermalRunContext, recordType: String,
+        probeIndex: Int, cooldownElapsed: Double, runStart: Double
+    ) async {
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyThermalLoRA(to: c.model)
+                let data = [
+                    Self.syntheticExample(
+                        targetTokens: TrainBenchConstants.thermalProbeTokens,
+                        tokenizer: c.tokenizer)
+                ]
+                let iters = TrainBenchConstants.thermalProbeIterations
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: iters,
+                    stepsPerReport: TrainBenchConstants.thermalStepsPerReport,
+                    stepsPerEval: iters + 1,
+                    validationBatches: 0,
+                    saveEvery: iters + 1,
+                    adapterURL: nil)
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.e2eLearningRate,
+                    weightDecay: TrainBenchConstants.e2eWeightDecay,
+                    biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: c.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: c.tokenizer, parameters: params
+                ) { progress in
+                    switch progress {
+                    case .train(let iteration, _, let ips, let tps):
+                        Self.appendThermalTrainRecord(
+                            ctx, recordType: recordType, probeIndex: probeIndex,
+                            iterIndex: iteration, secondsPerIter: 1.0 / ips, tokPerSec: tps,
+                            targetTokens: TrainBenchConstants.thermalProbeTokens,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            cooldownElapsed: cooldownElapsed)
+                    case .validation, .save:
+                        break
+                    }
+                    return .more
+                }
+            }
+        } catch {
+            tlog("thermal probe \(probeIndex) error: \(error)")
+            benchLogLine("thermal probe \(probeIndex) error: \(error)")
+        }
+    }
+
+    /// Fresh LoRA + per-block GC on the model. h10 uses `thermalLoraLayers`
+    /// (36 — the FIXED count, unlike h1-h7's buggy 28); see that constant's
+    /// doc comment for why that is safe for this round's headline.
+    private nonisolated static func applyThermalLoRA(to model: LanguageModel) throws {
+        let config = LoRAConfiguration(
+            numLayers: TrainBenchConstants.thermalLoraLayers,
+            loraParameters: .init(
+                rank: TrainBenchConstants.loraRank,
+                scale: TrainBenchConstants.loraScale,
+                keys: TrainBenchConstants.loraKeys))
+        _ = try LoRAContainer.from(model: model, configuration: config)
+        if TrainBenchConstants.gradientCheckpointing {
+            (model as? SmolLM3Model)?.checkpointGroupSize = 1
+        }
+    }
+
+    // MARK: - Thermal (h10) record builders
+
+    private nonisolated static func thermalBaseRecord(
+        _ c: ThermalRunContext, recordType: String
+    ) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "soak_seconds": c.soakSeconds,
+            "probe_interval_s": c.probeIntervalSeconds,
+            "probe_tokens": TrainBenchConstants.thermalProbeTokens,
+            "probe_iterations": TrainBenchConstants.thermalProbeIterations,
+            "soak_tokens": TrainBenchConstants.thermalSoakTokens,
+            "observation_seconds": TrainBenchConstants.thermalObservationSeconds,
+            "model": c.modelName,
+            "batch_size": TrainBenchConstants.trainBatchSize,
+            "lora_rank": TrainBenchConstants.loraRank,
+            "lora_keys": TrainBenchConstants.loraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.thermalLoraLayers,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
+            "optimizer": "adamw",
+            "learning_rate": TrainBenchConstants.e2eLearningRate,
+            "weight_decay": TrainBenchConstants.e2eWeightDecay,
+            "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
+            "app_build": TrainBenchConstants.thermalAppBuild,
+            "bench_schema_version": TrainBenchConstants.thermalSchemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": c.sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    /// One training iteration, from either the soak or a probe. `probe_index`
+    /// is -1 for soak/cold-ref rows; `cooldown_elapsed_s` is -1 for anything
+    /// before the observation window starts.
+    private nonisolated static func appendThermalTrainRecord(
+        _ c: ThermalRunContext, recordType: String, probeIndex: Int, iterIndex: Int,
+        secondsPerIter: Double, tokPerSec: Double, targetTokens: Int, elapsed: Double,
+        cooldownElapsed: Double
+    ) {
+        var r = thermalBaseRecord(c, recordType: recordType)
+        r["probe_index"] = probeIndex
+        r["iter_index"] = iterIndex
+        r["seconds_per_iter"] = secondsPerIter
+        r["tok_per_sec"] = tokPerSec
+        r["target_tokens"] = targetTokens
+        r["elapsed_s"] = elapsed
+        r["cooldown_elapsed_s"] = cooldownElapsed
+        r["peak_mem_bytes"] = Memory.snapshot().peakMemory
+        r["thermal_state"] = thermalString()
+        r["low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
+        emitThermal(r)
+    }
+
+    private nonisolated static func appendThermalSample(
+        _ c: ThermalRunContext, elapsed: Double, level: Double, charging: Bool,
+        thermal: String, lpm: Bool, cpuUtilPct: Double?
+    ) {
+        var r = thermalBaseRecord(c, recordType: "sample")
+        r["elapsed_s"] = elapsed
+        r["battery_level"] = level
+        r["charging"] = charging
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
+        emitThermal(r)
+    }
+
+    private nonisolated static func appendThermalMarker(
+        _ c: ThermalRunContext, recordType: String, extra: [String: Any]
+    ) {
+        var r = thermalBaseRecord(c, recordType: recordType)
+        for (k, v) in extra { r[k] = v }
+        emitThermal(r)
+    }
+
+    /// Append one h10 JSONL line (see `thermalFileLock` — genuinely concurrent
+    /// writers here, unlike h7/h8).
+    private nonisolated static func emitThermal(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.thermalMetricsFileName)
+        thermalFileLock.lock()
+        defer { thermalFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash the run
+        }
+    }
+
+    // MARK: - Per-op / per-phase decomposition (h11)
+
+    /// Immutable per-run context for the h11 records.
+    struct PerOpRunContext: Sendable {
+        let sessionId: String
+        let modelName: String
+        /// Honest user input via `--idle-minutes`, recorded verbatim; `nil`
+        /// when the arg was omitted (recorded as null, never inferred).
+        let idleMinutes: Double?
+    }
+
+    /// The six per-phase times of ONE barriered training iteration, seconds.
+    struct PerOpPhaseTimes: Sendable {
+        let dataPrep: Double
+        let graphBuild: Double
+        let forward: Double
+        let backward: Double
+        let optimizer: Double
+        let readback: Double
+
+        var total: Double {
+            dataPrep + graphBuild + forward + backward + optimizer + readback
+        }
+    }
+
+    /// Tier 1: where does the time inside one LoRA training iteration go, as a
+    /// function of token count and heat?
+    ///
+    /// Session shape, one launch:
+    ///   1. cold-reference probe (`cold_ref`, 2 iterations @500 tok — h10's
+    ///      exact design) for cross-run comparability.
+    ///   2. pass `cool` — the token grid ascending, no cooldown gates.
+    ///   3. pass `hot` — the identical grid re-run immediately, on the now-hot
+    ///      device. Matched cell order, so both passes share a drift profile.
+    /// A 30s passive sampler runs throughout.
+    ///
+    /// Each cell measures the same recipe twice: FUSED (stock
+    /// `LoRATrain.train`, h7's measurement mode — the validity control) and
+    /// BARRIERED (this file's replica of the trainer's internals with an
+    /// `eval` between each phase). Σ(phases)/fused is the decomposition
+    /// overhead, reported per cell by the aggregator.
+    ///
+    /// See experiments/2026-08-04-ondevice-perop-h11-plan.md.
+    func runPerOpBenchmark(idleMinutes: Double?) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        tlog(
+            "perop start session=\(sessionId) build=\(TrainBenchConstants.peropAppBuild) "
+                + "idle_minutes=\(idleMinutes.map { String($0) } ?? "unset")")
+        benchLogLine("perop start session=\(sessionId)")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("perop: model load failed: \(error)")
+            benchLogLine("perop model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        tlog("perop: model loaded")
+
+        let ctx = PerOpRunContext(
+            sessionId: sessionId,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name,
+            idleMinutes: idleMinutes)
+
+        let runStart = Date.timeIntervalSinceReferenceDate
+        let batteryStart = Self.batterySnapshot()
+        Self.appendPerOpMarker(
+            ctx, recordType: "run_start",
+            extra: [
+                "elapsed_s": 0.0,
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+
+        // Passive 30s sampler (h5/h9 cadence — h10's 10s existed to resolve
+        // `thermalState` transitions, which is not a deliverable here).
+        let sampler = Task { [ctx] in
+            var previousCPUTicks = Self.cpuTicks()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(TrainBenchConstants.peropSampleSeconds))
+                if Task.isCancelled { break }
+                let snap = Self.batterySnapshot()
+                let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+                previousCPUTicks = newTicks
+                Self.appendPerOpSample(
+                    ctx, elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                    level: snap.level, charging: snap.charging,
+                    thermal: Self.thermalString(),
+                    lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                    cpuUtilPct: cpuPct)
+            }
+        }
+        defer { sampler.cancel() }
+
+        // 1. Cold reference (h10 design, 2 iterations @500 tok).
+        tlog("perop: cold-reference probe")
+        await runPerOpColdRef(container: container, ctx: ctx, runStart: runStart)
+
+        // 2+3. Both passes, ascending tokens, no cooldown gate anywhere.
+        for pass in TrainBenchConstants.peropPasses {
+            for tokens in TrainBenchConstants.peropTokenCounts {
+                await runPerOpCell(
+                    container: container, ctx: ctx, targetTokens: tokens, pass: pass,
+                    runStart: runStart)
+            }
+        }
+
+        sampler.cancel()
+        let elapsed = Date.timeIntervalSinceReferenceDate - runStart
+        let batteryEnd = Self.batterySnapshot()
+        Self.appendPerOpMarker(
+            ctx, recordType: "run_end",
+            extra: [
+                "elapsed_s": elapsed,
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "thermal_state": Self.thermalString(),
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+        tlog("perop complete session=\(sessionId) elapsed=\(Int(elapsed))s")
+        benchLogLine("perop complete session=\(sessionId)")
+        finishTrainBenchmark()
+    }
+
+    /// Cold-reference probe: `peropColdRefIterations` fused iterations at
+    /// `peropColdRefTokens`, through the stock trainer. Both iterations are
+    /// logged (log-raw-decide-later); index 0 carries the compile/first-alloc
+    /// cost and is flagged `warmup: true` for the aggregator to drop.
+    private func runPerOpColdRef(
+        container: ModelContainer, ctx: PerOpRunContext, runStart: Double
+    ) async {
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyPerOpLoRA(to: c.model)
+                let data = [
+                    Self.syntheticExample(
+                        targetTokens: TrainBenchConstants.peropColdRefTokens,
+                        tokenizer: c.tokenizer)
+                ]
+                let iters = TrainBenchConstants.peropColdRefIterations
+                let params = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: iters, stepsPerReport: 1, stepsPerEval: iters + 1,
+                    validationBatches: 0, saveEvery: iters + 1, adapterURL: nil)
+                let optimizer = Self.perOpOptimizer()
+
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: c.model, train: data, validate: data,
+                    optimizer: optimizer, tokenizer: c.tokenizer, parameters: params
+                ) { progress in
+                    if case .train(let iteration, let loss, let ips, let tps) = progress {
+                        Self.appendPerOpIterRecord(
+                            ctx, recordType: "cold_ref", mode: "fused", pass: "cold_ref",
+                            targetTokens: TrainBenchConstants.peropColdRefTokens,
+                            iterIndex: iteration, warmup: iteration < 1,
+                            iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
+                            phases: nil,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart)
+                    }
+                    return .more
+                }
+            }
+        } catch {
+            tlog("perop cold_ref error: \(error)")
+            benchLogLine("perop cold_ref error: \(error)")
+        }
+    }
+
+    /// One cell = one (token count, pass). Fresh LoRA + fresh optimizer, then
+    /// the fused sub-block, then the barriered sub-block, back-to-back (NOT
+    /// interleaved step-by-step — alternating would thrash lazy-eval/cache
+    /// state and blur each sub-block's warmup).
+    ///
+    /// The adapter's freshly-initialised parameters are snapshotted before the
+    /// fused sub-block and restored before the barriered one, so both
+    /// sub-blocks train the SAME weights on the SAME data from the SAME
+    /// starting point. That makes the two modes' loss sequences directly
+    /// comparable, which is the on-device check for plan risk #1 (that
+    /// splitting the iteration into `eval(lvalue)` then `eval(grad)` still
+    /// computes what the stock fused path computes). Restoring is exact
+    /// because MLX optimizers update functionally — `Optimizer.update` builds
+    /// new parameter arrays and hands them to `Module.update`, never mutating
+    /// the snapshot's arrays in place.
+    private func runPerOpCell(
+        container: ModelContainer, ctx: PerOpRunContext, targetTokens: Int, pass: String,
+        runStart: Double
+    ) async {
+        let cellStart = Date.timeIntervalSinceReferenceDate
+        let battery = Self.batterySnapshot()
+        Self.appendPerOpMarker(
+            ctx, recordType: "cell_start",
+            extra: [
+                "target_tokens": targetTokens,
+                "pass": pass,
+                "elapsed_s": cellStart - runStart,
+                "thermal_state": Self.thermalString(),
+                "battery_level": battery.level,
+                "charging": battery.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            ])
+        tlog("perop cell tokens=\(targetTokens) pass=\(pass): starting")
+
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyPerOpLoRA(to: c.model)
+                let model: Module = c.model
+
+                // Snapshot the fresh adapter (see the doc comment above).
+                let initialParameters = model.trainableParameters()
+                eval(initialParameters)
+
+                let example = Self.syntheticExample(
+                    targetTokens: targetTokens, tokenizer: c.tokenizer)
+                let total =
+                    TrainBenchConstants.peropWarmupIterations
+                    + TrainBenchConstants.peropKeptIterations
+                let warmupCount = TrainBenchConstants.peropWarmupIterations
+
+                // --- fused sub-block (validity control) ----------------------
+                // Stock `LoRATrain.train` with stepsPerReport = 1 — h7's exact
+                // measurement mode, so these times are directly comparable to
+                // h7's fits. Iteration 0 also absorbs the trainer's forced
+                // iteration-0 validation pass (LoraTrain.swift:314), which is
+                // why it is the discarded one.
+                let fusedParams = LoRATrain.Parameters(
+                    batchSize: TrainBenchConstants.trainBatchSize,
+                    iterations: total, stepsPerReport: 1, stepsPerEval: total + 1,
+                    validationBatches: 0, saveEvery: total + 1, adapterURL: nil)
+                GPU.resetPeakMemory()
+                try LoRATrain.train(
+                    model: model, train: [example], validate: [example],
+                    optimizer: Self.perOpOptimizer(), tokenizer: c.tokenizer,
+                    parameters: fusedParams
+                ) { progress in
+                    if case .train(let iteration, let loss, let ips, let tps) = progress {
+                        Self.appendPerOpIterRecord(
+                            ctx, recordType: "iter", mode: "fused", pass: pass,
+                            targetTokens: targetTokens, iterIndex: iteration,
+                            warmup: iteration < warmupCount,
+                            iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
+                            phases: nil,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart)
+                    }
+                    return .more
+                }
+
+                // --- barriered sub-block (the decomposition) -----------------
+                model.update(parameters: initialParameters)
+                eval(model)
+
+                let optimizer = Self.perOpOptimizer()
+                let lossValueGrad = valueAndGrad(model: model) {
+                    (m: Module, arrays: [MLXArray]) -> [MLXArray] in
+                    let (ce, ntoks) = LoRATrain.loss(
+                        model: m, inputs: arrays[0], targets: arrays[1], lengths: arrays[2])
+                    return [ce, ntoks]
+                }
+
+                GPU.resetPeakMemory()
+                for iteration in 0 ..< total {
+                    let (phases, loss, ntokens) = Self.perOpBarrieredIteration(
+                        model: model, tokenizer: c.tokenizer, example: example,
+                        lossValueGrad: lossValueGrad, optimizer: optimizer)
+                    Self.appendPerOpIterRecord(
+                        ctx, recordType: "iter", mode: "barriered", pass: pass,
+                        targetTokens: targetTokens, iterIndex: iteration,
+                        warmup: iteration < warmupCount,
+                        iterSeconds: phases.total,
+                        tokPerSec: Double(ntokens) / phases.total, loss: loss,
+                        phases: phases,
+                        elapsed: Date.timeIntervalSinceReferenceDate - runStart)
+                }
+            }
+            tlog("perop cell tokens=\(targetTokens) pass=\(pass): complete")
+            benchLogLine("perop cell tokens=\(targetTokens) pass=\(pass) complete")
+        } catch {
+            tlog("perop cell tokens=\(targetTokens) pass=\(pass) error: \(error)")
+            benchLogLine("perop cell tokens=\(targetTokens) pass=\(pass) error: \(error)")
+        }
+
+        let cellEnd = Date.timeIntervalSinceReferenceDate
+        Self.appendPerOpMarker(
+            ctx, recordType: "cell_end",
+            extra: [
+                "target_tokens": targetTokens,
+                "pass": pass,
+                "elapsed_s": cellEnd - runStart,
+                "cell_seconds": cellEnd - cellStart,
+                "thermal_state": Self.thermalString(),
+                "battery_level": Self.batterySnapshot().level,
+                "peak_mem_bytes": Memory.snapshot().peakMemory,
+            ])
+    }
+
+    /// ONE barriered training iteration: `LoRATrain.train`'s per-iteration body
+    /// (LoraTrain.swift:275-289) re-expressed with an explicit `eval` between
+    /// each phase. Deliberately a REPLICA in the harness, not a fork of
+    /// `LoraTrain.swift` — h4/h7's no-fork principle.
+    ///
+    /// Phase boundaries, and what each one is actually timing:
+    ///  1. `data_prep`  — tokenize + pad + build the batch arrays, i.e. what
+    ///     `LoRABatchIterator.next()` does for a batch of 1. No barrier: the
+    ///     dominant cost here is the tokenizer (synchronous CPU). The array
+    ///     construction itself is lazy, so materializing a `[1, N]` Int32
+    ///     array lands in `forward` — microseconds, noted rather than fixed,
+    ///     since adding a barrier here would change what `data_prep` means.
+    ///  2. `graph_build` — the `lossValueGrad(...)` call. Builds the lazy
+    ///     forward+backward graph on the CPU and returns; no barrier needed
+    ///     because nothing has executed yet.
+    ///  3. `forward`   — `eval(lvalue)`. Runs the forward pass and materializes
+    ///     the loss. With GC on, only block-boundary activations are retained.
+    ///  4. `backward`  — `eval(grad)`. Backward proper PLUS the gradient-
+    ///     checkpoint recompute; indistinguishable at this granularity by
+    ///     construction (GC-on is the only regime — see the constants block).
+    ///  5. `optimizer` — `optimizer.update(model:gradients:)` + `eval(model,
+    ///     optimizer)`. AdamW's elementwise math and moment-state update.
+    ///  6. `readback`  — `.item()` on the loss and the token count. Expected
+    ///     ≈0 since everything is already materialized; timed separately to
+    ///     PROVE that rather than assert it.
+    ///
+    /// NOT sub-divided per transformer block: 36 extra syncs inside
+    /// forward/backward would distort the measurement. Per-block/per-kernel
+    /// resolution is Tier 2's job.
+    private nonisolated static func perOpBarrieredIteration(
+        model: Module, tokenizer: Tokenizer, example: String,
+        lossValueGrad: (Module, [MLXArray]) -> ([MLXArray], ModuleParameters),
+        optimizer: AdamW
+    ) -> (phases: PerOpPhaseTimes, loss: Float, ntokens: Int) {
+        let t0 = Date.timeIntervalSinceReferenceDate
+
+        // 1. data_prep — LoRABatchIterator.next() for batchSize = 1.
+        let toks = tokenizer.encode(text: example)
+        let length = toks.count
+        let batchArray = MLXArray.zeros([1, length], type: Int32.self)
+        batchArray[0, 0 ..< length] = MLXArray(toks)
+        let inputs = batchArray[0..., .stride(to: -1)]
+        let targets = batchArray[0..., 1...]
+        let lengths = MLXArray([length])
+        let t1 = Date.timeIntervalSinceReferenceDate
+
+        // 2. graph_build
+        let (resultArray, grad) = lossValueGrad(model, [inputs, targets, lengths])
+        let lvalue = resultArray[0]
+        let tokenCount = resultArray[1]
+        let t2 = Date.timeIntervalSinceReferenceDate
+
+        // 3. forward
+        eval(lvalue)
+        let t3 = Date.timeIntervalSinceReferenceDate
+
+        // 4. backward. `grad` is a nested ModuleParameters; flattening to the
+        // leaf arrays picks exactly the same set `eval(_:)`'s own collector
+        // would, without relying on overload resolution over `Any`.
+        eval(grad.flattened().map { $0.1 })
+        let t4 = Date.timeIntervalSinceReferenceDate
+
+        // 5. optimizer
+        optimizer.update(model: model, gradients: grad)
+        eval(model, optimizer)
+        let t5 = Date.timeIntervalSinceReferenceDate
+
+        // 6. readback
+        let loss = lvalue.item(Float.self)
+        let ntokens = tokenCount.item(Int.self)
+        let t6 = Date.timeIntervalSinceReferenceDate
+
+        return (
+            PerOpPhaseTimes(
+                dataPrep: t1 - t0, graphBuild: t2 - t1, forward: t3 - t2,
+                backward: t4 - t3, optimizer: t5 - t4, readback: t6 - t5),
+            loss, ntokens
+        )
+    }
+
+    /// Tier 2: kernel-level Metal capture. A SEPARATE launch — capture
+    /// perturbs timing, so nothing but a `capture_run` marker is written to the
+    /// Tier-1 JSONL.
+    ///
+    /// Produces three `.gputrace` bundles (forward / backward / optimizer) from
+    /// ONE iteration at `--capture-tokens` (default 500), after
+    /// `peropCaptureWarmupIterations` discarded iterations so compile caches
+    /// are hot. This mirrors MELT's per-stage kernel split (their
+    /// embed/prefill/decode ⇒ our forward/backward/optimizer). The bundles are
+    /// pulled to the Mac and read by hand in Xcode's Metal debugger — the
+    /// per-kernel table is GUI-only, outside this harness.
+    ///
+    /// Programmatic capture needs `MetalCaptureEnabled` in the app's Info.plist
+    /// (added to LLMEval-Info-Additions.plist). That is checked here up front
+    /// via `MTLCaptureManager.supportsDestination(_:)` rather than assumed: a
+    /// `GPU.startCapture` that MLX cannot start raises through mlx-c's error
+    /// path, which is not catchable from Swift. If capture is unavailable the
+    /// run degrades to a logged, explicit "attempted, blocked" marker — the
+    /// pre-registered fallback ladder (retry at 250 tok, then `xctrace
+    /// --template 'Metal System Trace'` from the Mac) is a manual next step.
+    func runPerOpCaptureBenchmark(targetTokens: Int) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        tlog("perop-capture start session=\(sessionId) tokens=\(targetTokens)")
+        benchLogLine("perop-capture start session=\(sessionId) tokens=\(targetTokens)")
+
+        let supported = MTLCaptureManager.shared().supportsDestination(.gpuTraceDocument)
+        tlog("perop-capture: gpuTraceDocument supported=\(supported)")
+
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("perop-capture: model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+
+        let ctx = PerOpRunContext(
+            sessionId: sessionId,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name,
+            idleMinutes: nil)
+
+        let dir = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.peropCaptureDirName)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let stamp = Int(Date().timeIntervalSince1970)
+        let urls = [
+            "forward": dir.appendingPathComponent("forward_\(stamp).gputrace"),
+            "backward": dir.appendingPathComponent("backward_\(stamp).gputrace"),
+            "optimizer": dir.appendingPathComponent("optimizer_\(stamp).gputrace"),
+        ]
+
+        guard supported else {
+            Self.appendPerOpMarker(
+                ctx, recordType: "capture_run",
+                extra: [
+                    "target_tokens": targetTokens,
+                    "capture_supported": false,
+                    "captured": false,
+                    "note":
+                        "MTLCaptureManager.supportsDestination(.gpuTraceDocument) == false — "
+                        + "MetalCaptureEnabled missing/ineffective under this launch; "
+                        + "fall back to xctrace Metal System Trace",
+                    "thermal_state": Self.thermalString(),
+                ])
+            benchLogLine("perop-capture BLOCKED: gpuTraceDocument unsupported")
+            finishTrainBenchmark()
+            return
+        }
+
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyPerOpLoRA(to: c.model)
+                let model: Module = c.model
+                let example = Self.syntheticExample(
+                    targetTokens: targetTokens, tokenizer: c.tokenizer)
+                let optimizer = Self.perOpOptimizer()
+                let lossValueGrad = valueAndGrad(model: model) {
+                    (m: Module, arrays: [MLXArray]) -> [MLXArray] in
+                    let (ce, ntoks) = LoRATrain.loss(
+                        model: m, inputs: arrays[0], targets: arrays[1], lengths: arrays[2])
+                    return [ce, ntoks]
+                }
+
+                // Discarded warm iterations so the captured one shows
+                // steady-state kernels, not first-run compiles.
+                for _ in 0 ..< TrainBenchConstants.peropCaptureWarmupIterations {
+                    _ = Self.perOpBarrieredIteration(
+                        model: model, tokenizer: c.tokenizer, example: example,
+                        lossValueGrad: lossValueGrad, optimizer: optimizer)
+                }
+
+                // The captured iteration — same six phases, with a capture
+                // bracketing each of the three GPU-bearing ones.
+                let toks = c.tokenizer.encode(text: example)
+                let length = toks.count
+                let batchArray = MLXArray.zeros([1, length], type: Int32.self)
+                batchArray[0, 0 ..< length] = MLXArray(toks)
+                let inputs = batchArray[0..., .stride(to: -1)]
+                let targets = batchArray[0..., 1...]
+                let lengths = MLXArray([length])
+
+                let (resultArray, grad) = lossValueGrad(model, [inputs, targets, lengths])
+                let lvalue = resultArray[0]
+
+                GPU.startCapture(url: urls["forward"]!)
+                eval(lvalue)
+                GPU.stopCapture(url: urls["forward"]!)
+
+                GPU.startCapture(url: urls["backward"]!)
+                eval(grad.flattened().map { $0.1 })
+                GPU.stopCapture(url: urls["backward"]!)
+
+                GPU.startCapture(url: urls["optimizer"]!)
+                optimizer.update(model: model, gradients: grad)
+                eval(model, optimizer)
+                GPU.stopCapture(url: urls["optimizer"]!)
+
+                _ = lvalue.item(Float.self)
+            }
+        } catch {
+            tlog("perop-capture error: \(error)")
+            benchLogLine("perop-capture error: \(error)")
+        }
+
+        // Record what actually landed on disk — a capture that silently
+        // produced nothing is the failure mode the fallback ladder exists for.
+        var extra: [String: Any] = [
+            "target_tokens": targetTokens,
+            "capture_supported": true,
+            "capture_warmup_iterations": TrainBenchConstants.peropCaptureWarmupIterations,
+            "thermal_state": Self.thermalString(),
+        ]
+        var allPresent = true
+        for (phase, url) in urls {
+            let exists = FileManager.default.fileExists(atPath: url.path)
+            allPresent = allPresent && exists
+            extra["capture_\(phase)_path"] =
+                "\(TrainBenchConstants.peropCaptureDirName)/\(url.lastPathComponent)"
+            extra["capture_\(phase)_exists"] = exists
+            extra["capture_\(phase)_bytes"] = Self.directorySizeBytes(url)
+        }
+        extra["captured"] = allPresent
+        Self.appendPerOpMarker(ctx, recordType: "capture_run", extra: extra)
+        tlog("perop-capture complete captured=\(allPresent)")
+        benchLogLine("perop-capture complete captured=\(allPresent)")
+        finishTrainBenchmark()
+    }
+
+    /// Total bytes of a `.gputrace` (a bundle directory), or -1 if absent.
+    private nonisolated static func directorySizeBytes(_ url: URL) -> Int {
+        guard FileManager.default.fileExists(atPath: url.path) else { return -1 }
+        guard
+            let e = FileManager.default.enumerator(
+                at: url, includingPropertiesForKeys: [.fileSizeKey])
+        else { return -1 }
+        var total = 0
+        for case let f as URL in e {
+            total += (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) as? Int ?? 0
+        }
+        return total
+    }
+
+    /// Fresh AdamW on the shared h5/h7/h10 recipe (lr 1e-5, wd 0.01,
+    /// bias-corrected to match R5's `adamw_torch`).
+    private nonisolated static func perOpOptimizer() -> AdamW {
+        AdamW(
+            learningRate: TrainBenchConstants.e2eLearningRate,
+            weightDecay: TrainBenchConstants.e2eWeightDecay,
+            biasCorrection: TrainBenchConstants.e2eAdamBiasCorrection)
+    }
+
+    /// Fresh LoRA + per-block GC. Uses `peropLoraLayers` (36 — the FIXED
+    /// count, like h8/h10, unlike h1-h7's buggy 28). Re-applying replaces any
+    /// previous adapter rather than stacking: `LoRALinear.from` reads the
+    /// target layer's base `weight`/`bias` and builds a new layer from them,
+    /// so each call yields a freshly initialised adapter (random A, zero B).
+    private nonisolated static func applyPerOpLoRA(to model: LanguageModel) throws {
+        let config = LoRAConfiguration(
+            numLayers: TrainBenchConstants.peropLoraLayers,
+            loraParameters: .init(
+                rank: TrainBenchConstants.loraRank,
+                scale: TrainBenchConstants.loraScale,
+                keys: TrainBenchConstants.loraKeys))
+        _ = try LoRAContainer.from(model: model, configuration: config)
+        if TrainBenchConstants.gradientCheckpointing {
+            (model as? SmolLM3Model)?.checkpointGroupSize = 1
+        }
+    }
+
+    // MARK: - Per-op (h11) record builders
+
+    private nonisolated static func perOpBaseRecord(
+        _ c: PerOpRunContext, recordType: String
+    ) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "idle_minutes": c.idleMinutes ?? NSNull(),
+            "token_grid": TrainBenchConstants.peropTokenCounts,
+            "warmup_iterations": TrainBenchConstants.peropWarmupIterations,
+            "kept_iterations": TrainBenchConstants.peropKeptIterations,
+            "cold_ref_tokens": TrainBenchConstants.peropColdRefTokens,
+            "cold_ref_iterations": TrainBenchConstants.peropColdRefIterations,
+            "sample_interval_s": TrainBenchConstants.peropSampleSeconds,
+            "model": c.modelName,
+            "batch_size": TrainBenchConstants.trainBatchSize,
+            "lora_rank": TrainBenchConstants.loraRank,
+            "lora_keys": TrainBenchConstants.loraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.peropLoraLayers,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
+            "optimizer": "adamw",
+            "learning_rate": TrainBenchConstants.e2eLearningRate,
+            "weight_decay": TrainBenchConstants.e2eWeightDecay,
+            "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
+            "app_build": TrainBenchConstants.peropAppBuild,
+            "bench_schema_version": TrainBenchConstants.peropSchemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": c.sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    /// One training iteration, fused or barriered. `phases` is nil for fused
+    /// rows (the whole point of fused mode is that the phases are not
+    /// separable); barriered rows carry all six times plus their sum as
+    /// `iter_seconds`.
+    private nonisolated static func appendPerOpIterRecord(
+        _ c: PerOpRunContext, recordType: String, mode: String, pass: String,
+        targetTokens: Int, iterIndex: Int, warmup: Bool, iterSeconds: Double,
+        tokPerSec: Double, loss: Float, phases: PerOpPhaseTimes?, elapsed: Double
+    ) {
+        var r = perOpBaseRecord(c, recordType: recordType)
+        r["mode"] = mode
+        r["pass"] = pass
+        r["target_tokens"] = targetTokens
+        r["iter_index"] = iterIndex
+        r["warmup"] = warmup
+        r["iter_seconds"] = iterSeconds
+        r["tok_per_sec"] = tokPerSec
+        r["loss"] = loss
+        r["elapsed_s"] = elapsed
+        r["peak_mem_bytes"] = Memory.snapshot().peakMemory
+        r["active_mem_bytes"] = Memory.snapshot().activeMemory
+        r["thermal_state"] = thermalString()
+        r["low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
+        if let p = phases {
+            r["phase_data_prep_s"] = p.dataPrep
+            r["phase_graph_build_s"] = p.graphBuild
+            r["phase_forward_s"] = p.forward
+            r["phase_backward_s"] = p.backward
+            r["phase_optimizer_s"] = p.optimizer
+            r["phase_readback_s"] = p.readback
+        }
+        emitPerOp(r)
+    }
+
+    private nonisolated static func appendPerOpSample(
+        _ c: PerOpRunContext, elapsed: Double, level: Double, charging: Bool,
+        thermal: String, lpm: Bool, cpuUtilPct: Double?
+    ) {
+        var r = perOpBaseRecord(c, recordType: "sample")
+        r["elapsed_s"] = elapsed
+        r["battery_level"] = level
+        r["charging"] = charging
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
+        emitPerOp(r)
+    }
+
+    private nonisolated static func appendPerOpMarker(
+        _ c: PerOpRunContext, recordType: String, extra: [String: Any]
+    ) {
+        var r = perOpBaseRecord(c, recordType: recordType)
+        for (k, v) in extra { r[k] = v }
+        emitPerOp(r)
+    }
+
+    /// Append one h11 JSONL line. Its own file: the h9 L run is still pending
+    /// against `train_bench_metrics_e2e.jsonl`, which this round must not
+    /// touch.
+    private nonisolated static func emitPerOp(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.peropMetricsFileName)
+        peropFileLock.lock()
+        defer { peropFileLock.unlock() }
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 let handle = try FileHandle(forWritingTo: url)

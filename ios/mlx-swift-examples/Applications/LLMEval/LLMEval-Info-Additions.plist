@@ -18,5 +18,16 @@
 	<array>
 		<string>mlx.LLMEval.bgtrain</string>
 	</array>
+	<!--
+	h11 Tier 2 (per-op Metal capture). Programmatic `GPU.startCapture` outside
+	an Xcode-attached session requires this key; without it MTLCaptureManager
+	refuses the .gpuTraceDocument destination. Whether it is honoured under a
+	`devicectl process launch` was unverified when this was added — the harness
+	checks `supportsDestination(.gpuTraceDocument)` at runtime and logs the
+	answer rather than assuming it (see runPerOpCaptureBenchmark). Debug-only
+	concern: the key has no effect on release builds.
+	-->
+	<key>MetalCaptureEnabled</key>
+	<true/>
 </dict>
 </plist>

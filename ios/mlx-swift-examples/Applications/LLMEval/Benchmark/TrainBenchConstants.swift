@@ -604,4 +604,300 @@ enum TrainBenchConstants {
     /// a later K jetsams; a jetsam/OOM at a given K is itself valid data, not
     /// a failure to retry.
     static let granularityMetricsFileName = "train_bench_metrics_granularity.jsonl"
+
+    // =========================================================================
+    // Thermal cooldown trajectory + sustainable duty cycle (h10) — how long the
+    // device takes to RECOVER its training throughput after a training burst,
+    // and whether any burst-and-cool schedule beats simply running training
+    // continuously. Direct follow-on to h7, which left this hole open: its
+    // cold-regime cells >=700 tokens never reached `nominal` even after a 300s
+    // gate, so "true recovery time up there is still unknown". Pinned via
+    // `/grill_me` 2026-07-28; see
+    // experiments/2026-07-28-ondevice-thermal-cooldown-h10-plan.md.
+    //
+    // WHY A PERFORMANCE PROBE, NOT `thermalState`: the enum is 4-level and
+    // demonstrably uninformative here — re-checked against h5's E2E data
+    // during planning, ALL 9 real training sessions read `serious` in their
+    // first 10-minute bucket and never change for the remaining 5-11 hours.
+    // It cannot express "80% recovered". So recovery is measured by running a
+    // small fixed training workload and timing it, against a cold-reference
+    // probe taken at the top of the same session. The enum is still sampled
+    // throughout, both as a secondary channel and to quantify the gap between
+    // "enum says nominal" and "throughput actually recovered" — which is a
+    // direct check on the cooldown gates used by h3/h4/h7/h8, all of which
+    // poll `thermalState == .nominal`.
+    static let thermalAppBuild = "smollm3-ondevice-thermal-cooldown-h10"
+    static let thermalSchemaVersion = 1
+
+    /// h10 FIXES the h1-h7 `loraLayers` bug (see h8's deviation note above):
+    /// SmolLM3-3B has 36 hidden layers and `LoRAContainer.from` takes a
+    /// SUFFIX, so h1-h7 trained only the last 28. Explicit user call to fix it
+    /// here rather than inherit it.
+    ///
+    /// This is safe for h10's headline specifically because h10's arithmetic
+    /// is SELF-REFERENTIAL: the cold-reference probe and the soak plateau are
+    /// both 500-token measurements at 36 layers taken ~60 minutes apart in the
+    /// SAME session, so their ratio IS the cold/hot speedup, measured
+    /// in-session. h7's 1.7x is not borrowed as an input — it demotes to a
+    /// corroborating cross-check ("does the ratio survive the layer fix?").
+    /// Cost: ~36/28 = 1.29x more compute per iteration than h1-h7, which is
+    /// where the ~6.6 s/iter probe estimate at 500 tokens comes from.
+    static let thermalLoraLayers = 36
+
+    /// Probe workload: 2 iterations on a single synthetic example of exactly
+    /// this many tokens, built through h7's `tokentimeFillerPhrase` path so
+    /// the workload is comparable to h7's 500-token cell (500 is on h7's
+    /// canonical 50-token grid).
+    ///
+    /// 2 iterations, not 3: at 36 layers a probe costs ~6.6 s/iter, so 2
+    /// iterations is ~13s of real training — ~11% duty cycle at the 120s
+    /// cadence. Probe self-heating is the main validity risk in this design
+    /// (the whole point is to measure FREE cooling), and 3 iterations would
+    /// push it to ~16%. Iteration 0 is still logged, not dropped on-device —
+    /// the discard rule lives in the aggregator (log-raw-decide-later).
+    static let thermalProbeTokens = 500
+    static let thermalProbeIterations = 2
+
+    /// The soak (heat-up) trains on a synthetic example of this same length,
+    /// so the soak's steady-state seconds/iter is directly comparable to the
+    /// probe's — that comparability is what makes the in-session cold/hot
+    /// ratio above legitimate.
+    static let thermalSoakTokens = 500
+
+    /// Per-iteration reporting for both soak and probe (true per-step rates,
+    /// not window averages) — same choice h7 made.
+    static let thermalStepsPerReport = 1
+
+    /// Safety ceiling on soak iterations; the soak actually terminates on
+    /// wall-clock (`--soak-minutes`), this just bounds the `LoRATrain.train`
+    /// call so it can't run away if the callback's stop signal is missed.
+    static let thermalSoakMaxIterations = 20000
+
+    /// Fixed observation window after the soak ends: 90 minutes, NO early
+    /// stop (locked design). Not gated on a recovery threshold — recovery is
+    /// expected to be asymptotic, a single threshold is brittle, and the
+    /// Run A / Run B self-heating overlay comparison is cleanest when both
+    /// curves are full-length and point-by-point comparable. Recovery
+    /// milestones (t50/t80/t90/t95) are extracted POST HOC by the aggregator.
+    static let thermalObservationSeconds: Double = 90.0 * 60.0
+
+    /// Passive sampler cadence — 10s, finer than h5/h9's 30s, because
+    /// resolving the enum's serious->fair->nominal transitions is a
+    /// deliverable of this round and 30s is too coarse for that. CPU
+    /// utilization on the idle gaps between probes also serves as proof the
+    /// device was genuinely idle and nothing else woke up.
+    static let thermalSampleSeconds: Double = 10.0
+
+    /// Defaults for the two launch args, matching Run A of the matrix
+    /// (60-minute soak, 120s probe cadence). Run B overrides the cadence to
+    /// 240s (the self-heating control), Run C the soak to 10 minutes (the
+    /// soak-duration scaling arm).
+    static let thermalDefaultSoakMinutes: Double = 60.0
+    static let thermalDefaultProbeIntervalSeconds: Double = 120.0
+
+    /// Output JSONL — separate from every other harness file. Matters
+    /// especially here: the h9 L training run is still pending against
+    /// `train_bench_metrics_e2e.jsonl`, and h10 must not touch it.
+    static let thermalMetricsFileName = "train_bench_metrics_thermal.jsonl"
+
+    // --- Sustained-cycling arm (h10c) ------------------------------------
+    // Runs A/B/C measured ONE burst plus the recovery after it, and the
+    // ~1.25x figure for a 10-on/2-off schedule was extrapolated from that
+    // single burst. Run B showed burst output depends on retained CHASSIS
+    // heat, which a 2-minute gap does not clear even though THROUGHPUT
+    // recovers — so repeated cycles may yield progressively less and the
+    // extrapolation is only an upper bound. This arm measures the sustained
+    // rate directly: repeat the burst/rest cycle and watch whether
+    // iterations-per-burst decays with cycle index.
+    //
+    // Comparison baselines (both reported; they answer different questions):
+    //   - steady-state continuous, 3600/plateau ~ 361 iters/hr — the right
+    //     reference for a LONG job, where continuous training's own cold
+    //     start is amortised away. Real adapters take 2h20m-7h (h5), so this
+    //     is the deployment-relevant one.
+    //   - first-hour-from-cold continuous, 409/412/432 iters/hr measured —
+    //     the right reference for a job that only lasts an hour, where
+    //     continuous also collects a cold-start bonus.
+    static let thermalCycleBurstSeconds: Double = 600.0
+    static let thermalCycleRestSeconds: Double = 120.0
+
+    /// 6 cycles x 720s = 72 min — long enough for a per-burst decay trend to
+    /// be visible, and directly comparable against the 60-min continuous runs.
+    static let thermalCycleCount = 6
+
+    // --- Self-limiting arm (h10d) ----------------------------------------
+    // The cycling arm (h10c) showed COARSE burst scheduling loses: once the
+    // chassis saturates a 2-min rest recovers nothing, so you pay idle time
+    // for no speed, and each restart appears to ramp to a less efficient
+    // high-clock operating point (h10c ended at 11.5 s/iter having done the
+    // same 60 min of training as a continuous run that ended at 10.0).
+    //
+    // This arm tests the opposite idea: never stop, just PACE. Insert a fixed
+    // delay between iterations to hold the device below its throttle point,
+    // and ask whether a self-limited rate sustains more throughput than
+    // letting the hardware governor throttle it.
+    //
+    // The break-even is exact and tight. Continuous training equilibrates at
+    // ~9.98 s/iter, i.e. 0.1002 iter/s. A paced run costs
+    // (compute_s_per_iter + delay), so it wins iff
+    //
+    //     compute_s_per_iter + delay < 9.98
+    //
+    // Cold compute is 4.65 s/iter, so the whole opportunity lives in
+    // delay < 5.33 s — and only if pacing actually keeps compute near cold.
+    // That is the hypothesis; D=2 and D=4 straddle the interesting region.
+    //
+    // MEASUREMENT NOTE (verified against LoraTrain.swift): `iterationsPerSecond`
+    // is computed BEFORE the progress callback and `start` is reset AFTER it,
+    // so a sleep taken inside the callback is excluded from the reported rate.
+    // Reported s/iter is therefore true device compute time, and the imposed
+    // delay is known exactly — the two never contaminate each other.
+    static let thermalSelfLimitAppBuild = "smollm3-ondevice-thermal-selflimit-h10d"
+
+    /// (inter-iteration delay seconds, phase wall-clock duration seconds).
+    ///
+    /// Ascending delay from a HOT start, which is the deployment-relevant
+    /// question: given an already-throttled device, how much pacing is needed
+    /// to bring it back to fast and hold it there? Phase 0 re-establishes the
+    /// throttled baseline in-session (so the comparison needs no cross-run
+    /// constant), and the final D=0 phase is a reversibility check — the
+    /// device should re-throttle, confirming any recovery was caused by the
+    /// pacing rather than by drift.
+    ///
+    /// ONE continuous `LoRATrain.train` call spans every phase: the loop never
+    /// stops, so this arm carries none of h10c's restart/boost confound.
+    static let thermalSelfLimitPhases: [(delay: Double, seconds: Double)] = [
+        (0.0, 1200.0),  // throttled baseline
+        (2.0, 1200.0),  // ~30% pacing
+        (4.0, 1200.0),  // ~46% pacing
+        (6.0, 1200.0),  // past the break-even ceiling — expected to lose
+        (0.0, 600.0),  // reversibility check
+    ]
+
+    /// Per-iteration reporting so every iteration's compute time is recorded
+    /// individually; phase boundaries are decided from elapsed wall clock.
+    static let thermalSelfLimitStepsPerReport = 1
+
+    /// Runaway backstop only — the run terminates on the phase schedule.
+    static let thermalSelfLimitMaxIterations = 20000
+
+    /// Output JSONL — separate again, so a self-limit run can never be
+    /// confused with a cooldown or cycling session by an aggregator.
+    static let thermalSelfLimitMetricsFileName = "train_bench_metrics_selflimit.jsonl"
+
+    // =========================================================================
+    // Per-op / per-phase decomposition of ONE training iteration (h11) — the
+    // training analog of MELT's per-op INFERENCE benchmarks (MobiCom '24
+    // §5.3.1 / Fig. 8). h7 fit the TOTAL iteration cost as
+    // f(tokens, thermal_history); this round decomposes that cost. Pinned via
+    // `/grill_me` 2026-08-04; see
+    // experiments/2026-08-04-ondevice-perop-h11-plan.md.
+    //
+    // NOTHING IS PRE-REGISTERED (explicit user decision, a departure from
+    // h10's falsifiable-headline convention): this is a descriptive round.
+    //
+    // TWO TIERS.
+    //   Tier 1 (primary, automated): phase-level decomposition. MLX fuses a
+    //     whole training iteration into one lazy graph, so the harness
+    //     replicates `LoRATrain.train`'s internals with explicit `eval`
+    //     barriers between the six phases (data_prep / graph_build / forward /
+    //     backward / optimizer / readback). NOT a fork of LoraTrain.swift —
+    //     h4/h7's no-fork principle holds.
+    //   Tier 2 (semi-manual garnish): `GPU.startCapture` around each phase's
+    //     eval at one config → three `.gputrace` bundles read by hand in
+    //     Xcode's Metal debugger (GUI, outside the agent toolset).
+    //
+    // VALIDITY CONTROL: barriers destroy cross-phase overlap, so Σ(phases) is
+    // an OVERESTIMATE of the true fused iteration time — the same caveat MELT
+    // flags for `vm_profiler`. Every cell therefore also runs FUSED iterations
+    // through the stock `LoRATrain.train` path (h7's exact measurement mode),
+    // and the aggregator reports `sum_phases / fused` per cell as the
+    // decomposition-overhead ratio. Phase SHARES come from the barriered
+    // iterations; ABSOLUTE cost predictions remain h7's fused fits.
+    //
+    // GC IS ON, ALWAYS. A GC-off arm (to isolate the recompute component of
+    // `backward`) was proposed during the grill and REJECTED — GC-on is the
+    // only realistic regime on this device. Do not add one. Consequence,
+    // stated rather than hidden: with GC on, `backward` contains backward
+    // proper AND the checkpoint recompute, and the two are indistinguishable
+    // by construction at phase granularity.
+    static let peropAppBuild = "smollm3-ondevice-train-perop-h11"
+    static let peropSchemaVersion = 1
+
+    /// h11 uses the FIXED 36-layer count (like h8/h10), NOT the buggy shared
+    /// `loraLayers` (28) that h1-h7 used — see h8's deviation note above.
+    /// h7's cell code still reads the shared constant, so do not copy that
+    /// line blindly when cross-referencing `runTokenTimeCell`.
+    static let peropLoraLayers = 36
+
+    /// 6 cells, not h7's 20. This round measures phase SHARES and their
+    /// scaling shape; h7 already owns the precise per-token cost line, so a
+    /// coarse grid spanning the same range is enough and keeps the session
+    /// inside one unattended launch (~45-70 min for both passes).
+    static let peropTokenCounts = [50, 100, 250, 500, 750, 1000]
+
+    /// Per sub-block: discard the first iteration (MLX graph compile /
+    /// first-allocation overhead; in fused mode also `LoRATrain.train`'s
+    /// forced iteration-0 validation pass), keep the next 10. Two sub-blocks
+    /// (fused, then barriered) → 22 iterations per cell. The barriered
+    /// sub-block gets its own discard because switching modes can retrigger
+    /// compile/cache effects. Discarded iterations ARE written to the JSONL
+    /// with `warmup: true` (log-raw-decide-later, h10 convention) and dropped
+    /// by the aggregator.
+    static let peropWarmupIterations = 1
+    static let peropKeptIterations = 10
+
+    /// Cold-reference probe at the top of the session — h10's exact design (2
+    /// iterations @500 tok), for cross-run comparability. h10 Run B's lesson
+    /// is that this probe measures DIE temperature only and is
+    /// necessary-but-not-sufficient as a comparability check (three sessions
+    /// agreed within 2% while the bursts that followed differed 5.4% in total
+    /// work, driven by idle history / chassis heat). Hence `--idle-minutes`.
+    static let peropColdRefTokens = 500
+    static let peropColdRefIterations = 2
+
+    /// Passive sampler cadence — 30s, matching h5/h9. h10 used 10s because
+    /// resolving `thermalState`'s transitions was a deliverable there; it
+    /// isn't here (the enum is logged per iteration anyway, free, as one more
+    /// datapoint on its ~59-minute release lag).
+    static let peropSampleSeconds: Double = 30.0
+
+    /// Pass labels. Pass 1 starts from a cool device; pass 2 re-runs the
+    /// identical grid immediately afterwards on the now-hot device. NO
+    /// cooldown gates and NO `thermalState` gating anywhere (h10: the enum
+    /// releases ~59 min late, so gating on it burns an hour for nothing).
+    ///
+    /// CAVEAT to carry into the writeup: pass 2 is REALISTIC MID-SESSION HEAT,
+    /// not thermal equilibrium — h10d showed the plateau takes 40-50 min, and
+    /// pass 2 starts ~20-30 min in and keeps heating. It answers "are the
+    /// shares stable under real heat", not an equilibrium claim.
+    static let peropPasses = ["cool", "hot"]
+
+    /// The six phases, in execution order. Shared with the aggregator via the
+    /// JSONL field names `phase_<name>_s`.
+    static let peropPhaseNames = [
+        "data_prep", "graph_build", "forward", "backward", "optimizer", "readback",
+    ]
+
+    /// Output JSONL — separate from every other harness file. Load-bearing
+    /// here: the h9 L run is still pending against
+    /// `train_bench_metrics_e2e.jsonl` and h11 must not touch it.
+    static let peropMetricsFileName = "train_bench_metrics_perop.jsonl"
+
+    // --- Tier 2: Metal capture -------------------------------------------
+    /// Capture config: h7/h10's canonical 500-token anchor, one iteration,
+    /// GC on, cool start, in its OWN process launch (capture perturbs timing,
+    /// so its telemetry never mixes with the Tier-1 sweep — only a
+    /// `capture_run` marker is written).
+    static let peropCaptureTokens = 500
+
+    /// Discarded iterations before the captured one, so compile caches are hot
+    /// and the trace shows steady-state kernels rather than first-run compiles.
+    static let peropCaptureWarmupIterations = 3
+
+    /// `.gputrace` bundles land in `Documents/<dir>/{forward,backward,optimizer}_<ts>.gputrace`
+    /// and are pulled with `devicectl device copy from`. `MTLCaptureManager`
+    /// refuses to overwrite an existing destination, so the timestamp is part
+    /// of the name.
+    static let peropCaptureDirName = "perop_captures"
 }
