@@ -64,9 +64,14 @@ enum TrainBenchConstants {
     /// the commit holding the harness code and the bake commit follows it).
     ///   b87e61c — the Tier-1 sweep of 2026-08-04
     ///     (results/ondevice/train_bench_metrics_perop_2026-08-04.jsonl).
-    ///   034e07d — adds Tier-2 `.gputrace` symlink flattening; the Tier-2
-    ///     capture re-run of 2026-08-04 carries this.
-    static let gitCommit = "034e07d"
+    ///   034e07d — adds Tier-2 `.gputrace` symlink flattening (copy-based,
+    ///     superseded). The successful 2026-08-04 Tier-2 capture stamps this
+    ///     value in its `capture_run` record but actually ran 31524ed's
+    ///     hard-link flattening, which was written after the bake. Affects the
+    ///     retrieval step only — no measurement depends on it, and the Tier-1
+    ///     phase timings are all under b87e61c.
+    ///   31524ed — hard-link flattening + capture-dir cleanup.
+    static let gitCommit = "31524ed"
     static let gitDirty = false
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
