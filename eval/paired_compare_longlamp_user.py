@@ -79,6 +79,24 @@ def rouge1_scorer():
 
 
 def paired_t_test(diffs: list) -> tuple:
+    """Paired t-test of `diffs` against zero. Returns (statistic, pvalue), or
+    (None, None) in the degenerate all-zero case.
+
+    The all-zero guard is load-bearing, not defensive. Without it the `+ 1e-30`
+    offset below turns a perfectly null result into a maximally significant one:
+    ttest_rel([1e-30]*n, [0]*n) has zero variance, so t -> ~5.7e16 and p -> 0.0.
+    A comparison where every single user tied would be reported as p<0.001 —
+    the exact opposite of what happened. `wilcoxon_signed_rank` already returns
+    (None, None) here; the t-test must agree.
+
+    Backported 2026-08-04. The fix landed in eval/paired_compare.py and
+    eval/paired_compare_per_user.py under commit a7caec4 but missed this third
+    byte-duplicated copy, leaving the bug live on the LongLaMP track. No LL4-LL6
+    comparison has hit it (all three tasks have non-zero diffs), but a future
+    all-tie LongLaMP comparison would have published a spurious p<0.001.
+    """
+    if all(d == 0 for d in diffs):
+        return None, None
     from scipy import stats
     res = stats.ttest_rel([d + 1e-30 for d in diffs], [0.0] * len(diffs))
     return float(res.statistic), float(res.pvalue)
@@ -181,12 +199,19 @@ def main():
     if len(users) != 100:
         print(f"[warn] expected 100 users, found {len(users)}", flush=True)
 
-    baseline_glob = list(RESULTS_DIR.glob(
-        f"LongLaMP_{temporal_task}_test_*_topK100.predictions.jsonl"
-    ))
+    # This glob became ambiguous on 2026-08-04: the no-adapter base-model eval
+    # (commit 729692f) writes a second `_topK100` file for the same task, so a
+    # re-run of this script would have exited on "found 2" -- or, worse under a
+    # laxer check, silently scored against the wrong baseline. The comparison is
+    # defined against the TASK-LORA baseline; exclude the base-model arm.
+    baseline_glob = [
+        p for p in RESULTS_DIR.glob(
+            f"LongLaMP_{temporal_task}_test_*_topK100.predictions.jsonl")
+        if f"_test_base_" not in p.name
+    ]
     if len(baseline_glob) != 1:
-        sys.exit(f"ERROR: expected exactly 1 baseline predictions file, found "
-                 f"{len(baseline_glob)}: {baseline_glob}")
+        sys.exit(f"ERROR: expected exactly 1 Task-LoRA baseline predictions file, "
+                 f"found {len(baseline_glob)}: {[p.name for p in baseline_glob]}")
     baseline_preds = load_predictions_by_id(baseline_glob[0])
     print(f"[load] baseline: {baseline_glob[0].name} ({len(baseline_preds)} records)",
           flush=True)
