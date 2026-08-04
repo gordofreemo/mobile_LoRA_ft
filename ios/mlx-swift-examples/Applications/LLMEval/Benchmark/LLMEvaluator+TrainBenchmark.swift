@@ -2996,6 +2996,8 @@ extension LLMEvaluator {
             return
         }
 
+        var cacheBefore = 0
+        var cacheAfter = 0
         do {
             try await container.perform { c throws -> Void in
                 try Self.applyPerOpLoRA(to: c.model)
@@ -3017,6 +3019,32 @@ extension LLMEvaluator {
                         model: model, tokenizer: c.tokenizer, example: example,
                         lossValueGrad: lossValueGrad, optimizer: optimizer)
                 }
+
+                // Drop MLX's buffer cache before capturing. Replay
+                // RE-ALLOCATES ALL CAPTURED GPU HEAP STATE, so any buffer MLX
+                // merely holds for reuse would become memory the replay guest
+                // has to find — and that guest is Apple-signed, so it does not
+                // carry this app's `increased-memory-limit` entitlement and
+                // dies (`guest app crashed (512)`) well below what this app can
+                // allocate. Measured ceiling 2026-08-04: forward @250 tok
+                // replays at 1.96 GB; forward @500 (2.13 GB) and backward @250
+                // (2.20 GB) both kill the guest.
+                //
+                // TESTED AND FOUND TO BE A NO-OP HERE, kept as cheap insurance
+                // and to record the negative result: `cacheMemory` reads 0 at
+                // this point, and the flattened link counts are identical
+                // either side of the change (669/1980/71). The barriered
+                // iteration's per-phase evals already release everything, so
+                // there is no allocator slack in these traces. Unlike vLLM's
+                // Metal backend — which fixes the same guest-crash by shrinking
+                // a 22 GB KV cache via VLLM_METAL_MEMORY_FRACTION — our trace
+                // size is the 4-bit model weights themselves plus live
+                // activations, and is therefore irreducible at fixed model and
+                // sequence length. Token count is the only lever left.
+                cacheBefore = Memory.snapshot().cacheMemory
+                Memory.cacheLimit = 0
+                Memory.clearCache()
+                cacheAfter = Memory.snapshot().cacheMemory
 
                 // The captured iteration — same six phases, with a capture
                 // bracketing each of the three GPU-bearing ones.
@@ -3058,6 +3086,11 @@ extension LLMEvaluator {
             "capture_supported": true,
             "capture_warmup_iterations": TrainBenchConstants.peropCaptureWarmupIterations,
             "thermal_state": Self.thermalString(),
+            // How much dead buffer cache was dropped before capturing — the
+            // difference between a trace the replay guest can re-allocate and
+            // one that kills it. See the note at the clearCache call.
+            "cache_bytes_before_capture": cacheBefore,
+            "cache_bytes_after_clear": cacheAfter,
         ]
         var allPresent = true
         for (phase, url) in urls {
