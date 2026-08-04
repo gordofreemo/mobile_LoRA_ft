@@ -904,4 +904,12 @@ enum TrainBenchConstants {
     /// refuses to overwrite an existing destination, so the timestamp is part
     /// of the name.
     static let peropCaptureDirName = "perop_captures"
+
+    /// Per-bundle ceiling on bytes materialised when dereferencing the
+    /// `MTLBuffer-*` symlinks Metal leaves inside a `.gputrace` (see
+    /// `flattenSymlinks` — without that step `devicectl` cannot pull a capture
+    /// at all, it dies with ELOOP on the first link). 3 GB is generous for a
+    /// 500-token single-iteration trace while still refusing to fill the phone
+    /// if a link points at something unexpectedly large.
+    static let peropCaptureFlattenBudgetBytes = 3 * 1024 * 1024 * 1024
 }

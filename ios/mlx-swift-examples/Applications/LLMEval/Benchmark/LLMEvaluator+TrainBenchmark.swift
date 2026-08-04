@@ -3057,6 +3057,16 @@ extension LLMEvaluator {
                 "\(TrainBenchConstants.peropCaptureDirName)/\(url.lastPathComponent)"
             extra["capture_\(phase)_exists"] = exists
             extra["capture_\(phase)_bytes"] = Self.directorySizeBytes(url)
+            // Without this the bundle cannot leave the device at all — see
+            // flattenSymlinks. Done after timing, so it cannot perturb the
+            // captured iteration.
+            if exists {
+                let stats = Self.flattenSymlinks(
+                    in: url, budgetBytes: TrainBenchConstants.peropCaptureFlattenBudgetBytes)
+                for (k, v) in stats { extra["capture_\(phase)_\(k)"] = v }
+                extra["capture_\(phase)_bytes_flattened"] = Self.directorySizeBytes(url)
+                tlog("perop-capture flatten \(phase): \(stats)")
+            }
         }
         extra["captured"] = allPresent
         Self.appendPerOpMarker(ctx, recordType: "capture_run", extra: extra)
@@ -3065,7 +3075,82 @@ extension LLMEvaluator {
         finishTrainBenchmark()
     }
 
+    /// Replace every symbolic link inside a `.gputrace` bundle with a real copy
+    /// of its target, so the bundle can be pulled off the device.
+    ///
+    /// WHY THIS EXISTS (found 2026-08-04, after the first successful capture):
+    /// Metal writes most buffer contents as SYMLINKS — 1247 of the 1629 entries
+    /// in a 500-token optimizer capture were `MTLBuffer-*` symlinks, which
+    /// `devicectl device info files` labels `SymbolicLink` outright.
+    /// `devicectl device copy from` cannot read them: it fails the whole
+    /// transfer with `openat(2) POSIX error 62` (ELOOP) on the first one, and
+    /// there is no flag to follow or skip links. So a capture that succeeds on
+    /// device is still unretrievable until the links are flattened here.
+    ///
+    /// Capped by `budgetBytes`: a symlink may point at something large (the
+    /// mmap-backed model weights are the obvious candidate), and silently
+    /// inflating a bundle to several GB on a phone is not acceptable. On
+    /// exceeding the cap it stops and reports, leaving the remaining links in
+    /// place — a partial flatten is visible in the record rather than hidden.
+    private nonisolated static func flattenSymlinks(
+        in bundle: URL, budgetBytes: Int
+    ) -> [String: Any] {
+        var resolved = 0
+        var failed = 0
+        var skippedOverBudget = 0
+        var bytes = 0
+        var examples: [String] = []
+
+        guard
+            let e = FileManager.default.enumerator(
+                at: bundle, includingPropertiesForKeys: [.isSymbolicLinkKey],
+                options: [.skipsSubdirectoryDescendants])
+        else {
+            return ["flatten_error": "enumerator failed"]
+        }
+
+        for case let url as URL in e {
+            let isLink =
+                (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false
+            guard isLink == true else { continue }
+            do {
+                let target = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+                let targetURL =
+                    target.hasPrefix("/")
+                    ? URL(fileURLWithPath: target)
+                    : URL(fileURLWithPath: target, relativeTo: url.deletingLastPathComponent())
+                        .standardizedFileURL
+                if examples.count < 3 {
+                    examples.append("\(url.lastPathComponent) -> \(target)")
+                }
+                let size =
+                    (try? targetURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) as? Int ?? 0
+                if bytes + size > budgetBytes {
+                    skippedOverBudget += 1
+                    continue
+                }
+                try FileManager.default.removeItem(at: url)
+                try FileManager.default.copyItem(at: targetURL, to: url)
+                resolved += 1
+                bytes += size
+            } catch {
+                failed += 1
+            }
+        }
+        return [
+            "flatten_resolved": resolved,
+            "flatten_failed": failed,
+            "flatten_skipped_over_budget": skippedOverBudget,
+            "flatten_bytes": bytes,
+            "flatten_examples": examples,
+        ]
+    }
+
     /// Total bytes of a `.gputrace` (a bundle directory), or -1 if absent.
+    ///
+    /// NOTE: `.fileSizeKey` follows symlinks, so before `flattenSymlinks` this
+    /// counts link TARGETS and overstates what is actually stored in the
+    /// bundle. The 2026-08-04 capture reported 1.9-2.4 GB per bundle this way.
     private nonisolated static func directorySizeBytes(_ url: URL) -> Int {
         guard FileManager.default.fileExists(atPath: url.path) else { return -1 }
         guard
