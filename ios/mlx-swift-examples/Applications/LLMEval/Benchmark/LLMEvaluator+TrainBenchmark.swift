@@ -2695,16 +2695,32 @@ extension LLMEvaluator {
     /// interleaved step-by-step — alternating would thrash lazy-eval/cache
     /// state and blur each sub-block's warmup).
     ///
-    /// The adapter's freshly-initialised parameters are snapshotted before the
-    /// fused sub-block and restored before the barriered one, so both
-    /// sub-blocks train the SAME weights on the SAME data from the SAME
-    /// starting point. That makes the two modes' loss sequences directly
-    /// comparable, which is the on-device check for plan risk #1 (that
-    /// splitting the iteration into `eval(lvalue)` then `eval(grad)` still
-    /// computes what the stock fused path computes). Restoring is exact
-    /// because MLX optimizers update functionally — `Optimizer.update` builds
-    /// new parameter arrays and hands them to `Module.update`, never mutating
-    /// the snapshot's arrays in place.
+    /// The barriered sub-block CONTINUES from the weights the fused sub-block
+    /// left behind; it does not restart from the adapter's initial state.
+    ///
+    /// This started as a snapshot/restore of `model.trainableParameters()`
+    /// intended to give both modes an identical starting point (so their loss
+    /// sequences could be compared step-for-step). That restore was a NO-OP and
+    /// was removed after the 2026-08-04 run showed why: `Module.update`'s
+    /// leaf-array case calls `p._updateInternal(newArray)`, which swaps the
+    /// handle INSIDE the existing MLXArray object rather than replacing the
+    /// dictionary's reference — so `trainableParameters()` hands back ALIASES
+    /// of the model's live arrays, and the "snapshot" tracked the weights right
+    /// through training. (The same aliasing the h6 v7 changelog in
+    /// TrainBenchConstants.swift documents for the model-load path.) A genuine
+    /// reset would need a deep copy of every adapter array.
+    ///
+    /// Plan risk #1 is checked from the continuity of the loss curve across the
+    /// mode boundary instead: the barriered block picks the trajectory up where
+    /// the fused block left it, so a faithful replica continues the same
+    /// per-step decay, while a broken one (wrong loss, skipped optimizer step,
+    /// defeated checkpointing) would show a step change at the seam. Measured
+    /// 2026-08-04: residuals |Δ| ≤ 0.0008 across all 12 cells, i.e. ≲2.5% of the
+    /// step size. `eval/perop_aggregate.py`'s `loss_continuity` computes it.
+    ///
+    /// Note this never affected the phase TIMINGS — MLX's dense and quantized
+    /// kernels are value-independent, so per-iteration cost does not depend on
+    /// which weights happen to be resident.
     private func runPerOpCell(
         container: ModelContainer, ctx: PerOpRunContext, targetTokens: Int, pass: String,
         runStart: Double
@@ -2728,10 +2744,6 @@ extension LLMEvaluator {
             try await container.perform { c throws -> Void in
                 try Self.applyPerOpLoRA(to: c.model)
                 let model: Module = c.model
-
-                // Snapshot the fresh adapter (see the doc comment above).
-                let initialParameters = model.trainableParameters()
-                eval(initialParameters)
 
                 let example = Self.syntheticExample(
                     targetTokens: targetTokens, tokenizer: c.tokenizer)
@@ -2769,9 +2781,10 @@ extension LLMEvaluator {
                 }
 
                 // --- barriered sub-block (the decomposition) -----------------
-                model.update(parameters: initialParameters)
-                eval(model)
-
+                // Continues from the fused sub-block's weights by design (see
+                // the doc comment). A fresh AdamW restarts the Adam moments at
+                // the seam, which perturbs the first barriered step slightly —
+                // expected, and accounted for in the continuity check.
                 let optimizer = Self.perOpOptimizer()
                 let lossValueGrad = valueAndGrad(model: model) {
                     (m: Module, arrays: [MLXArray]) -> [MLXArray] in
