@@ -57,8 +57,14 @@ Output (flat single-level JSON + per-user sidecar, per project convention):
   results/longlamp_degeneration_audit_<tag>.pairs.jsonl
 
 Usage:
+    condor_submit condor/longlamp_degeneration_audit.sub    # all 3 tasks
     python eval/longlamp_degeneration_audit.py --tag abstract
-    python eval/longlamp_degeneration_audit.py --tag review --length-ratio 3.0
+    python eval/longlamp_degeneration_audit.py --tag review --degenerate-words 500
+
+NOTE: rouge_score/scipy are image-only, so this does not run on the login host.
+The 2026-08-04 numbers quoted above were derived with a stubbed scorer and are
+exact for lengths/counts but approximate for ROUGE -- the Condor run is what
+confirms them.
 """
 
 import argparse
