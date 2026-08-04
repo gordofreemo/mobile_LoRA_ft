@@ -252,6 +252,27 @@ extension LLMEvaluator {
         return Double(v)
     }
 
+    /// `--capture-backward-layers <K>` — capture the backward of only the TOP
+    /// K transformer blocks (see the partial-backward note in
+    /// `runPerOpCaptureBenchmark`). Absent → full backward, which is not
+    /// replayable on this device.
+    static var trainBenchmarkCaptureBackwardLayers: Int? {
+        guard let v = launchArgValue("--capture-backward-layers"), let n = Int(v), n > 0 else {
+            return nil
+        }
+        return n
+    }
+
+    /// Transformer-block index embedded in a parameter path such as
+    /// `model.layers.31.self_attn.q_proj.lora_a`. `nil` for parameters that are
+    /// not inside a block (lm_head, embeddings) — those are always kept, since
+    /// the loss/lm_head backward is part of any backward pass.
+    private nonisolated static func layerIndex(in key: String) -> Int? {
+        let parts = key.split(separator: ".")
+        guard let i = parts.firstIndex(of: "layers"), i + 1 < parts.count else { return nil }
+        return Int(parts[i + 1])
+    }
+
     /// `--capture-tokens <N>` — h11 Tier-2 token count. Defaults to 500 (the
     /// h7/h10 canonical anchor); the pre-registered fallback if a 500-token
     /// capture is too large or fails is to retry at 250.
@@ -2943,6 +2964,29 @@ extension LLMEvaluator {
         let supported = MTLCaptureManager.shared().supportsDestination(.gpuTraceDocument)
         tlog("perop-capture: gpuTraceDocument supported=\(supported)")
 
+        // Recover a wedged capture session.
+        //
+        // Killing a capture-mode process between startCapture and stopCapture
+        // leaves the session open, and every later run then dies on
+        // `[metal::start_capture] Failed to start: Already capturing` — an
+        // mlx-c fatal, so it takes the process with it. Observed 2026-08-04 to
+        // survive a full device reboot, quitting Xcode, restarting the Mac's
+        // gputoolsserviced, and a two-minute quiet period, which is what makes
+        // it worth handling in-app rather than operationally.
+        //
+        // `isCapturing` is checked first because stopping when nothing is
+        // capturing is itself an error. If this reports true in a FRESH
+        // process, the stuck session belongs to this app and we can cancel it;
+        // if it reports false while start still fails, the session is held
+        // somewhere outside the app and this cannot fix it — either way the
+        // log line resolves the question.
+        let wasCapturing = MTLCaptureManager.shared().isCapturing
+        tlog("perop-capture: isCapturing at entry=\(wasCapturing)")
+        if wasCapturing {
+            MTLCaptureManager.shared().stopCapture()
+            tlog("perop-capture: stopped a pre-existing capture session")
+        }
+
         let container: ModelContainer
         do {
             container = try await load()
@@ -2998,6 +3042,10 @@ extension LLMEvaluator {
 
         var cacheBefore = 0
         var cacheAfter = 0
+        var extraCaptureInfo: [String: Any] = [:]
+        // Read before entering the container closure: these statics are
+        // main-actor isolated and `perform` runs off-actor.
+        let backwardLayers = Self.trainBenchmarkCaptureBackwardLayers
         do {
             try await container.perform { c throws -> Void in
                 try Self.applyPerOpLoRA(to: c.model)
@@ -3063,8 +3111,45 @@ extension LLMEvaluator {
                 eval(lvalue)
                 GPU.stopCapture(url: urls["forward"]!)
 
+                // PARTIAL BACKWARD when `--capture-backward-layers K` is given.
+                //
+                // A full backward capture cannot be replayed on this device,
+                // and the blocker is RESOURCE COUNT, not bytes — measured
+                // 2026-08-04: optimizer 1629 files / forward 1921 files both
+                // replay at 1.96 GB, while backward fails at 2792 files /
+                // 1.92 GB and 3045 / 1.99 GB. Backward's count is set by the
+                // number of distinct tensors across all 36 blocks and barely
+                // moves with sequence length (2792 @50 tok vs 3045 @100), so
+                // shrinking tokens can never reach the ~1900-file ceiling.
+                //
+                // The gradient for a LoRA parameter in block N only needs
+                // backprop from the loss down to block N — not through the
+                // blocks beneath it. Evaluating just the top K blocks'
+                // gradients therefore materialises a small subgraph whose
+                // kernels are exactly the per-block backward kernels, and
+                // SmolLM3's 36 blocks are architecturally identical, so the
+                // category shares carry over.
+                //
+                // Documented deviation: this subgraph includes the lm_head and
+                // loss backward (which the full pass also does, once) and
+                // excludes the remaining 36-K blocks (identical in structure,
+                // repeated). It is a representative sample of backward, not a
+                // capture of the whole phase.
+                let gradArrays: [MLXArray]
+                if let k = backwardLayers {
+                    let keep = (TrainBenchConstants.peropLoraLayers - k)...
+                    gradArrays = grad.flattened().filter { key, _ in
+                        guard let n = Self.layerIndex(in: key) else { return true }
+                        return keep.contains(n)
+                    }.map { $0.1 }
+                } else {
+                    gradArrays = grad.flattened().map { $0.1 }
+                }
+                extraCaptureInfo["backward_grad_arrays"] = gradArrays.count
+                extraCaptureInfo["backward_grad_arrays_total"] = grad.flattened().count
+
                 GPU.startCapture(url: urls["backward"]!)
-                eval(grad.flattened().map { $0.1 })
+                eval(gradArrays)
                 GPU.stopCapture(url: urls["backward"]!)
 
                 GPU.startCapture(url: urls["optimizer"]!)
@@ -3091,7 +3176,9 @@ extension LLMEvaluator {
             // one that kills it. See the note at the clearCache call.
             "cache_bytes_before_capture": cacheBefore,
             "cache_bytes_after_clear": cacheAfter,
+            "capture_backward_layers": backwardLayers ?? NSNull(),
         ]
+        for (k, v) in extraCaptureInfo { extra[k] = v }
         var allPresent = true
         for (phase, url) in urls {
             let exists = FileManager.default.fileExists(atPath: url.path)
