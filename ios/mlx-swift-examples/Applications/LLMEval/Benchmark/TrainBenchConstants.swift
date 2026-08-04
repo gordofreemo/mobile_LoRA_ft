@@ -60,8 +60,12 @@ enum TrainBenchConstants {
     /// Build-time git provenance, stamped by hand at build time (same discipline
     /// as the inference harness — avoids fragile project.pbxproj build-phase
     /// surgery). Update alongside `appBuild` when re-baking before a run.
-    static let gitCommit = "457d30a"
-    static let gitDirty = true
+    /// Baked for the h11 run: b87e61c is the commit that ADDS the h11 harness.
+    /// The binary is built from b87e61c + this two-line provenance bake (the
+    /// bake cannot name its own SHA), so resolving b87e61c gives the exact
+    /// harness code that produced the telemetry.
+    static let gitCommit = "b87e61c"
+    static let gitDirty = false
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
     /// Baked into every record so GC runs are unambiguously distinguishable from

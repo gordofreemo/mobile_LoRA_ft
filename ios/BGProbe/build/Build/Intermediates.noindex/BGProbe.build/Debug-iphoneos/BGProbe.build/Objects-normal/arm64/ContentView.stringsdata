@@ -7,7 +7,7 @@
         "key": "BGProbe",
         "location": {
           "startingColumn": 18,
-          "startingLine": 6
+          "startingLine": 8
         }
       },
       {
@@ -15,7 +15,7 @@
         "key": "Minimal BGProcessingTask probe for the h6 grant-size investigation. No UI interaction needed beyond first launch.",
         "location": {
           "startingColumn": 18,
-          "startingLine": 8
+          "startingLine": 10
         }
       }
     ]

@@ -6,7 +6,7 @@
 	<integer>12</integer>
 	<key>logs</key>
 	<dict>
-		<key>EB7B14B1-6B83-4473-8814-15123B901A6D</key>
+		<key>57CA5369-D66E-4963-A07A-CAD8FCF3814C</key>
 		<dict>
 			<key>className</key>
 			<string>IDECommandLineBuildLog</string>
@@ -15,7 +15,7 @@
 			<key>domainType</key>
 			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
 			<key>fileName</key>
-			<string>EB7B14B1-6B83-4473-8814-15123B901A6D.xcactivitylog</string>
+			<string>57CA5369-D66E-4963-A07A-CAD8FCF3814C.xcactivitylog</string>
 			<key>hasPrimaryLog</key>
 			<true/>
 			<key>primaryObservable</key>
@@ -40,13 +40,55 @@
 			<key>signature</key>
 			<string>Building project BGProbe with scheme BGProbe and configuration Debug</string>
 			<key>timeStartedRecording</key>
-			<real>805790857.52001405</real>
+			<real>805903730.50858295</real>
 			<key>timeStoppedRecording</key>
-			<real>805790867.02944398</real>
+			<real>805903734.22610998</real>
 			<key>title</key>
 			<string>Building project BGProbe with scheme BGProbe and configuration Debug</string>
 			<key>uniqueIdentifier</key>
-			<string>EB7B14B1-6B83-4473-8814-15123B901A6D</string>
+			<string>57CA5369-D66E-4963-A07A-CAD8FCF3814C</string>
+		</dict>
+		<key>9DDAA1C7-BB83-406B-B951-099D108D5A23</key>
+		<dict>
+			<key>className</key>
+			<string>IDECommandLineBuildLog</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
+			<key>fileName</key>
+			<string>9DDAA1C7-BB83-406B-B951-099D108D5A23.xcactivitylog</string>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>W</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>0</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>2</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>BGProbe project</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>BGProbe</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Building project BGProbe with scheme BGProbe and configuration Debug</string>
+			<key>timeStartedRecording</key>
+			<real>805902466.88147604</real>
+			<key>timeStoppedRecording</key>
+			<real>805902470.52321005</real>
+			<key>title</key>
+			<string>Building project BGProbe with scheme BGProbe and configuration Debug</string>
+			<key>uniqueIdentifier</key>
+			<string>9DDAA1C7-BB83-406B-B951-099D108D5A23</string>
 		</dict>
 	</dict>
 </dict>
