@@ -479,7 +479,60 @@ def main():
         "identically across all three arms (floor/baseline/adapter) -- "
         "never sweep this against the eval metric.",
     )
+    # The three knobs below were added 2026-08-04 for the LongLaMP decoding
+    # re-measurement. The 2026-08-04 degeneration audit showed the Task-LoRA
+    # arm runs away past 600 words on 30/100 Abstract records while the
+    # no-adapter base model never exceeds 358 -- so the repetition loop is
+    # LoRA-induced, and --repetition-penalty (the only knob that existed, tried
+    # once at 1.3 and rejected) was never the whole toolbox. All three default
+    # to the transformers default, i.e. today's exact behaviour, so every
+    # existing result file remains reproducible byte-for-byte.
+    #
+    # Select these on --split dev and apply the winner identically to every
+    # arm. LL1 was right to refuse to sweep decoding against the TEST metric;
+    # the mistake was abandoning the sweep instead of moving it to dev.
+    parser.add_argument(
+        "--no-repeat-ngram-size",
+        type=int,
+        default=0,
+        help="passed to model.generate(); 0 (default) is a no-op. Hard-blocks "
+        "any n-gram from being emitted twice, which targets verbatim "
+        "repetition loops directly rather than by reweighting logits the way "
+        "--repetition-penalty does. Select on dev, never on test.",
+    )
+    parser.add_argument(
+        "--do-sample",
+        action="store_true",
+        help="switch generation from greedy (default, do_sample=False) to "
+        "sampling. Still deterministic for a fixed --seed, which is already "
+        "applied to torch/cuda RNG. --top-p and --temperature only take "
+        "effect when this is passed.",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=1.0,
+        help="nucleus sampling threshold; only used with --do-sample. "
+        "1.0 (default) is the transformers default.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="sampling temperature; only used with --do-sample. "
+        "1.0 (default) is the transformers default.",
+    )
     args = parser.parse_args()
+
+    # transformers warns (and the values are silently inert) if sampling-only
+    # parameters are set under greedy decoding. Refuse rather than let a run
+    # land on a filename claiming a config it did not actually use.
+    if not args.do_sample and (args.top_p != 1.0 or args.temperature != 1.0):
+        print(
+            "ERROR: --top-p/--temperature have no effect without --do-sample.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if args.resume and args.overwrite:
         print("ERROR: --resume and --overwrite are mutually exclusive.", file=sys.stderr)
@@ -496,7 +549,11 @@ def main():
     print(
         f"[run] task={args.task} split={args.split} cond={cond_label} "
         f"seed={args.seed} limit={args.limit} device_map={args.device_map} "
-        f"resume={args.resume} commit={commit_short} "
+        f"resume={args.resume} "
+        f"decode={'sample' if args.do_sample else 'greedy'}"
+        f"(rp={args.repetition_penalty} nrng={args.no_repeat_ngram_size}"
+        f"{f' top_p={args.top_p} temp={args.temperature}' if args.do_sample else ''}) "
+        f"commit={commit_short} "
         f"condor={provenance.get('condor_cluster_id') or '-'}."
         f"{provenance.get('condor_proc_id') or '-'} "
         f"host={provenance.get('hostname')}",
@@ -520,6 +577,17 @@ def main():
     # path unchanged, and lets the penalty condition live at its own path
     # instead of colliding or requiring --overwrite.
     rp_tag = f"_rp{args.repetition_penalty}" if args.repetition_penalty != 1.0 else ""
+    # Same rule for the 2026-08-04 knobs: a tag appears only when the value
+    # deviates from the transformers default, so every plain-greedy path from
+    # LL1-LL6 is unchanged and each decoding condition gets its own file.
+    nrng_tag = (
+        f"_nrng{args.no_repeat_ngram_size}" if args.no_repeat_ngram_size > 0 else ""
+    )
+    if args.do_sample:
+        sample_tag = f"_sample_p{args.top_p}_t{args.temperature}"
+    else:
+        sample_tag = ""
+    decode_tag = f"{rp_tag}{nrng_tag}{sample_tag}"
     if args.user_records:
         user_tag = f"_user{safe_user_tag(args.user_records)}"
     elif args.user_records_from_file:
@@ -528,7 +596,7 @@ def main():
         user_tag = f"_topK{m.group(1)}" if m else f"_{src_stem}"
     else:
         user_tag = ""
-    stem = f"LongLaMP_{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{rp_tag}{user_tag}{limit_tag}"
+    stem = f"LongLaMP_{args.task}_{args.split}_{stacked_tag}_{profile_tag}_seed{args.seed}{decode_tag}{user_tag}{limit_tag}"
     out_path = Path(RESULTS_DIR) / f"{stem}.json"
     pred_path = Path(RESULTS_DIR) / f"{stem}.predictions.jsonl"
     if not args.overwrite and not args.resume and (out_path.exists() or pred_path.exists()):
@@ -670,6 +738,21 @@ def main():
     )
     max_new = args.max_new_tokens or TASKS[args.task]["max_new_tokens"]
 
+    # Built once, outside the loop. Sampling-only parameters are omitted
+    # entirely under greedy decoding rather than passed at their defaults, so
+    # the call is byte-identical to every pre-2026-08-04 run.
+    gen_kwargs = {
+        "max_new_tokens": max_new,
+        "do_sample": args.do_sample,
+        "repetition_penalty": args.repetition_penalty,
+        "pad_token_id": tokenizer.eos_token_id,
+    }
+    if args.no_repeat_ngram_size > 0:
+        gen_kwargs["no_repeat_ngram_size"] = args.no_repeat_ngram_size
+    if args.do_sample:
+        gen_kwargs["top_p"] = args.top_p
+        gen_kwargs["temperature"] = args.temperature
+
     new_ids, new_preds, new_golds = [], [], []
     prompt_tok, gen_tok = [], []
     t0 = time.time()
@@ -689,13 +772,7 @@ def main():
             input_len = inputs["input_ids"].shape[1]
 
             with torch.no_grad():
-                out = model.generate(
-                    **inputs,
-                    max_new_tokens=max_new,
-                    do_sample=False,
-                    repetition_penalty=args.repetition_penalty,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
+                out = model.generate(**inputs, **gen_kwargs)
             new_tokens = out[0][input_len:]
             text = clean_output(
                 tokenizer.decode(
@@ -745,8 +822,12 @@ def main():
         "retriever": "none" if args.no_profile else "bm25",
         "k": 0 if args.no_profile else args.k,
         "seed": args.seed,
-        "decoding": "greedy",
+        "decoding": "sample" if args.do_sample else "greedy",
         "repetition_penalty": args.repetition_penalty,
+        "no_repeat_ngram_size": args.no_repeat_ngram_size,
+        "do_sample": args.do_sample,
+        "top_p": args.top_p,
+        "temperature": args.temperature,
         "max_new_tokens": max_new,
         "limit": args.limit,
         "model_dir": args.model_dir,
