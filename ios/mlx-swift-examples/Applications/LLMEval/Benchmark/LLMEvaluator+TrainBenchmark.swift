@@ -2960,6 +2960,16 @@ extension LLMEvaluator {
 
         let dir = URL.documentsDirectory.appendingPathComponent(
             TrainBenchConstants.peropCaptureDirName)
+        // Start clean. Captures are large and there is no `devicectl` delete
+        // subcommand, so without this every run's bundles accumulate on the
+        // phone with no way to reclaim the space short of an uninstall — and
+        // uninstall is off-limits here (it wipes the model cache and the
+        // side-loaded per-user data; h6 lesson).
+        if FileManager.default.fileExists(atPath: dir.path) {
+            let previous = Self.directorySizeBytes(dir)
+            try? FileManager.default.removeItem(at: dir)
+            tlog("perop-capture: cleared previous captures (~\(previous / 1_048_576) MB)")
+        }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = Int(Date().timeIntervalSince1970)
         let urls = [
@@ -3087,15 +3097,26 @@ extension LLMEvaluator {
     /// there is no flag to follow or skip links. So a capture that succeeds on
     /// device is still unretrievable until the links are flattened here.
     ///
-    /// Capped by `budgetBytes`: a symlink may point at something large (the
-    /// mmap-backed model weights are the obvious candidate), and silently
-    /// inflating a bundle to several GB on a phone is not acceptable. On
-    /// exceeding the cap it stops and reports, leaving the remaining links in
-    /// place — a partial flatten is visible in the record rather than hidden.
+    /// Uses HARD LINKS, not copies. Measured 2026-08-04: the links point at
+    /// other buffers INSIDE the same bundle (`MTLBuffer-26430-0 ->
+    /// MTLBuffer-24997-0`) — Metal is deduplicating identical buffers, not
+    /// referencing anything outside. Copying each target therefore re-expands
+    /// every duplicate: the first attempt blew through a 3 GB/bundle cap with
+    /// 273 (forward) and 1816 (backward) links still unresolved, heading for
+    /// ~4.4 GB and ~11 GB. A hard link is indistinguishable from a regular file
+    /// to `openat`, so `devicectl` reads it happily while the phone keeps the
+    /// dedup and the bundle stays its original size. Expansion then happens
+    /// only in the Mac-side copy, where there is room for it.
+    ///
+    /// `budgetBytes` now guards only the copy FALLBACK (used if `linkItem`
+    /// fails, e.g. across filesystems). Over-budget links are left in place and
+    /// counted, so a partial flatten is visible in the record, not hidden.
     private nonisolated static func flattenSymlinks(
         in bundle: URL, budgetBytes: Int
     ) -> [String: Any] {
         var resolved = 0
+        var linked = 0
+        var copied = 0
         var failed = 0
         var skippedOverBudget = 0
         var bytes = 0
@@ -3125,23 +3146,34 @@ extension LLMEvaluator {
                 }
                 let size =
                     (try? targetURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) as? Int ?? 0
-                if bytes + size > budgetBytes {
-                    skippedOverBudget += 1
-                    continue
-                }
                 try FileManager.default.removeItem(at: url)
-                try FileManager.default.copyItem(at: targetURL, to: url)
+                do {
+                    // Preferred: costs no additional storage on device.
+                    try FileManager.default.linkItem(at: targetURL, to: url)
+                    linked += 1
+                } catch {
+                    // Fallback only; this is the path that can fill the phone,
+                    // hence the budget.
+                    if bytes + size > budgetBytes {
+                        skippedOverBudget += 1
+                        continue
+                    }
+                    try FileManager.default.copyItem(at: targetURL, to: url)
+                    copied += 1
+                    bytes += size
+                }
                 resolved += 1
-                bytes += size
             } catch {
                 failed += 1
             }
         }
         return [
             "flatten_resolved": resolved,
+            "flatten_linked": linked,
+            "flatten_copied": copied,
             "flatten_failed": failed,
             "flatten_skipped_over_budget": skippedOverBudget,
-            "flatten_bytes": bytes,
+            "flatten_copied_bytes": bytes,
             "flatten_examples": examples,
         ]
     }
