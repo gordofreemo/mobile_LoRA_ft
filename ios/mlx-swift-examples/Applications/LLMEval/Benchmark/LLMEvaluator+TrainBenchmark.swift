@@ -3110,6 +3110,7 @@ extension LLMEvaluator {
                 GPU.startCapture(url: urls["forward"]!)
                 eval(lvalue)
                 GPU.stopCapture(url: urls["forward"]!)
+                Self.awaitCaptureIdle()
 
                 // PARTIAL BACKWARD when `--capture-backward-layers K` is given.
                 //
@@ -3151,11 +3152,13 @@ extension LLMEvaluator {
                 GPU.startCapture(url: urls["backward"]!)
                 eval(gradArrays)
                 GPU.stopCapture(url: urls["backward"]!)
+                Self.awaitCaptureIdle()
 
                 GPU.startCapture(url: urls["optimizer"]!)
                 optimizer.update(model: model, gradients: grad)
                 eval(model, optimizer)
                 GPU.stopCapture(url: urls["optimizer"]!)
+                Self.awaitCaptureIdle()
 
                 _ = lvalue.item(Float.self)
             }
@@ -3296,6 +3299,29 @@ extension LLMEvaluator {
             "flatten_copied_bytes": bytes,
             "flatten_examples": examples,
         ]
+    }
+
+    /// Block until the capture manager is idle again after `stopCapture`.
+    ///
+    /// `stopCapture` FINALISES ASYNCHRONOUSLY. Starting the next phase's
+    /// capture too soon fails with `[metal::start_capture] Failed to start:
+    /// Already capturing` — an mlx-c fatal, so it kills the process.
+    ///
+    /// This cost most of an evening on 2026-08-04 because the symptom points
+    /// the wrong way: the run dies on the THIRD startCapture (optimizer) while
+    /// forward and backward have already written their bundles, so the console
+    /// shows the fatal right after the last log line and it reads like a
+    /// wedged device. It only appeared once `--capture-backward-layers` made
+    /// `eval(grad)` fast enough to close the gap between backward's stop and
+    /// optimizer's start; the full-backward path was slow enough to hide it.
+    /// Do not "fix" this with a fixed sleep — poll the actual state.
+    private nonisolated static func awaitCaptureIdle(timeout: Double = 30.0) {
+        let start = Date.timeIntervalSinceReferenceDate
+        while MTLCaptureManager.shared().isCapturing {
+            if Date.timeIntervalSinceReferenceDate - start > timeout { break }
+            usleep(50_000)
+        }
+        usleep(200_000)  // let the trace document finish landing on disk
     }
 
     /// Total bytes of a `.gputrace` (a bundle directory), or -1 if absent.
