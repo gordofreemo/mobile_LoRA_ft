@@ -50,6 +50,7 @@ Usage:
     condor_submit condor/longlamp_user_remeasure_nrng3_compare.sub    # step 4
 """
 
+import argparse
 import json
 import re
 from pathlib import Path
@@ -85,6 +86,9 @@ def safe_user_tag(user_id: str) -> str:
 # Shared GPU boilerplate. tyr1/modi exclusions + Blackwell guard baked in from
 # the first submit (the original per-user baseline sub predates the exclusion
 # convention and does not carry them -- do not copy from it).
+# tyr2 added 2026-08-10: cluster 180119 lost 85/300 jobs to it, every one
+# "CUDA-capable device(s) is/are busy or unavailable" -- the same
+# oversubscription failure mode that got tyr1 excluded.
 GPU_COMMON = f"""
 should_transfer_files   = YES
 when_to_transfer_output = ON_EXIT_OR_EVICT
@@ -100,7 +104,7 @@ require_gpus            = Capability >= 8.0 && Capability < 10.0
 request_GPUs          = 1
 request_CPUs          = 2
 request_memory        = 16G
-requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "tyr2.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
 +WantGPUHomeMounted   = true
 +WantScratchMounted   = true
 """
@@ -135,7 +139,19 @@ def load_pools() -> dict:
     return pools
 
 
-def personalized_rows(pools: dict, first_user_only: bool = False) -> list:
+def personalized_result_exists(temporal_task: str, task_adapter: str,
+                               adapter_ckpt: str, utag: str) -> bool:
+    """Exact result path eval_longlamp.py's own stem construction produces for
+    a personalized-arm job of this round (verified against the smoke outputs,
+    modulo their _limit2 suffix)."""
+    name = (f"LongLaMP_{temporal_task}_test_{task_adapter}_final_"
+            f"{adapter_ckpt}_final_bm25k4_seed0_{DECODE_LABEL}_user{utag}"
+            f".predictions.jsonl")
+    return (PROJECT_ROOT / "results" / name).exists()
+
+
+def personalized_rows(pools: dict, first_user_only: bool = False,
+                      only_missing: bool = False) -> list:
     """Queue rows for the personalized arm. user_id LAST: Condor's
     `queue vars from (...)` splits on commas AND whitespace, and abstract's
     user ids are author names with spaces -- the last variable absorbs the
@@ -145,7 +161,11 @@ def personalized_rows(pools: dict, first_user_only: bool = False) -> list:
     for tag, (temporal_task, task_adapter, user_prefix) in TASKS.items():
         users = pools[tag][:1] if first_user_only else pools[tag]
         for u in users:
-            adapter_ckpt = f"{user_prefix}_{safe_user_tag(u['user_id'])}_seed0"
+            utag = safe_user_tag(u["user_id"])
+            adapter_ckpt = f"{user_prefix}_{utag}_seed0"
+            if only_missing and personalized_result_exists(
+                    temporal_task, task_adapter, adapter_ckpt, utag):
+                continue
             rows.append(f"  {temporal_task}, {task_adapter}, {adapter_ckpt}, {u['user_id']}")
     return rows
 
@@ -247,7 +267,24 @@ queue tag in (review abstract topic)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--retry-missing", action="store_true",
+        help="emit ONLY a retry sub (longlamp_user_remeasure_nrng3_retry1.sub) "
+             "containing the personalized-arm rows whose result file is not on "
+             "disk yet, instead of regenerating the full set. Used after "
+             "cluster 180119 lost 85/300 jobs to tyr2.")
+    args = parser.parse_args()
     pools = load_pools()
+
+    if args.retry_missing:
+        rows = personalized_rows(pools, only_missing=True)
+        if not rows:
+            raise SystemExit("[ok] nothing missing -- all personalized results on disk")
+        write_personalized_sub(
+            f"longlamp_user_remeasure_{DECODE_LABEL}_retry1", rows,
+            "RETRY of rows whose result file is missing")
+        return
 
     # Step 1: smoke -- one user per task, --limit 2 (=> _limit2 filename
     # suffix, cannot collide with the real run). Abstract's first user has a
