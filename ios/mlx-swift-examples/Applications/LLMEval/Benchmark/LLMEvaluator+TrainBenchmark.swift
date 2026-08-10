@@ -72,6 +72,11 @@ private let thermalFileLock = NSLock()
 /// the 30s passive sampler task and the cell train loops write interleaved.
 private let peropFileLock = NSLock()
 
+/// Serializes appends to the task-adapter (h12) JSONL. Genuinely concurrent:
+/// the 30s passive sampler task and the off-actor training loop write
+/// interleaved for the whole (multi-hour) run.
+private let taskAdapterFileLock = NSLock()
+
 extension LLMEvaluator {
 
     // MARK: - Launch mode
@@ -91,6 +96,13 @@ extension LLMEvaluator {
         // anyway so the pair reads unambiguously.
         if args.contains("--benchmark-train-perop-capture") { return .peropCapture }
         if args.contains("--benchmark-train-perop") { return .perop }
+        // NAX A/B: h11's cell machinery with per-iteration arm alternation.
+        if args.contains("--benchmark-nax-ab") { return .naxAB }
+        // h12: on-device Per-Task-LoRA (LaMP-7) training to completion.
+        if args.contains("--benchmark-train-taskadapter") { return .taskAdapter }
+        // NAX qmm_n numerical check: no model, no training — see
+        // runNaxVerifyBenchmark().
+        if args.contains("--verify-qmm-n") { return .verifyQmmN }
         if args.contains("--benchmark-thermal-selflimit") { return .thermalSelfLimit }
         if args.contains("--benchmark-thermal-cycle") { return .thermalCycle }
         if args.contains("--benchmark-thermal-cooldown") { return .thermalCooldown }
@@ -153,6 +165,23 @@ extension LLMEvaluator {
         /// debugger. Separate launch — capture perturbs timing.
         /// See runPerOpCaptureBenchmark.
         case peropCapture
+        /// Numerical verification of the vendored MLX patch that routes
+        /// non-transposed quantized matmul (backward's `dX`) onto the NAX
+        /// kernel. No model load, no training — synthesises weights and
+        /// compares kernels against dequantized references.
+        /// See runNaxVerifyBenchmark.
+        case verifyQmmN
+        /// NAX A/B (follow-on to h11): the per-op decomposition run on an
+        /// ALIGNED token grid with `MLX_ENABLE_NAX_N` alternated per iteration,
+        /// so each cell yields paired on/off measurements at the same die
+        /// temperature. See runPerOpBenchmark(idleMinutes:naxAB:).
+        case naxAB
+        /// Task-adapter training (h12): the Per-Task-LoRA (LaMP-7) trained to
+        /// completion on-device with the canonical task recipe (r=4, all seven
+        /// projections, cosine LR, effective batch 32 via accumulation) on
+        /// pre-tokenized side-loaded data with an assistant-masked loss.
+        /// `--max-steps 20` is the smoke form. See runTaskAdapterBenchmark.
+        case taskAdapter
     }
 
     /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
@@ -160,6 +189,16 @@ extension LLMEvaluator {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
         return args[i + 1]
+    }
+
+    /// `--nax-arm on|off` — NAX A/B arm for an E2E run. Sets MLX_ENABLE_NAX_N,
+    /// tags every record, routes to a separate JSONL and an arm-specific adapter
+    /// path, and enables the seeded batch shuffle so both arms see an IDENTICAL
+    /// batch sequence (otherwise the loss curves would differ by data order
+    /// rather than by the kernel under test). Absent → ordinary E2E run.
+    static var trainBenchmarkNaxArm: String? {
+        guard let v = launchArgValue("--nax-arm"), v == "on" || v == "off" else { return nil }
+        return v
     }
 
     /// `--user <fingerprint>` — which side-loaded per-user dataset to train (E2E).
@@ -173,6 +212,16 @@ extension LLMEvaluator {
     /// execution-order step 1). Absent → full 3×n_user.
     static var trainBenchmarkMaxIters: Int? {
         guard let v = launchArgValue("--max-iters") else { return nil }
+        return Int(v)
+    }
+
+    /// `--max-steps <N>` — cap the OPTIMIZER-step count for the h12 task-adapter
+    /// run (the smoke protocol runs 20). Distinct from `--max-iters`, which caps
+    /// E2E microbatch iterations. The LR schedule is always computed against the
+    /// FULL-corpus step count, so a smoke run is literally the first N steps of
+    /// the real schedule.
+    static var trainBenchmarkMaxSteps: Int? {
+        guard let v = launchArgValue("--max-steps") else { return nil }
         return Int(v)
     }
 
@@ -321,6 +370,12 @@ extension LLMEvaluator {
 
     /// Run the training benchmark and exit. Safe to call once on launch.
     func runTrainBenchmark(mode: TrainBenchLaunchMode) async {
+        // NAX qmm_n verification: no model, no training, seconds not minutes.
+        // Checked first so it can never be shadowed by the model-loading paths.
+        if mode == .verifyQmmN {
+            await runNaxVerifyBenchmark()
+            return
+        }
         // Idle energy baseline (h9) is a separate orchestration path (no
         // model, no training); the cap-sweep below is untouched.
         if mode == .idleBaseline {
@@ -372,12 +427,23 @@ extension LLMEvaluator {
         // Per-op decomposition (h11) — two separate orchestration paths (the
         // Tier-1 sweep and the Tier-2 Metal capture); everything above and the
         // cap-sweep below are untouched.
+        if mode == .naxAB {
+            await runPerOpBenchmark(
+                idleMinutes: Self.trainBenchmarkIdleMinutes, naxAB: true)
+            return
+        }
         if mode == .perop {
             await runPerOpBenchmark(idleMinutes: Self.trainBenchmarkIdleMinutes)
             return
         }
         if mode == .peropCapture {
             await runPerOpCaptureBenchmark(targetTokens: Self.trainBenchmarkCaptureTokens)
+            return
+        }
+        // Task-adapter (h12) — separate orchestration path (pre-tokenized data,
+        // custom accumulation loop); everything above and below is untouched.
+        if mode == .taskAdapter {
+            await runTaskAdapterBenchmark(maxSteps: Self.trainBenchmarkMaxSteps)
             return
         }
         if mode == .thermalCycle {
@@ -633,6 +699,10 @@ extension LLMEvaluator {
         let seqCap: Int
         let modelName: String
         let sessionId: String
+        /// NAX A/B arm for this run ("on"/"off"), or nil for a normal E2E run.
+        /// When set, records go to a SEPARATE JSONL and the adapter path is
+        /// arm-specific, so the h5 backlog data and adapters are untouched.
+        var naxArm: String? = nil
     }
 
     /// Train ONE real user's LaMP-3 User-LoRA to completion (3 epochs =
@@ -656,6 +726,16 @@ extension LLMEvaluator {
             finishTrainBenchmark()
             return
         }
+        // NAX A/B: set the dispatch arm and pin the batch order BEFORE any
+        // model load or training so both runs are identical apart from the
+        // kernel. The env read in the vendored MLX is live (not cached), and
+        // dispatch is decided at eval time, so setting it here covers the run.
+        let naxArm = Self.trainBenchmarkNaxArm
+        if let naxArm {
+            setenv("MLX_ENABLE_NAX_N", naxArm == "on" ? "1" : "0", 1)
+            LoRATrain.shuffleSeed = TrainBenchConstants.naxABShuffleSeed
+            tlog("E2E NAX arm=\(naxArm) shuffleSeed=\(TrainBenchConstants.naxABShuffleSeed)")
+        }
         tlog("E2E start session=\(sessionId) user=\(user) condition=\(condition) "
             + "build=\(TrainBenchConstants.appBuild)")
         benchLogLine("E2E start session=\(sessionId) user=\(user) condition=\(condition)")
@@ -676,7 +756,7 @@ extension LLMEvaluator {
         benchLogLine("E2E loaded nUser=\(nUser) iterations=\(iterations)")
 
         // Adapter save path (Documents/e2e_adapters/adapter_<fp>.safetensors).
-        let adapterURL = Self.e2eAdapterURL(user: user)
+        let adapterURL = Self.e2eAdapterURL(user: user, naxArm: naxArm)
         try? FileManager.default.createDirectory(
             at: adapterURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
@@ -695,10 +775,11 @@ extension LLMEvaluator {
         let modelName =
             modelConfiguration.name.components(separatedBy: "/").last
             ?? modelConfiguration.name
-        let ctx = E2ERunContext(
+        var ctx = E2ERunContext(
             user: user, profileSize: nUser, condition: condition, nUser: nUser,
             iterations: iterations, seqCap: TrainBenchConstants.e2eSeqCap,
             modelName: modelName, sessionId: sessionId)
+        ctx.naxArm = naxArm
 
         // A wall-clock origin shared by every elapsed_s column (battery + train).
         let benchStart = Date.timeIntervalSinceReferenceDate
@@ -971,19 +1052,31 @@ extension LLMEvaluator {
         return try? MLXLLM.loadLoRAData(url: url)
     }
 
-    private nonisolated static func e2eAdapterURL(user: String) -> URL {
-        URL.documentsDirectory
+    private nonisolated static func e2eAdapterURL(user: String, naxArm: String? = nil) -> URL {
+        // Arm-specific filename so the two A/B runs do not overwrite each
+        // other's adapter and the resulting models can be compared directly.
+        let suffix = naxArm.map { "_nax-\($0)" } ?? ""
+        return URL.documentsDirectory
             .appendingPathComponent(TrainBenchConstants.e2eAdapterDirName)
-            .appendingPathComponent("adapter_\(user).safetensors")
+            .appendingPathComponent("adapter_\(user)\(suffix).safetensors")
     }
 
     // MARK: - E2E record builders (nonisolated → callable from the train callback)
+
+    /// Output file for this run: the NAX A/B round writes to its own JSONL so
+    /// `train_bench_metrics_e2e.jsonl` (h5 backlog) stays untouched.
+    private nonisolated static func e2eFileName(_ c: E2ERunContext) -> String? {
+        c.naxArm == nil ? nil : TrainBenchConstants.naxABE2EMetricsFileName
+    }
 
     private nonisolated static func e2eBaseRecord(_ c: E2ERunContext, recordType: String) -> [String: Any] {
         [
             "record_type": recordType,
             "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
             "user_fingerprint": c.user,
+            "nax_arm": c.naxArm ?? NSNull(),
+            "shuffle_seed": c.naxArm == nil
+                ? NSNull() : TrainBenchConstants.naxABShuffleSeed,
             "profile_size": c.profileSize,
             "condition": c.condition,
             "n_user": c.nUser,
@@ -1025,7 +1118,7 @@ extension LLMEvaluator {
         r["peak_mem_bytes"] = peak
         r["thermal_state"] = thermal
         r["low_power_mode"] = lpm
-        emitE2E(r)
+        emitE2E(r, fileName: e2eFileName(c))
     }
 
     private nonisolated static func appendE2EBattery(
@@ -1041,7 +1134,7 @@ extension LLMEvaluator {
         r["peak_mem_bytes"] = peak
         // h9: secondary diagnostic only, see cpuUtilizationPercent's doc comment.
         r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
-        emitE2E(r)
+        emitE2E(r, fileName: e2eFileName(c))
     }
 
     private nonisolated static func appendE2EMarker(
@@ -1049,13 +1142,13 @@ extension LLMEvaluator {
     ) {
         var r = e2eBaseRecord(c, recordType: recordType)
         for (k, v) in extra { r[k] = v }
-        emitE2E(r)
+        emitE2E(r, fileName: e2eFileName(c))
     }
 
     /// Serialize + append one E2E record to `train_bench_metrics_e2e.jsonl`.
     /// nonisolated + lock-guarded (see file-scope `e2eFileLock`): the off-actor
     /// train callback and the main-actor battery sampler both write concurrently.
-    private nonisolated static func emitE2E(_ record: [String: Any]) {
+    private nonisolated static func emitE2E(_ record: [String: Any], fileName: String? = nil) {
         guard
             let data = try? JSONSerialization.data(
                 withJSONObject: record, options: [.sortedKeys]),
@@ -1063,7 +1156,7 @@ extension LLMEvaluator {
         else { return }
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
-            TrainBenchConstants.e2eMetricsFileName)
+            fileName ?? TrainBenchConstants.e2eMetricsFileName)
         e2eFileLock.lock()
         defer { e2eFileLock.unlock() }
         do {
@@ -2539,6 +2632,10 @@ extension LLMEvaluator {
         /// Honest user input via `--idle-minutes`, recorded verbatim; `nil`
         /// when the arg was omitted (recorded as null, never inferred).
         let idleMinutes: Double?
+        /// NAX A/B round: alternate `MLX_ENABLE_NAX_N` per iteration and write
+        /// to a separate JSONL under a separate build string, so h11's data and
+        /// provenance are untouched. Defaults false — h11 behaviour verbatim.
+        var naxAB: Bool = false
     }
 
     /// The six per-phase times of ONE barriered training iteration, seconds.
@@ -2573,7 +2670,11 @@ extension LLMEvaluator {
     /// overhead, reported per cell by the aggregator.
     ///
     /// See experiments/2026-08-04-ondevice-perop-h11-plan.md.
-    func runPerOpBenchmark(idleMinutes: Double?) async {
+    /// `naxAB: true` runs the NAX A/B variant: aligned token grid, per-iteration
+    /// `MLX_ENABLE_NAX_N` alternation, separate JSONL and build string. The
+    /// cold-reference probe stays pinned OFF so it remains directly comparable
+    /// to h11's 4.702 s/iter as a cross-round reproducibility anchor.
+    func runPerOpBenchmark(idleMinutes: Double?, naxAB: Bool = false) async {
         enableThinking = false
         #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = true
@@ -2601,7 +2702,8 @@ extension LLMEvaluator {
             sessionId: sessionId,
             modelName: modelConfiguration.name.components(separatedBy: "/").last
                 ?? modelConfiguration.name,
-            idleMinutes: idleMinutes)
+            idleMinutes: idleMinutes,
+            naxAB: naxAB)
 
         let runStart = Date.timeIntervalSinceReferenceDate
         let batteryStart = Self.batterySnapshot()
@@ -2637,11 +2739,18 @@ extension LLMEvaluator {
 
         // 1. Cold reference (h10 design, 2 iterations @500 tok).
         tlog("perop: cold-reference probe")
+        // Pinned OFF: this probe's whole job is comparability with h11's
+        // 4.702 s/iter, so it must run stock dispatch in both rounds.
+        _ = Self.setNaxArm(on: false, enabled: naxAB)
         await runPerOpColdRef(container: container, ctx: ctx, runStart: runStart)
 
         // 2+3. Both passes, ascending tokens, no cooldown gate anywhere.
+        let grid =
+            naxAB
+            ? TrainBenchConstants.naxABTokenCounts
+            : TrainBenchConstants.peropTokenCounts
         for pass in TrainBenchConstants.peropPasses {
-            for tokens in TrainBenchConstants.peropTokenCounts {
+            for tokens in grid {
                 await runPerOpCell(
                     container: container, ctx: ctx, targetTokens: tokens, pass: pass,
                     runStart: runStart)
@@ -2784,6 +2893,11 @@ extension LLMEvaluator {
                     iterations: total, stepsPerReport: 1, stepsPerEval: total + 1,
                     validationBatches: 0, saveEvery: total + 1, adapterURL: nil)
                 GPU.resetPeakMemory()
+                // NAX A/B: alternate the arm per iteration. The callback fires
+                // AFTER an iteration completes, so it records the arm that just
+                // ran and arms the NEXT one; iteration 0's arm is set here.
+                // Even iterations are ON so each cell starts on the patched path.
+                var fusedArm = Self.setNaxArm(on: true, enabled: ctx.naxAB)
                 try LoRATrain.train(
                     model: model, train: [example], validate: [example],
                     optimizer: Self.perOpOptimizer(), tokenizer: c.tokenizer,
@@ -2796,7 +2910,10 @@ extension LLMEvaluator {
                             warmup: iteration < warmupCount,
                             iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
                             phases: nil,
-                            elapsed: Date.timeIntervalSinceReferenceDate - runStart)
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            arm: fusedArm)
+                        fusedArm = Self.setNaxArm(
+                            on: (iteration + 1) % 2 == 0, enabled: ctx.naxAB)
                     }
                     return .more
                 }
@@ -2816,7 +2933,10 @@ extension LLMEvaluator {
 
                 GPU.resetPeakMemory()
                 for iteration in 0 ..< total {
-                    let (phases, loss, ntokens) = Self.perOpBarrieredIteration(
+                    // Arm set BEFORE the iteration runs — unlike the fused
+                    // block, this loop brackets each iteration directly.
+                    let arm = Self.setNaxArm(on: iteration % 2 == 0, enabled: ctx.naxAB)
+                    let (phases, loss, ntokens, seqLen) = Self.perOpBarrieredIteration(
                         model: model, tokenizer: c.tokenizer, example: example,
                         lossValueGrad: lossValueGrad, optimizer: optimizer)
                     Self.appendPerOpIterRecord(
@@ -2826,7 +2946,8 @@ extension LLMEvaluator {
                         iterSeconds: phases.total,
                         tokPerSec: Double(ntokens) / phases.total, loss: loss,
                         phases: phases,
-                        elapsed: Date.timeIntervalSinceReferenceDate - runStart)
+                        elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                        arm: arm, seqLen: seqLen)
                 }
             }
             tlog("perop cell tokens=\(targetTokens) pass=\(pass): complete")
@@ -2848,6 +2969,24 @@ extension LLMEvaluator {
                 "battery_level": Self.batterySnapshot().level,
                 "peak_mem_bytes": Memory.snapshot().peakMemory,
             ])
+    }
+
+    /// Set the `MLX_ENABLE_NAX_N` arm for the iteration about to run and return
+    /// its label ("on"/"off"), or nil when alternation is disabled (h11 path).
+    ///
+    /// Safe to call between iterations because the vendored `env::enable_nax_n()`
+    /// reads the variable live rather than caching it in a function-local static
+    /// the way every sibling accessor does. Dispatch is decided in the C++
+    /// backend at EVAL time, so the arm in force when an iteration's graph is
+    /// evaluated is the one that runs — which is why this is called immediately
+    /// before the iteration and never mid-iteration.
+    ///
+    /// With the arm "off" the guard collapses to stock upstream MLX exactly, so
+    /// the off arm is the true control, not an approximation of one.
+    private nonisolated static func setNaxArm(on: Bool, enabled: Bool) -> String? {
+        guard enabled else { return nil }
+        setenv("MLX_ENABLE_NAX_N", on ? "1" : "0", 1)
+        return on ? "on" : "off"
     }
 
     /// ONE barriered training iteration: `LoRATrain.train`'s per-iteration body
@@ -2883,7 +3022,7 @@ extension LLMEvaluator {
         model: Module, tokenizer: Tokenizer, example: String,
         lossValueGrad: (Module, [MLXArray]) -> ([MLXArray], ModuleParameters),
         optimizer: AdamW
-    ) -> (phases: PerOpPhaseTimes, loss: Float, ntokens: Int) {
+    ) -> (phases: PerOpPhaseTimes, loss: Float, ntokens: Int, seqLen: Int) {
         let t0 = Date.timeIntervalSinceReferenceDate
 
         // 1. data_prep — LoRABatchIterator.next() for batchSize = 1.
@@ -2926,7 +3065,7 @@ extension LLMEvaluator {
             PerOpPhaseTimes(
                 dataPrep: t1 - t0, graphBuild: t2 - t1, forward: t3 - t2,
                 backward: t4 - t3, optimizer: t5 - t4, readback: t6 - t5),
-            loss, ntokens
+            loss, ntokens, inputs.dim(1)
         )
     }
 
@@ -3378,7 +3517,10 @@ extension LLMEvaluator {
             "record_type": recordType,
             "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
             "idle_minutes": c.idleMinutes ?? NSNull(),
-            "token_grid": TrainBenchConstants.peropTokenCounts,
+            "token_grid": c.naxAB
+                ? TrainBenchConstants.naxABTokenCounts
+                : TrainBenchConstants.peropTokenCounts,
+            "nax_ab": c.naxAB,
             "warmup_iterations": TrainBenchConstants.peropWarmupIterations,
             "kept_iterations": TrainBenchConstants.peropKeptIterations,
             "cold_ref_tokens": TrainBenchConstants.peropColdRefTokens,
@@ -3395,7 +3537,9 @@ extension LLMEvaluator {
             "learning_rate": TrainBenchConstants.e2eLearningRate,
             "weight_decay": TrainBenchConstants.e2eWeightDecay,
             "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
-            "app_build": TrainBenchConstants.peropAppBuild,
+            "app_build": c.naxAB
+                ? TrainBenchConstants.naxABAppBuild
+                : TrainBenchConstants.peropAppBuild,
             "bench_schema_version": TrainBenchConstants.peropSchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -3412,11 +3556,22 @@ extension LLMEvaluator {
     private nonisolated static func appendPerOpIterRecord(
         _ c: PerOpRunContext, recordType: String, mode: String, pass: String,
         targetTokens: Int, iterIndex: Int, warmup: Bool, iterSeconds: Double,
-        tokPerSec: Double, loss: Float, phases: PerOpPhaseTimes?, elapsed: Double
+        tokPerSec: Double, loss: Float, phases: PerOpPhaseTimes?, elapsed: Double,
+        arm: String? = nil, seqLen: Int? = nil
     ) {
         var r = perOpBaseRecord(c, recordType: recordType)
         r["mode"] = mode
         r["pass"] = pass
+        // Which MLX_ENABLE_NAX_N arm ran THIS iteration ("on"/"off"); nil on
+        // the h11 path, where the flag is never touched.
+        r["arm"] = arm ?? NSNull()
+        // The ACTUAL M seen by the quantized matmuls. LoRABatchIterator returns
+        // inputs as batchArray[:, :-1], so M = tokens - 1, and the NAX
+        // non-transposed dispatch requires M % 64 == 0. Recorded rather than
+        // assumed: if this is not a multiple of 64 the run silently measures
+        // the generic kernel in BOTH arms and means nothing.
+        r["seq_len"] = seqLen ?? NSNull()
+        r["seq_len_aligned_64"] = seqLen.map { $0 % 64 == 0 } ?? NSNull()
         r["target_tokens"] = targetTokens
         r["iter_index"] = iterIndex
         r["warmup"] = warmup
@@ -3436,7 +3591,7 @@ extension LLMEvaluator {
             r["phase_optimizer_s"] = p.optimizer
             r["phase_readback_s"] = p.readback
         }
-        emitPerOp(r)
+        emitPerOp(r, naxAB: c.naxAB)
     }
 
     private nonisolated static func appendPerOpSample(
@@ -3450,7 +3605,7 @@ extension LLMEvaluator {
         r["thermal_state"] = thermal
         r["low_power_mode"] = lpm
         r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
-        emitPerOp(r)
+        emitPerOp(r, naxAB: c.naxAB)
     }
 
     private nonisolated static func appendPerOpMarker(
@@ -3458,13 +3613,13 @@ extension LLMEvaluator {
     ) {
         var r = perOpBaseRecord(c, recordType: recordType)
         for (k, v) in extra { r[k] = v }
-        emitPerOp(r)
+        emitPerOp(r, naxAB: c.naxAB)
     }
 
     /// Append one h11 JSONL line. Its own file: the h9 L run is still pending
     /// against `train_bench_metrics_e2e.jsonl`, which this round must not
     /// touch.
-    private nonisolated static func emitPerOp(_ record: [String: Any]) {
+    private nonisolated static func emitPerOp(_ record: [String: Any], naxAB: Bool = false) {
         guard
             let data = try? JSONSerialization.data(
                 withJSONObject: record, options: [.sortedKeys]),
@@ -3472,7 +3627,9 @@ extension LLMEvaluator {
         else { return }
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
-            TrainBenchConstants.peropMetricsFileName)
+            naxAB
+                ? TrainBenchConstants.naxABMetricsFileName
+                : TrainBenchConstants.peropMetricsFileName)
         peropFileLock.lock()
         defer { peropFileLock.unlock() }
         do {
@@ -3486,6 +3643,860 @@ extension LLMEvaluator {
             }
         } catch {
             // best-effort; a failed line must not crash the run
+        }
+    }
+
+    // MARK: - NAX qmm_n numerical verification (--verify-qmm-n)
+    //
+    // Checks the vendored MLX patch (ios/mlx-swift, `env::enable_nax_n()`) that
+    // lets non-transposed quantized matmul reach `affine_qmm_n_nax`. Upstream
+    // gates NAX on `transpose == true`, so that kernel — although compiled and
+    // instantiated — was unreachable, and therefore never exercised by upstream
+    // CI. "It compiles" says nothing about whether it is correct, so this runs
+    // before any timing work.
+    //
+    // METHOD. Not an absolute tolerance: NAX for float32 is TF32-precision by
+    // design (that is what the `env::enable_tf32() || dtype != float32` clause
+    // in the dispatch guard means), so a fixed threshold would be a guess that
+    // could fail a healthy kernel or pass a broken one. Instead we calibrate
+    // against `affine_qmm_t_nax` — the NAX kernel already running in every
+    // forward pass of every training run to date, all of which converge with
+    // healthy loss curves, and which therefore DEFINES the precision already
+    // empirically accepted on this device.
+    //
+    // Each kernel is compared against a reference built by dequantizing the
+    // weights IT consumed, so 4-bit quantization error cancels out of both and
+    // what remains is accumulation error — the only thing the patch could have
+    // broken. The transposed and non-transposed cases need genuinely different
+    // matrices ([N,K] vs [K,N]); transposing one is not equivalent, because
+    // quantization groups along the last axis and would group different numbers.
+    //
+    // Structural note worth recording: for `transpose == false` the weight is
+    // [K, N] and quantization groups along N, so N % 64 == 0 is REQUIRED merely
+    // to construct the operand. The plan's worry about `qmm_nax` computing
+    // `aligned = N % 64 == 0` but only using it for the transposed kernel name
+    // is therefore moot — N is always aligned by construction. Only K can be
+    // misaligned, and the surviving `K % 64 == 0` clause routes those to the
+    // generic kernel anyway.
+
+    /// One (K, N, M, batch) case under test.
+    private struct NaxVerifyCase {
+        let label: String
+        let k: Int
+        let n: Int
+        let m: Int
+        /// Leading batch dim; 1 means a 2-D `x` (the `batch_0` kernel variant).
+        let batch: Int
+    }
+
+    /// Deterministic, equidistributed float32 test matrix of shape [r, c],
+    /// values roughly uniform on [-1.73, 1.73] (unit variance).
+    ///
+    /// The data generator matters more than it looks. A first version used
+    /// `sin(row*a + col*b)`, which made every row a smooth sinusoid; the
+    /// products in `x·V` then cancelled systematically, collapsing the norm of
+    /// the reference result and inflating EVERY relative error — the
+    /// known-good generic kernel scored 0.99 on one shape and the transposed
+    /// reference collapsed to exactly 0. Well-conditioned test data is a
+    /// prerequisite for the comparison to mean anything, so this uses a
+    /// two-stage fractional hash with no smooth structure.
+    ///
+    /// Built from separate row/column index vectors rather than a flat index:
+    /// float32 represents integers exactly only to 2^24 = 16.7M, and the
+    /// lm_head case has 128256*2048 = 263M elements, so a flat `arange` would
+    /// silently alias. Row and column extents are both well under 2^24.
+    private nonisolated static func naxTestMatrix(_ r: Int, _ c: Int) -> MLXArray {
+        let ri = arange(r, dtype: .float32).reshaped([r, 1])
+        let ci = arange(c, dtype: .float32).reshaped([1, c])
+        // R2 low-discrepancy lattice, then a second decorrelating fract.
+        let t = ri * 0.754_877_666_2 + ci * 0.569_840_290_9
+        let f = t - floor(t)
+        let g = f * 1234.5678 + ri * 0.314_159_265_3
+        let h = g - floor(g)
+        return (h - 0.5) * 3.4641
+    }
+
+    /// Frobenius norm, as a scalar Double. Logged alongside every error so a
+    /// degenerate (near-zero) reference is visible rather than silently
+    /// inflating the relative errors computed against it.
+    private nonisolated static func naxNorm(_ a: MLXArray) -> Double {
+        let f = a.asType(.float32)
+        return Double(sqrt(sum(f * f)).item(Float.self))
+    }
+
+    /// Relative Frobenius error and max absolute deviation of `a` against `b`.
+    private nonisolated static func naxRelError(_ a: MLXArray, _ b: MLXArray)
+        -> (rel: Double, maxAbs: Double)
+    {
+        let af = a.asType(.float32)
+        let bf = b.asType(.float32)
+        let diff = af - bf
+        let num = sqrt(sum(diff * diff)).item(Float.self)
+        let den = sqrt(sum(bf * bf)).item(Float.self)
+        let maxAbs = diff.abs().max().item(Float.self)
+        return (Double(num) / Double(Swift.max(den, 1e-30)), Double(maxAbs))
+    }
+
+    /// Build and evaluate `make()` with the NAX non-transposed path forced on
+    /// or off.
+    ///
+    /// The `eval` MUST happen inside this call. MLX is lazy: the dispatch
+    /// decision is taken when the graph is EVALUATED, not when the op is
+    /// queued, so deferring the eval past a later flip of the flag would let
+    /// the env var in force at eval time decide — and both arms could silently
+    /// take the same path, producing a spurious "identical results" pass.
+    /// This is also why the vendored `env::enable_nax_n()` deliberately does
+    /// NOT cache in a function-local static the way its siblings do.
+    private nonisolated static func naxEval(arm on: Bool, _ make: () -> MLXArray) -> MLXArray {
+        setenv("MLX_ENABLE_NAX_N", on ? "1" : "0", 1)
+        let y = make()
+        eval(y)
+        return y
+    }
+
+    /// The shape grid: SmolLM3's real backward shapes, plus a batched case and
+    /// a deliberately K-misaligned probe.
+    ///
+    /// For `dX = dY·W` the contraction is over out_features and the output is
+    /// in_features, so (K,N) here are (out, in) of the forward projection.
+    /// Ordered small→large, and every case streams its result to disk as it
+    /// finishes, so a jetsam on the 1 GB lm_head reference costs only that row.
+    private nonisolated static var naxVerifyCases: [NaxVerifyCase] {
+        var cases: [NaxVerifyCase] = []
+        let shapes: [(String, Int, Int)] = [
+            ("k_v_proj", 512, 2048),      // 2048 -> 512
+            ("q_o_proj", 2048, 2048),     // 2048 -> 2048
+            ("down_proj", 2048, 11008),   // 11008 -> 2048
+            ("gate_up_proj", 11008, 2048),  // 2048 -> 11008
+        ]
+        // M is swept ALIGNED and UNALIGNED in pairs. `qmm_n_nax_tgp_impl` does
+        // `(void)M`, has its `num_els = min(BM, M - y_row)` bounds lines
+        // COMMENTED OUT, and calls `Atile.load` / `Dtile.store` unconditionally
+        // — where the transposed sibling carries `kAlignedM`/`kAlignedN` and
+        // switches to `load_safe`/`store_safe` on partial tiles. So the kernel
+        // should be correct exactly when M % BM == 0 (BM = 64) and garbage
+        // otherwise. 250/500 (h11's token grid) are unaligned; 64/128/256/512
+        // are aligned.
+        for (label, k, n) in shapes {
+            for m in [64, 128, 250, 256, 500, 512] {
+                cases.append(NaxVerifyCase(label: label, k: k, n: n, m: m, batch: 1))
+            }
+        }
+        // Dedicated M sweep stressing the ported partial-tile paths. BM = 64,
+        // and each threadgroup is split into two SM = 32 simdgroup slices, so
+        // the interesting values are the ones straddling 32 and 64: a tile with
+        // a single live row, a tile one row short, and a slice where the SECOND
+        // simdgroup is entirely past the end of the matrix (33..63), which is
+        // where `sgp_sm` goes negative.
+        for m in [1, 2, 31, 32, 33, 63, 65, 96, 97, 100, 127, 129, 191, 193, 255,
+                  257, 511, 513, 999, 1000, 1023, 1025] {
+            cases.append(NaxVerifyCase(label: "m_sweep", k: 2048, n: 2048, m: m, batch: 1))
+        }
+        // Unaligned M under batching, where the per-batch offset arithmetic
+        // also has to stay correct.
+        for m in [100, 250] {
+            cases.append(NaxVerifyCase(label: "m_sweep_batched", k: 2048, n: 2048, m: m, batch: 2))
+        }
+        // M = 1 never reaches qmm() at all (dispatches to the matrix-VECTOR
+        // kernel qmv), so both arms must agree exactly — a control on the
+        // harness itself.
+        cases.append(NaxVerifyCase(label: "m1_qmv_control", k: 2048, n: 2048, m: 1, batch: 1))
+        // Batched variant — exercises the `batch_1` kernel instantiation, both
+        // sides of the alignment boundary.
+        cases.append(NaxVerifyCase(label: "q_o_batched_aligned", k: 2048, n: 2048, m: 256, batch: 2))
+        cases.append(NaxVerifyCase(label: "q_o_batched_unaligned", k: 2048, n: 2048, m: 250, batch: 2))
+        // K not a multiple of 64: the surviving `K % 64 == 0` clause should
+        // route this to the GENERIC kernel even with the patch active, so both
+        // arms must agree exactly. Confirms the patch did not widen the guard
+        // further than intended.
+        cases.append(NaxVerifyCase(label: "k_misaligned_probe", k: 100, n: 2048, m: 250, batch: 1))
+        // lm_head last: its dequantized fp32 reference alone is ~1 GB, and it
+        // jetsammed at M=250 on the first run — keep it to the aligned/unaligned
+        // pair at small M.
+        for m in [64, 250] {
+            cases.append(NaxVerifyCase(label: "lm_head", k: 128_256, n: 2048, m: m, batch: 1))
+        }
+        return cases
+    }
+
+    /// Run the whole grid and write one JSONL row per case.
+    func runNaxVerifyBenchmark() async {
+        let started = Date()
+        tlog("nax-verify: start, \(Self.naxVerifyCases.count) cases")
+        Self.emitNaxVerify([
+            "record_type": "run_start",
+            "timestamp_utc": ISO8601DateFormatter().string(from: started),
+            "app_build": TrainBenchConstants.peropAppBuild,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "group_size": 64,
+            "bits": 4,
+            "case_count": Self.naxVerifyCases.count,
+        ])
+
+        for c in Self.naxVerifyCases {
+            GPU.resetPeakMemory()
+            var row: [String: Any] = [
+                "record_type": "case",
+                "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+                "label": c.label,
+                "k": c.k, "n": c.n, "m": c.m, "batch": c.batch,
+                "k_aligned_64": c.k % 64 == 0,
+            ]
+
+            let xShape = c.batch == 1 ? [c.m, c.k] : [c.batch, c.m, c.k]
+            let x = Self.naxTestMatrix(c.batch * c.m, c.k).reshaped(xShape)
+
+            // --- non-transposed (the patched path): w is [K, N] -------------
+            let v = Self.naxTestMatrix(c.k, c.n)
+            let (vq, vs, vb) = quantized(v, groupSize: 64, bits: 4)
+            let refN = matmul(x, dequantized(vq, scales: vs, biases: vb, groupSize: 64, bits: 4))
+            eval(refN)
+
+            let yNaxOn = Self.naxEval(arm: true) {
+                quantizedMM(
+                    x, vq, scales: vs, biases: vb, transpose: false, groupSize: 64, bits: 4)
+            }
+            let yNaxOff = Self.naxEval(arm: false) {
+                quantizedMM(
+                    x, vq, scales: vs, biases: vb, transpose: false, groupSize: 64, bits: 4)
+            }
+
+            let eOn = Self.naxRelError(yNaxOn, refN)
+            let eOff = Self.naxRelError(yNaxOff, refN)
+            let eArms = Self.naxRelError(yNaxOn, yNaxOff)
+            // Reference scale, so a collapsed reference can never masquerade as
+            // a kernel error. Expect ~sqrt(elements * K) for well-conditioned
+            // unit-variance operands.
+            row["ref_n_norm"] = Self.naxNorm(refN)
+            row["y_n_nax_norm"] = Self.naxNorm(yNaxOn)
+            row["y_n_generic_norm"] = Self.naxNorm(yNaxOff)
+            row["err_n_nax_rel"] = eOn.rel
+            row["err_n_nax_maxabs"] = eOn.maxAbs
+            row["err_n_generic_rel"] = eOff.rel
+            row["err_n_generic_maxabs"] = eOff.maxAbs
+            row["err_arms_rel"] = eArms.rel
+            row["err_arms_maxabs"] = eArms.maxAbs
+            row["n_nax_finite"] = eOn.rel.isFinite && eOn.maxAbs.isFinite
+
+            // --- transposed (the trusted yardstick): w is [N, K] ------------
+            // Only constructible when K % 64 == 0, since quantization groups
+            // along the last axis of the [N, K] operand.
+            if c.k % 64 == 0 {
+                let w = Self.naxTestMatrix(c.n, c.k)
+                let (wq, ws, wbb) = quantized(w, groupSize: 64, bits: 4)
+                let refT = matmul(
+                    x,
+                    dequantized(wq, scales: ws, biases: wbb, groupSize: 64, bits: 4)
+                        .transposed(1, 0))
+                let yT = quantizedMM(
+                    x, wq, scales: ws, biases: wbb, transpose: true, groupSize: 64, bits: 4)
+                eval(refT, yT)
+                let eT = Self.naxRelError(yT, refT)
+                row["err_t_nax_rel"] = eT.rel
+                row["err_t_nax_maxabs"] = eT.maxAbs
+                row["ref_t_norm"] = Self.naxNorm(refT)
+                row["y_t_nax_norm"] = Self.naxNorm(yT)
+                // The headline comparison: how does the newly-reachable kernel
+                // compare to the one already trusted in production?
+                row["ratio_n_over_t"] = eT.rel > 0 ? eOn.rel / eT.rel : Double.nan
+            }
+
+            row["peak_mem_bytes"] = Memory.snapshot().peakMemory
+            // Log BEFORE emitting: if a row ever fails to serialise, the
+            // console must still carry the numbers (an earlier version crashed
+            // inside emit and lost the very case that was misbehaving).
+            tlog(
+                "nax-verify \(c.label) K=\(c.k) N=\(c.n) M=\(c.m) b=\(c.batch): "
+                    + "n_nax=\(eOn.rel) n_gen=\(eOff.rel) "
+                    + "t_nax=\(row["err_t_nax_rel"] as? Double ?? -1) "
+                    + "arms=\(eArms.rel) refN=\(Self.naxNorm(refN)) "
+                    + "refT=\(row["ref_t_norm"] as? Double ?? -1)")
+            Self.emitNaxVerify(row)
+        }
+
+        // Leave the process with the NAX non-transposed path OFF. It was
+        // measured WRONG (see the file-level note and
+        // experiments/2026-08-06-mlx-nax-qmm-n-backward.md), so nothing
+        // downstream may inherit it enabled.
+        setenv("MLX_ENABLE_NAX_N", "0", 1)
+        Self.emitNaxVerify([
+            "record_type": "run_end",
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "elapsed_s": Date().timeIntervalSince(started),
+        ])
+        tlog("nax-verify: done in \(Date().timeIntervalSince(started))s")
+        exit(0)
+    }
+
+    /// JSONSerialization throws `NSInvalidArgumentException` on NaN/Inf, which
+    /// kills the process. A non-finite error value is exactly what a broken
+    /// kernel would produce — i.e. it is the FINDING — so preserve it as a
+    /// string rather than crashing the run or silently dropping the row.
+    private nonisolated static func naxSanitize(_ record: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (k, v) in record {
+            if let d = v as? Double, !d.isFinite {
+                out[k] = d.isNaN ? "nan" : (d > 0 ? "inf" : "-inf")
+            } else {
+                out[k] = v
+            }
+        }
+        return out
+    }
+
+    /// Append one verification row. Its own file — this must not touch the h11
+    /// per-op JSONL, whose timing run is still to come.
+    private nonisolated static func emitNaxVerify(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: naxSanitize(record), options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent("nax_verify.jsonl")
+        peropFileLock.lock()
+        defer { peropFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash the run
+        }
+    }
+
+    // MARK: - Task-adapter training (h12) — Per-Task-LoRA (LaMP-7) to completion
+
+    /// One pre-tokenized example from the side-loaded corpus. `ids` is the full
+    /// rendered token sequence; `[lossStart, lossEnd)` is the assistant-
+    /// supervised span in `ids` (built Mac-side via HF
+    /// `return_assistant_tokens_mask` — see data/build_task_device_data.py).
+    struct TaskAdapterExample: Sendable {
+        let id: String
+        let ids: [Int32]
+        let lossStart: Int
+        let lossEnd: Int
+    }
+
+    struct TaskAdapterRunContext: Sendable {
+        let sessionId: String
+        let modelName: String
+        let nExamples: Int
+        /// Steps this run will execute (smoke: maxSteps; full: ceil(n/32)).
+        let totalSteps: Int
+        /// Steps the LR schedule is computed against — ALWAYS the full-corpus
+        /// count, so a smoke run is the first N steps of the real schedule.
+        let scheduleTotalSteps: Int
+        let runName: String
+        let naxArm: String?
+        let condition: String
+        let idleMinutes: Double?
+    }
+
+    /// Train the Per-Task-LoRA (LaMP-7) on-device with the canonical task
+    /// recipe. Faithful-by-construction pieces, each matching the cluster
+    /// reference (`train/checkpoints/per_task_lamp7_1ep_seed0`):
+    ///
+    ///  * data: pre-tokenized ids + assistant-mask span, rendered with the
+    ///    byte-identical tokenizer/chat template the cluster used; the file's
+    ///    order IS the seed-0 shuffle (baked in by the builder), consumed
+    ///    sequentially — one epoch, one permutation, like HF's seeded sampler.
+    ///  * loss: CE summed over the masked span per microbatch; the window's
+    ///    gradient is Σ(grads of CE-sums)/Σ(masked tokens) — HF Trainer's
+    ///    token-weighted num_items_in_batch normalization.
+    ///  * accumulation: 32 microbatches of batch 1 per optimizer step; the
+    ///    last window of the epoch is partial (5), matching HF
+    ///    drop_last=False (10,437 = 326×32 + 5 → 327 steps).
+    ///  * clip: global-norm 1.0 over the normalized grads, pre-optimizer.
+    ///  * LR: cosine with ceil(0.03×total) warmup steps, applied per
+    ///    optimizer step (verified against the cluster metrics.jsonl).
+    ///  * optimizer: AdamW β 0.9/0.999, eps 1e-8, weight decay 0.0
+    ///    (explicitly — the harness-legacy e2e constant 0.01 is WRONG here),
+    ///    bias-corrected to match adamw_torch.
+    ///
+    /// Declared deviations (plan Decisions table): 4-bit base, no dropout,
+    /// batch 1×32 accumulation ordering, cap 1024 (moot — corpus max 597).
+    func runTaskAdapterBenchmark(maxSteps: Int?) async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+
+        let sessionId = UUID().uuidString
+        let naxArm = Self.trainBenchmarkNaxArm
+        if let naxArm {
+            setenv("MLX_ENABLE_NAX_N", naxArm == "on" ? "1" : "0", 1)
+        }
+
+        // Hard model override — the h5–h11 rounds leave `modelConfiguration`
+        // pointing at the a1lamp-FUSED model, which would silently train the
+        // wrong artifact (h8's stale-configuration lesson). The task adapter
+        // trains on the PLAIN 4-bit base.
+        modelConfiguration = ModelConfiguration(
+            id: TrainBenchConstants.taskAdapterModelId,
+            defaultPrompt: "Why is the sky blue?")
+
+        tlog("taskadapter start session=\(sessionId) naxArm=\(naxArm ?? "absent") "
+            + "maxSteps=\(maxSteps.map(String.init) ?? "none") "
+            + "build=\(TrainBenchConstants.taskAdapterAppBuild)")
+        benchLogLine("taskadapter start session=\(sessionId)")
+
+        guard let examples = Self.loadTaskAdapterData(), !examples.isEmpty else {
+            tlog("taskadapter FAILED to load pre-tokenized data "
+                + "(expected Documents/\(TrainBenchConstants.taskAdapterDataDirName)/"
+                + "\(TrainBenchConstants.taskAdapterDataFileName))")
+            benchLogLine("taskadapter FAILED to load data")
+            finishTrainBenchmark()
+            return
+        }
+        let n = examples.count
+        let window = TrainBenchConstants.taskAdapterAccumWindow
+        let scheduleTotalSteps = (n + window - 1) / window
+        var totalSteps = scheduleTotalSteps
+        if let maxSteps, maxSteps > 0 { totalSteps = min(totalSteps, maxSteps) }
+        let runName =
+            (maxSteps != nil && totalSteps < scheduleTotalSteps)
+            ? TrainBenchConstants.taskAdapterRunNameSmoke
+            : TrainBenchConstants.taskAdapterRunNameFull
+
+        let adapterDir = URL.documentsDirectory
+            .appendingPathComponent(TrainBenchConstants.taskAdapterAdapterDirName)
+            .appendingPathComponent(runName)
+        try? FileManager.default.createDirectory(
+            at: adapterDir, withIntermediateDirectories: true)
+        let adapterURL = adapterDir.appendingPathComponent("adapters.safetensors")
+
+        // Load model (outside any measured window).
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("taskadapter model load failed: \(error)")
+            benchLogLine("taskadapter model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        let modelName =
+            modelConfiguration.name.components(separatedBy: "/").last
+            ?? modelConfiguration.name
+        tlog("taskadapter model loaded: \(modelName) nExamples=\(n) "
+            + "totalSteps=\(totalSteps)/\(scheduleTotalSteps)")
+
+        let ctx = TaskAdapterRunContext(
+            sessionId: sessionId, modelName: modelName, nExamples: n,
+            totalSteps: totalSteps, scheduleTotalSteps: scheduleTotalSteps,
+            runName: runName, naxArm: naxArm,
+            condition: Self.trainBenchmarkCondition,
+            idleMinutes: Self.trainBenchmarkIdleMinutes)
+
+        let benchStart = Date.timeIntervalSinceReferenceDate
+        let batteryStart = Self.batterySnapshot()
+        Self.appendTaskAdapterMarker(
+            ctx, recordType: "run_start",
+            extra: [
+                "battery_level": batteryStart.level,
+                "charging": batteryStart.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "thermal_state": Self.thermalString(),
+                "adapter_url": adapterURL.lastPathComponent,
+                // Order fingerprint: catches a stale/wrong side-loaded file and
+                // verifies the Mac control consumed the identical sequence.
+                "first_example_ids": examples.prefix(3).map { $0.id },
+                "total_corpus_tokens": examples.reduce(0) { $0 + $1.ids.count },
+            ])
+
+        // Passive 30s sampler on the main actor (UIDevice is @MainActor) —
+        // battery/thermal/CPU/memory over the whole multi-hour session. This
+        // run doubles as sustained-training characterization data, so the
+        // sampler is a primary deliverable, not bookkeeping.
+        let sampler = Task { @MainActor in
+            var previousCPUTicks = Self.cpuTicks()
+            while !Task.isCancelled {
+                let snap = Self.batterySnapshot()
+                let (cpuPct, newTicks) = Self.cpuUtilizationPercent(previous: previousCPUTicks)
+                previousCPUTicks = newTicks
+                Self.appendTaskAdapterSample(
+                    ctx,
+                    elapsed: Date.timeIntervalSinceReferenceDate - benchStart,
+                    level: snap.level, charging: snap.charging,
+                    thermal: Self.thermalString(),
+                    lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                    peak: Memory.snapshot().peakMemory,
+                    cpuUtilPct: cpuPct)
+                try? await Task.sleep(
+                    for: .seconds(TrainBenchConstants.taskAdapterSampleSeconds))
+            }
+        }
+
+        var trainError: String? = nil
+        do {
+            try await container.perform { mc in
+                // Canonical task LoRA: r=4, scale 2.0 (α8/r4), all seven
+                // projections, ALL 36 layers.
+                let config = LoRAConfiguration(
+                    numLayers: TrainBenchConstants.taskAdapterLoraLayers,
+                    loraParameters: .init(
+                        rank: TrainBenchConstants.taskAdapterLoraRank,
+                        scale: TrainBenchConstants.taskAdapterLoraScale,
+                        keys: TrainBenchConstants.taskAdapterLoraKeys))
+                _ = try LoRAContainer.from(model: mc.model, configuration: config)
+
+                // Per-block gradient checkpointing (h4/h8: K=1 is Pareto-best).
+                if TrainBenchConstants.gradientCheckpointing {
+                    (mc.model as? SmolLM3Model)?.checkpointGroupSize = 1
+                }
+                self.tlog("taskadapter LoRA applied (r=4, 7 proj, 36 layers), GC on")
+
+                // Masked loss: CE summed over the assistant span (arrays[2] is
+                // the 0/1 mask on the SHIFTED targets). Returns the UNREDUCED
+                // sum + the mask token count; normalization happens once per
+                // accumulation window, in token-weighted HF fashion.
+                let lossValueGrad = valueAndGrad(model: mc.model) { model, arrays in
+                    let llm = model as! any LLMModel
+                    let logits = llm(arrays[0], cache: nil).asType(.float32)
+                    let ceSum = (crossEntropy(logits: logits, targets: arrays[1]) * arrays[2])
+                        .sum()
+                    return [ceSum, arrays[2].sum()]
+                }
+
+                let optimizer = AdamW(
+                    learningRate: TrainBenchConstants.taskAdapterBaseLR,
+                    betas: (
+                        TrainBenchConstants.taskAdapterAdamBeta1,
+                        TrainBenchConstants.taskAdapterAdamBeta2
+                    ),
+                    eps: TrainBenchConstants.taskAdapterAdamEps,
+                    weightDecay: TrainBenchConstants.taskAdapterWeightDecay,
+                    biasCorrection: true)
+
+                GPU.resetPeakMemory()
+
+                var exampleIndex = 0
+                for step in 0 ..< totalSteps {
+                    let stepStart = Date.timeIntervalSinceReferenceDate
+                    let microCount = min(window, n - exampleIndex)
+
+                    var accum: [String: MLXArray] = [:]
+                    var windowCESum: Float = 0
+                    var windowMaskedTokens: Float = 0
+                    var windowSeqTokens = 0
+                    var microLosses: [Double] = []
+                    var microSeqLens: [Int] = []
+                    var microIterS: [Double] = []
+
+                    for _ in 0 ..< microCount {
+                        let microStart = Date.timeIntervalSinceReferenceDate
+                        let ex = examples[exampleIndex]
+                        exampleIndex += 1
+
+                        let nTok = ex.ids.count
+                        let m = nTok - 1
+                        let full = MLXArray(ex.ids).reshaped([1, nTok])
+                        let inputs = full[0..., .stride(to: -1)]
+                        let targets = full[0..., 1...]
+                        // Shifted-target mask: target position j supervises
+                        // token j+1, so the span [lossStart, lossEnd) in ids
+                        // becomes [lossStart−1, lossEnd−1) here. Written once,
+                        // verified against the Mac reference (smoke check 1).
+                        var maskVals = [Float](repeating: 0, count: m)
+                        for j in (ex.lossStart - 1) ..< (ex.lossEnd - 1) {
+                            maskVals[j] = 1
+                        }
+                        let mask = MLXArray(maskVals).reshaped([1, m])
+
+                        let (vals, grad) = lossValueGrad(
+                            mc.model, [inputs, targets, mask])
+                        let flat = grad.flattened()
+                        if accum.isEmpty {
+                            for (k, g) in flat { accum[k] = g }
+                        } else {
+                            for (k, g) in flat { accum[k] = accum[k]! + g }
+                        }
+                        // Barrier per microbatch so the lazy graph never spans
+                        // the accumulation window.
+                        eval(Array(accum.values))
+                        let ceSum = vals[0].item(Float.self)
+                        let ntoks = vals[1].item(Float.self)
+
+                        windowCESum += ceSum
+                        windowMaskedTokens += ntoks
+                        windowSeqTokens += nTok
+                        microLosses.append(ntoks > 0 ? Double(ceSum / ntoks) : 0)
+                        microSeqLens.append(nTok)
+                        microIterS.append(
+                            Date.timeIntervalSinceReferenceDate - microStart)
+                    }
+
+                    // Token-weighted normalization + global-norm clip 1.0
+                    // (norm computed on the NORMALIZED grads, like HF's
+                    // clip_grad_norm_ after loss averaging).
+                    var sq = MLXArray(Float(0))
+                    for g in accum.values { sq = sq + (g * g).sum() }
+                    let rawNorm = MLX.sqrt(sq).item(Float.self)
+                    let gradNorm = rawNorm / windowMaskedTokens
+                    let clip = TrainBenchConstants.taskAdapterGradClipNorm
+                    let clipScale: Float = gradNorm > clip ? clip / gradNorm : 1.0
+                    let finalScale = clipScale / windowMaskedTokens
+
+                    let lr = Self.taskAdapterLR(
+                        step: step, scheduleTotalSteps: scheduleTotalSteps)
+                    optimizer.learningRate = lr
+                    let scaled = accum.map { ($0.key, $0.value * finalScale) }
+                    optimizer.update(
+                        model: mc.model,
+                        gradients: ModuleParameters.unflattened(scaled))
+                    eval(mc.model, optimizer)
+
+                    let now = Date.timeIntervalSinceReferenceDate
+                    let windowLoss = windowMaskedTokens > 0
+                        ? windowCESum / windowMaskedTokens : 0
+                    let peak = Memory.snapshot().peakMemory
+                    GPU.resetPeakMemory()
+                    Self.appendTaskAdapterStep(
+                        ctx, step: step + 1, loss: windowLoss, lr: lr,
+                        gradNorm: gradNorm, clipScale: clipScale,
+                        nMicro: microCount,
+                        windowMaskedTokens: Int(windowMaskedTokens),
+                        windowSeqTokens: windowSeqTokens,
+                        windowS: now - stepStart,
+                        elapsed: now - benchStart, peak: peak,
+                        thermal: Self.thermalString(),
+                        lpm: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                        microLosses: microLosses, microSeqLens: microSeqLens,
+                        microIterS: microIterS)
+                    if (step + 1) % 10 == 0 || step == 0 {
+                        self.tlog("taskadapter step \(step + 1)/\(totalSteps) "
+                            + "loss=\(windowLoss) lr=\(lr) gradNorm=\(gradNorm)")
+                    }
+                }
+
+                try LoRATrain.saveLoRAWeights(model: mc.model, url: adapterURL)
+                self.tlog("taskadapter adapter saved -> \(adapterURL.path)")
+            }
+        } catch {
+            trainError = "\(error)"
+            tlog("taskadapter training error (possible OOM/jetsam): \(error)")
+            benchLogLine("taskadapter training error: \(error)")
+        }
+
+        sampler.cancel()
+        let batteryEnd = Self.batterySnapshot()
+        let adapterSaved = FileManager.default.fileExists(atPath: adapterURL.path)
+        if trainError == nil {
+            Self.writeTaskAdapterMeta(
+                ctx, adapterDir: adapterDir,
+                elapsed: Date.timeIntervalSinceReferenceDate - benchStart)
+        }
+        Self.appendTaskAdapterMarker(
+            ctx, recordType: trainError == nil ? "run_end" : "error",
+            extra: [
+                "battery_level": batteryStart.level,
+                "battery_level_end": batteryEnd.level,
+                "charging": batteryEnd.charging,
+                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+                "thermal_state": Self.thermalString(),
+                "elapsed_s": Date.timeIntervalSinceReferenceDate - benchStart,
+                "adapter_saved": adapterSaved,
+                "error": trainError ?? NSNull(),
+            ])
+        tlog("taskadapter complete adapter_saved=\(adapterSaved) "
+            + "error=\(trainError ?? "none")")
+        benchLogLine("taskadapter complete adapter_saved=\(adapterSaved)")
+        finishTrainBenchmark()
+    }
+
+    /// HF cosine-with-warmup, 0-based step index. Verified against the cluster
+    /// reference's metrics.jsonl (see TrainBenchConstants doc).
+    private nonisolated static func taskAdapterLR(
+        step: Int, scheduleTotalSteps: Int
+    ) -> Float {
+        let warmup = Int(
+            ceil(Double(scheduleTotalSteps) * TrainBenchConstants.taskAdapterWarmupRatio))
+        if step < warmup {
+            return TrainBenchConstants.taskAdapterBaseLR * Float(step) / Float(max(1, warmup))
+        }
+        let progress =
+            Double(step - warmup) / Double(max(1, scheduleTotalSteps - warmup))
+        return TrainBenchConstants.taskAdapterBaseLR
+            * Float(0.5 * (1.0 + cos(Double.pi * progress)))
+    }
+
+    /// Parse the side-loaded pre-tokenized corpus. Returns nil on ANY malformed
+    /// line — a partially-consumed corpus would silently change the step count
+    /// and data order, which is worse than failing loudly.
+    private nonisolated static func loadTaskAdapterData() -> [TaskAdapterExample]? {
+        let url = URL.documentsDirectory
+            .appendingPathComponent(TrainBenchConstants.taskAdapterDataDirName)
+            .appendingPathComponent(TrainBenchConstants.taskAdapterDataFileName)
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        var out: [TaskAdapterExample] = []
+        for line in content.split(separator: "\n") {
+            guard
+                let d = line.data(using: .utf8),
+                let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                let ids = obj["input_ids"] as? [Int],
+                let lossStart = obj["loss_start"] as? Int,
+                let lossEnd = obj["loss_end"] as? Int,
+                ids.count >= 2, lossStart >= 1, lossEnd > lossStart, lossEnd <= ids.count
+            else { return nil }
+            let id =
+                (obj["id"] as? NSNumber)?.stringValue ?? (obj["id"] as? String ?? "?")
+            out.append(
+                TaskAdapterExample(
+                    id: id, ids: ids.map(Int32.init),
+                    lossStart: lossStart, lossEnd: lossEnd))
+        }
+        return out
+    }
+
+    // MARK: - Task-adapter (h12) record builders
+
+    private nonisolated static func taskAdapterBaseRecord(
+        _ c: TaskAdapterRunContext, recordType: String
+    ) -> [String: Any] {
+        [
+            "record_type": recordType,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+            "task": "LaMP_7",
+            "run_name": c.runName,
+            "condition": c.condition,
+            "nax_arm": c.naxArm ?? NSNull(),
+            "idle_minutes": c.idleMinutes ?? NSNull(),
+            "n_examples": c.nExamples,
+            "total_steps": c.totalSteps,
+            "schedule_total_steps": c.scheduleTotalSteps,
+            "accum_window": TrainBenchConstants.taskAdapterAccumWindow,
+            "model": c.modelName,
+            "lora_rank": TrainBenchConstants.taskAdapterLoraRank,
+            "lora_scale": TrainBenchConstants.taskAdapterLoraScale,
+            "lora_keys": TrainBenchConstants.taskAdapterLoraKeysLabel,
+            "num_lora_layers": TrainBenchConstants.taskAdapterLoraLayers,
+            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
+            "optimizer": "adamw",
+            "base_learning_rate": TrainBenchConstants.taskAdapterBaseLR,
+            "lr_schedule": "cosine_warmup0.03",
+            "weight_decay": TrainBenchConstants.taskAdapterWeightDecay,
+            "grad_clip_norm": TrainBenchConstants.taskAdapterGradClipNorm,
+            "adam_bias_correction": true,
+            "app_build": TrainBenchConstants.taskAdapterAppBuild,
+            "bench_schema_version": TrainBenchConstants.taskAdapterSchemaVersion,
+            "git_commit": TrainBenchConstants.gitCommit,
+            "git_dirty": TrainBenchConstants.gitDirty,
+            "bench_session_id": c.sessionId,
+            "device_model": trainHwModel(),
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+        ]
+    }
+
+    private nonisolated static func appendTaskAdapterStep(
+        _ c: TaskAdapterRunContext, step: Int, loss: Float, lr: Float,
+        gradNorm: Float, clipScale: Float, nMicro: Int,
+        windowMaskedTokens: Int, windowSeqTokens: Int, windowS: Double,
+        elapsed: Double, peak: Int, thermal: String, lpm: Bool,
+        microLosses: [Double], microSeqLens: [Int], microIterS: [Double]
+    ) {
+        var r = taskAdapterBaseRecord(c, recordType: "opt_step")
+        r["step"] = step
+        r["loss"] = Double(loss)
+        r["learning_rate"] = Double(lr)
+        r["grad_norm_preclip"] = Double(gradNorm)
+        r["clip_scale"] = Double(clipScale)
+        r["n_micro"] = nMicro
+        r["window_masked_tokens"] = windowMaskedTokens
+        r["window_seq_tokens"] = windowSeqTokens
+        r["window_s"] = windowS
+        r["elapsed_s"] = elapsed
+        r["peak_mem_bytes"] = peak
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["micro_losses"] = microLosses
+        r["micro_seq_lens"] = microSeqLens
+        r["micro_iter_s"] = microIterS
+        emitTaskAdapter(r)
+    }
+
+    private nonisolated static func appendTaskAdapterSample(
+        _ c: TaskAdapterRunContext, elapsed: Double, level: Double, charging: Bool,
+        thermal: String, lpm: Bool, peak: Int, cpuUtilPct: Double?
+    ) {
+        var r = taskAdapterBaseRecord(c, recordType: "sample")
+        r["elapsed_s"] = elapsed
+        r["battery_level"] = level
+        r["charging"] = charging
+        r["thermal_state"] = thermal
+        r["low_power_mode"] = lpm
+        r["peak_mem_bytes"] = peak
+        r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
+        emitTaskAdapter(r)
+    }
+
+    private nonisolated static func appendTaskAdapterMarker(
+        _ c: TaskAdapterRunContext, recordType: String, extra: [String: Any]
+    ) {
+        var r = taskAdapterBaseRecord(c, recordType: recordType)
+        for (k, v) in extra { r[k] = v }
+        emitTaskAdapter(r)
+    }
+
+    /// Sidecar next to the saved adapter with everything the Mac-side MLX→PEFT
+    /// converter needs (rank/scale/keys, provenance).
+    private nonisolated static func writeTaskAdapterMeta(
+        _ c: TaskAdapterRunContext, adapterDir: URL, elapsed: Double
+    ) {
+        let meta: [String: Any] = [
+            "run_name": c.runName,
+            "task": "LaMP_7",
+            "session_id": c.sessionId,
+            "model": c.modelName,
+            "lora_rank": TrainBenchConstants.taskAdapterLoraRank,
+            "lora_alpha": TrainBenchConstants.taskAdapterLoraScale
+                * Float(TrainBenchConstants.taskAdapterLoraRank),
+            "lora_scale": TrainBenchConstants.taskAdapterLoraScale,
+            "lora_keys": TrainBenchConstants.taskAdapterLoraKeys,
+            "num_lora_layers": TrainBenchConstants.taskAdapterLoraLayers,
+            "total_steps": c.totalSteps,
+            "n_examples": c.nExamples,
+            "nax_arm": c.naxArm ?? "absent",
+            "elapsed_s": elapsed,
+            "app_build": TrainBenchConstants.taskAdapterAppBuild,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+        ]
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: meta, options: [.sortedKeys, .prettyPrinted])
+        else { return }
+        try? data.write(to: adapterDir.appendingPathComponent("adapter_meta.json"))
+    }
+
+    private nonisolated static func emitTaskAdapter(_ record: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let line = json + "\n"
+        let url = URL.documentsDirectory.appendingPathComponent(
+            TrainBenchConstants.taskAdapterMetricsFileName)
+        taskAdapterFileLock.lock()
+        defer { taskAdapterFileLock.unlock() }
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                if let d = line.data(using: .utf8) { try handle.write(contentsOf: d) }
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // best-effort; a failed line must not crash a multi-hour run
         }
     }
 

@@ -36,7 +36,12 @@ let package = Package(
             targets: ["IntegrationTestHelpers"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.3")),
+        // LOCAL (mobile_LoRA_ft): was `.package(url: "https://github.com/ml-explore/mlx-swift",
+        // .upToNextMinor(from: "0.31.3"))`. Points at the vendored, NAX-patched mlx-swift.
+        // A path dependency rather than a URL so SPM does not report a conflicting
+        // identity between the remote and local copies of package identity `mlx-swift`
+        // (a warning today, "escalated to an error in future versions of SwiftPM").
+        .package(path: "../mlx-swift"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0-latest"),
     ],
     targets: [

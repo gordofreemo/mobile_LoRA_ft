@@ -6,6 +6,29 @@ import MLXLMCommon
 import MLXNN
 import MLXOptimizers
 
+/// LOCAL ADDITION (mobile_LoRA_ft): deterministic RNG so two training runs can
+/// be compared step-by-step.
+///
+/// `indices.shuffle()` below uses Swift's unseeded `SystemRandomNumberGenerator`,
+/// so two runs of the same config see DIFFERENT batch orders. Normally fine, but
+/// it makes an A/B of two kernels uninterpretable: the loss curves would differ
+/// because of data order, not because of the kernels. Seeding the shuffle makes
+/// the batch sequence identical across runs, so any divergence in loss is
+/// attributable to the numerics under test.
+///
+/// SplitMix64 — tiny, well-distributed, reproducible.
+struct SeededRNG: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) { self.state = seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+}
+
 /// Equivalent to `lora.py/iterate_batches()`. Used internally by ``LoRATrain``.
 struct LoRABatchIterator: Sequence, IteratorProtocol {
 
@@ -18,15 +41,24 @@ struct LoRABatchIterator: Sequence, IteratorProtocol {
     var indices: [Int]
     var index = 0
 
+    /// nil (default) keeps the original unseeded behaviour verbatim, so every
+    /// existing round is unaffected. Set `LoRATrain.shuffleSeed` to opt in.
+    var rng: SeededRNG?
+
     public init(dataset: [String], tokenizer: Tokenizer, batchSize: Int, train: Bool) {
         self.dataset = dataset
         self.batchSize = batchSize
         self.tokenizer = tokenizer
         self.train = train
+        self.rng = LoRATrain.shuffleSeed.map { SeededRNG(seed: $0) }
 
         self.indices = Array(0 ..< dataset.count)
         if train {
-            indices.shuffle()
+            if rng != nil {
+                indices.shuffle(using: &rng!)
+            } else {
+                indices.shuffle()
+            }
         }
     }
 
@@ -36,7 +68,11 @@ struct LoRABatchIterator: Sequence, IteratorProtocol {
                 return nil
             }
 
-            indices.shuffle()
+            if rng != nil {
+                indices.shuffle(using: &rng!)
+            } else {
+                indices.shuffle()
+            }
             index = 0
         }
 
@@ -106,6 +142,13 @@ struct LoRABatchIterator: Sequence, IteratorProtocol {
 /// - use the in memory model as a normal `LLMModel` and evaluate a prompt
 ///
 public enum LoRATrain {
+
+    /// LOCAL ADDITION (mobile_LoRA_ft): when non-nil, `LoRABatchIterator`
+    /// shuffles with a seeded RNG so repeated runs see an IDENTICAL batch
+    /// sequence. nil (the default) preserves the original unseeded behaviour
+    /// exactly, so no existing round changes.
+    nonisolated(unsafe) public static var shuffleSeed: UInt64? = nil
+
 
     public typealias LoraLossFunction = (Module, MLXArray, MLXArray, MLXArray) -> (
         MLXArray, MLXArray

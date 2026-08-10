@@ -895,6 +895,51 @@ enum TrainBenchConstants {
     /// `train_bench_metrics_e2e.jsonl` and h11 must not touch it.
     static let peropMetricsFileName = "train_bench_metrics_perop.jsonl"
 
+    // --- NAX A/B round (follow-on to h11) --------------------------------
+    // Measures whether routing backward's `dX` onto the neural accelerator
+    // makes training faster, using the locally-patched mlx-swift
+    // (ios/mlx-swift, see LOCAL_PATCHES.md). Reuses h11's cell machinery
+    // unchanged; only the token grid, output file and build string differ, so
+    // h11's data and provenance stay untouched.
+
+    /// Token counts, ALL multiples of 64 — unlike h11's {50,100,250,500,750,
+    /// 1000}, none of which are. M in backward's `dX = dY·W` is the token
+    /// count, and `qmm_n_nax_tgp_impl` has no partial-M-tile handling
+    /// (`(void)M`, bounds line commented out upstream), so the dispatch guard
+    /// requires `M % 64 == 0`. An unaligned grid would take the generic path
+    /// in BOTH arms and measure nothing. Chosen to bracket h11's grid so the
+    /// absolute times remain broadly comparable.
+    /// h11's EXACT token grid, so the A/B is directly comparable to
+    /// `results/ondevice_perop_smollm3_4bit_2026-08-04.json`.
+    ///
+    /// The earlier +1-shifted grid {65,129,...} existed only because
+    /// `qmm_n_nax_tgp_impl` had no partial-M-tile handling, which forced a
+    /// `M % 64 == 0` dispatch guard (M = tokens - 1, since LoRABatchIterator
+    /// slices inputs `[:, :-1]`). That handling has since been ported in from
+    /// qmm_t_nax_tgp_impl, so M is unconstrained and the real grid can be used.
+    /// `seq_len`/`seq_len_aligned_64` are still recorded per iteration — now as
+    /// evidence the UNALIGNED path is the one being exercised.
+    static let naxABTokenCounts = [50, 100, 250, 500, 750, 1000]
+
+    /// Per-mode build string so this round's records are never confused with
+    /// h11's e2e provenance.
+    static let naxABAppBuild = "smollm3-ondevice-train-naxab"
+
+    /// Its own JSONL — h11's per-op file must stay exactly as the 2026-08-04
+    /// run left it.
+    static let naxABMetricsFileName = "train_bench_metrics_naxab.jsonl"
+
+    /// Full end-to-end A/B: one complete User-LoRA training run per arm.
+    /// Its own JSONL — `train_bench_metrics_e2e.jsonl` carries the h5 backlog
+    /// and must not be touched.
+    static let naxABE2EMetricsFileName = "train_bench_metrics_naxab_e2e.jsonl"
+
+    /// Fixed seed for `LoRATrain.shuffleSeed` during the E2E A/B, so both arms
+    /// consume an IDENTICAL batch sequence. Without it `LoRABatchIterator` uses
+    /// the unseeded system RNG and the two loss curves would differ by data
+    /// order rather than by the kernel under test.
+    static let naxABShuffleSeed: UInt64 = 20260806
+
     // --- Tier 2: Metal capture -------------------------------------------
     /// Capture config: h7/h10's canonical 500-token anchor, one iteration,
     /// GC on, cool start, in its OWN process launch (capture perturbs timing,
@@ -919,4 +964,87 @@ enum TrainBenchConstants {
     /// 500-token single-iteration trace while still refusing to fill the phone
     /// if a link points at something unexpectedly large.
     static let peropCaptureFlattenBudgetBytes = 3 * 1024 * 1024 * 1024
+
+    // =========================================================================
+    // Task-adapter training (h12) — train the Per-Task-LoRA (LaMP-7) entirely
+    // on-device with the NAX-patched backward kernels and show benchmark parity
+    // with cluster training. See
+    // experiments/2026-08-10-ondevice-task-adapter-lamp7-h12-plan.md.
+    //
+    // The recipe is the canonical A1-lamp task recipe (cluster reference =
+    // train/checkpoints/per_task_lamp7_1ep_seed0, trained 2026-07-26), NOT the
+    // h5/R5 User-LoRA recipe the constants above encode — hence a fully
+    // separate constant block: r=4 (not 8), ALL SEVEN projections (not q+v),
+    // all 36 layers (not the buggy shared loraLayers=28), lr 3e-4 cosine with
+    // warmup (not fixed 1e-5), weight decay 0.0 (NOT the harness-legacy 0.01),
+    // effective batch 32 via gradient accumulation, global-norm grad clip 1.0.
+    //
+    // Data is PRE-TOKENIZED on the Mac (data/build_task_device_data.py) with
+    // the HF tokenizer + `return_assistant_tokens_mask` — the device never
+    // tokenizes, which removes tokenizer-parity risk and sidesteps SmolLM3's
+    // documented-broken prompt-prefix masking. The file's example ORDER is the
+    // seed-0 shuffle, baked in by the builder; device and Mac control consume
+    // it sequentially so their loss curves overlay directly.
+    // =========================================================================
+
+    /// Per-mode build string (h11 convention) so this round's records are never
+    /// confused with any other round's provenance.
+    static let taskAdapterAppBuild = "smollm3-ondevice-train-taskadapter-h12"
+    static let taskAdapterSchemaVersion = 1
+
+    /// Its own JSONL — every prior round's file stays exactly as its run left it.
+    static let taskAdapterMetricsFileName = "train_bench_metrics_taskadapter.jsonl"
+
+    /// Side-loaded pre-tokenized corpus:
+    /// `Documents/<dir>/lamp7_task.jsonl`, lines
+    /// `{"id", "input_ids": [...], "loss_start": int, "loss_end": int}`.
+    static let taskAdapterDataDirName = "task_data"
+    static let taskAdapterDataFileName = "lamp7_task.jsonl"
+
+    /// Saved adapters: `Documents/<dir>/<runName>/adapters.safetensors` plus an
+    /// `adapter_meta.json` sidecar for the Mac-side MLX→PEFT converter.
+    /// Separate smoke vs full run names — refuse-to-overwrite spirit.
+    static let taskAdapterAdapterDirName = "task_adapters"
+    static let taskAdapterRunNameFull = "pt_lamp7_h12"
+    static let taskAdapterRunNameSmoke = "pt_lamp7_smoke"
+
+    /// The PLAIN 4-bit base — explicitly NOT the a1lamp-fused model the h5–h11
+    /// rounds load (h8's stale-`modelConfiguration` lesson). The h12 run path
+    /// overrides `modelConfiguration` with this id before load.
+    static let taskAdapterModelId = "mlx-community/SmolLM3-3B-4bit"
+
+    // --- Canonical task recipe (must match train/config/per_task_lamp7_1ep.json)
+    static let taskAdapterLoraLayers = 36
+    static let taskAdapterLoraRank = 4
+    /// alpha/r = 8/4 → scale 2.0.
+    static let taskAdapterLoraScale: Float = 2.0
+    static let taskAdapterLoraKeys = [
+        "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
+        "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj",
+    ]
+    static let taskAdapterLoraKeysLabel =
+        "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
+
+    /// HF cosine-with-warmup schedule, verified against the cluster reference's
+    /// metrics.jsonl to 5 significant digits (step 10 → 2.7e-4, step 20 →
+    /// 2.9940e-4): warmup = ceil(0.03 × totalSteps) steps, linear 0→base;
+    /// then base × 0.5 × (1 + cos(π × (i−warmup)/(total−warmup))), i 0-based.
+    static let taskAdapterBaseLR: Float = 3e-4
+    static let taskAdapterWarmupRatio = 0.03
+    static let taskAdapterWeightDecay: Float = 0.0
+    static let taskAdapterAdamBeta1: Float = 0.9
+    static let taskAdapterAdamBeta2: Float = 0.999
+    static let taskAdapterAdamEps: Float = 1e-8
+
+    /// Effective batch 32 = 32 microbatches of batch 1, accumulated. Loss per
+    /// window = Σ(CE-sum_i)/Σ(ntoks_i) — token-weighted, matching HF Trainer's
+    /// num_items_in_batch normalization. The LAST window of the epoch is
+    /// PARTIAL (10,437 = 326×32 + 5), matching the cluster's 327 steps.
+    static let taskAdapterAccumWindow = 32
+    static let taskAdapterGradClipNorm: Float = 1.0
+
+    /// Passive sampler cadence (battery/thermal/CPU/mem) — the run doubles as
+    /// the longest sustained NAX-ON training characterization session to date,
+    /// so the system-level trace is a primary deliverable, not bookkeeping.
+    static let taskAdapterSampleSeconds = 30.0
 }

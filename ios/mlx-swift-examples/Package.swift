@@ -15,7 +15,10 @@ let package = Package(
             targets: ["StableDiffusion"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.4")),
+        // LOCAL (mobile_LoRA_ft): was `.package(url: "https://github.com/ml-explore/mlx-swift",
+        // .upToNextMinor(from: "0.31.4"))`. Points at the vendored, NAX-patched mlx-swift
+        // by path so SPM sees a single source for package identity `mlx-swift`.
+        .package(path: "../mlx-swift"),
 
         // Note: used by StableDiffusion library to download weights
         .package(
