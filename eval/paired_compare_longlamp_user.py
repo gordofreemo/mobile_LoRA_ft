@@ -29,13 +29,14 @@ duplicated from eval/paired_compare.py) -- matching this project's
 standalone-script convention. Keep in sync if scoring logic changes there.
 
 Output:
-  results/paired_compare_longlamp_<tag>_baseline_vs_personalized_test.json
-  results/paired_compare_longlamp_<tag>_baseline_vs_personalized_test.pairs.jsonl
+  results/paired_compare_longlamp_<tag>_baseline_vs_personalized_test[_<decode-tag>].json
+  results/paired_compare_longlamp_<tag>_baseline_vs_personalized_test[_<decode-tag>].pairs.jsonl
     (one row per user: {user_id, baseline_rouge1, personalized_rouge1, diff})
 
 Usage:
     python eval/paired_compare_longlamp_user.py --tag review
     python eval/paired_compare_longlamp_user.py --tag abstract --overwrite
+    python eval/paired_compare_longlamp_user.py --tag review --decode-tag nrng3
 """
 
 import argparse
@@ -69,6 +70,19 @@ def safe_user_tag(user_id: str) -> str:
     copies -- keep all three in sync."""
     tag = _UNSAFE.sub("_", user_id).strip("_")
     return tag or "user"
+
+
+def decode_tag_selector(name: str, decode_tag: str, anchor: str) -> bool:
+    """True when `name` carries exactly `decode_tag` between the seed field and
+    `anchor` (the topK100 / user<tag> suffix). Empty decode_tag selects the
+    plain-greedy files (seed directly followed by the anchor). A substring
+    check is not enough once plain and tagged results sit side by side: the
+    plain pattern is a substring of every tagged filename, and '_nrng3_' is a
+    substring of a hypothetical '_rp1.1_nrng3_' combination tag.
+
+    Duplicated in eval/longlamp_degeneration_audit.py -- keep in sync."""
+    dt = f"_{re.escape(decode_tag)}" if decode_tag else ""
+    return re.search(rf"_seed\d+{dt}_{re.escape(anchor)}\.", name) is not None
 
 
 # --- duplicated from eval/paired_compare_per_user.py (see module docstring) -
@@ -173,6 +187,14 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--tag", required=True, choices=list(TEMPORAL_TASK.keys()))
+    parser.add_argument(
+        "--decode-tag", default="",
+        help="decoding-config filename tag to select, e.g. 'nrng3' for the "
+             "--no-repeat-ngram-size 3 re-measurement (2026-08-10 round). "
+             "Default '' selects the plain-greedy files and reproduces the "
+             "original round byte-for-byte. The tag is also appended to the "
+             "output stem so the two rounds' results sit side by side.",
+    )
     parser.add_argument("--n-boot", type=int, default=10_000)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=0)
@@ -186,6 +208,8 @@ def main():
           f"host={provenance.get('hostname')}", flush=True)
 
     stem = f"paired_compare_longlamp_{args.tag}_baseline_vs_personalized_test"
+    if args.decode_tag:
+        stem += f"_{args.decode_tag}"
     out_path = RESULTS_DIR / f"{stem}.json"
     pairs_path = RESULTS_DIR / f"{stem}.pairs.jsonl"
     if not args.overwrite and (out_path.exists() or pairs_path.exists()):
@@ -204,10 +228,14 @@ def main():
     # re-run of this script would have exited on "found 2" -- or, worse under a
     # laxer check, silently scored against the wrong baseline. The comparison is
     # defined against the TASK-LORA baseline; exclude the base-model arm.
+    # A second ambiguity arrived with the 2026-08-10 constrained-decoding
+    # re-measurement: each arm now exists in a plain-greedy and an `_nrng3`
+    # variant, disambiguated by decode_tag_selector on --decode-tag.
     baseline_glob = [
         p for p in RESULTS_DIR.glob(
             f"LongLaMP_{temporal_task}_test_*_topK100.predictions.jsonl")
         if f"_test_base_" not in p.name
+        and decode_tag_selector(p.name, args.decode_tag, "topK100")
     ]
     if len(baseline_glob) != 1:
         sys.exit(f"ERROR: expected exactly 1 Task-LoRA baseline predictions file, "
@@ -230,9 +258,11 @@ def main():
         rid = str(test_ids[0])
 
         utag = safe_user_tag(user_id)
-        personalized_glob = list(RESULTS_DIR.glob(
-            f"LongLaMP_{temporal_task}_test_*_user{utag}.predictions.jsonl"
-        ))
+        personalized_glob = [
+            p for p in RESULTS_DIR.glob(
+                f"LongLaMP_{temporal_task}_test_*_user{utag}.predictions.jsonl")
+            if decode_tag_selector(p.name, args.decode_tag, f"user{utag}")
+        ]
         if len(personalized_glob) != 1:
             missing_users.append((user_id, len(personalized_glob)))
             continue
@@ -285,8 +315,11 @@ def main():
     wins_base = sum(1 for d in diffs if d < 0)
 
     record = {
-        "schema_version": 1,
+        # schema 2 (2026-08-10): added `decode_tag` (None = plain greedy);
+        # existing schema-1 results on disk stay valid unchanged.
+        "schema_version": 2,
         "tag": args.tag,
+        "decode_tag": args.decode_tag or None,
         "temporal_task": temporal_task,
         "split": "test",
         "metric": "rouge1",
@@ -320,7 +353,12 @@ def main():
     print(f"tag={args.tag} n={n}", flush=True)
     print(f"mean_baseline={mean_base:.4f} mean_personalized={mean_pers:.4f} "
           f"mean_diff={mean_diff:+.4f}", flush=True)
-    print(f"paired-t: stat={t_stat:.4f} p={p_val:.4f}", flush=True)
+    # t_stat/p_val are None in the all-tie case (see paired_t_test's guard) --
+    # same print-site fix a7caec4 applied to the two sibling scripts.
+    if t_stat is None:
+        print("paired-t: undefined (all diffs zero)", flush=True)
+    else:
+        print(f"paired-t: stat={t_stat:.4f} p={p_val:.4f}", flush=True)
     print(f"wilcoxon: stat={w_stat} p={w_pval}", flush=True)
     print(f"bootstrap 95% CI: [{ci_lo:+.4f}, {ci_hi:+.4f}]", flush=True)
     print(f"win/tie/loss (personalized/tie/baseline): {wins_pers}/{ties}/{wins_base}",

@@ -101,6 +101,14 @@ def safe_user_tag(user_id: str) -> str:
     return tag or "user"
 
 
+def decode_tag_selector(name: str, decode_tag: str, anchor: str) -> bool:
+    """Byte-identical to eval/paired_compare_longlamp_user.py's copy -- keep in
+    sync. Selects the predictions file carrying exactly `decode_tag` between
+    the seed field and `anchor`; empty decode_tag selects plain greedy."""
+    dt = f"_{re.escape(decode_tag)}" if decode_tag else ""
+    return re.search(rf"_seed\d+{dt}_{re.escape(anchor)}\.", name) is not None
+
+
 # --- duplicated from eval/paired_compare_longlamp_user.py (standalone-script
 # --- convention; keep in sync if scoring logic changes there) ----------------
 def rouge1_scorer():
@@ -200,6 +208,13 @@ def main():
     )
     parser.add_argument("--tag", required=True, choices=list(TEMPORAL_TASK.keys()))
     parser.add_argument(
+        "--decode-tag", default="",
+        help="decoding-config filename tag to select, e.g. 'nrng3' for the "
+             "--no-repeat-ngram-size 3 re-measurement (2026-08-10 round). "
+             "Default '' selects the plain-greedy files and reproduces the "
+             "2026-08-06 audit byte-for-byte. Appended to the output stem.",
+    )
+    parser.add_argument(
         "--degenerate-words", type=int, default=600,
         help="PRIMARY criterion: flag a generation as degenerate when it exceeds "
              "this many words. Default 600 is calibrated against the no-adapter "
@@ -221,6 +236,8 @@ def main():
           f"host={provenance.get('hostname')}", flush=True)
 
     stem = f"longlamp_degeneration_audit_{args.tag}"
+    if args.decode_tag:
+        stem += f"_{args.decode_tag}"
     out_path = RESULTS_DIR / f"{stem}.json"
     pairs_path = RESULTS_DIR / f"{stem}.pairs.jsonl"
     if not args.overwrite and (out_path.exists() or pairs_path.exists()):
@@ -236,10 +253,13 @@ def main():
     # eval landed (commit 729692f) -- it matches both the Task-LoRA baseline
     # this comparison is defined against and the base-model arm. Select the
     # Task-LoRA file explicitly rather than whichever the glob returns first.
+    # The 2026-08-10 re-measurement adds a second axis of ambiguity (plain vs
+    # `_nrng3` decoding), disambiguated by decode_tag_selector on --decode-tag.
     baseline_glob = [
         p for p in RESULTS_DIR.glob(
             f"LongLaMP_{temporal_task}_test_*_topK100.predictions.jsonl")
         if f"_test_base_" not in p.name
+        and decode_tag_selector(p.name, args.decode_tag, "topK100")
     ]
     if len(baseline_glob) != 1:
         sys.exit(f"ERROR: expected exactly 1 Task-LoRA baseline predictions file, "
@@ -254,9 +274,11 @@ def main():
         user_id = u["user_id"]
         rid = str(u["test_record_ids"][0])
         utag = safe_user_tag(user_id)
-        pglob = list(RESULTS_DIR.glob(
-            f"LongLaMP_{temporal_task}_test_*_user{utag}.predictions.jsonl"
-        ))
+        pglob = [
+            p for p in RESULTS_DIR.glob(
+                f"LongLaMP_{temporal_task}_test_*_user{utag}.predictions.jsonl")
+            if decode_tag_selector(p.name, args.decode_tag, f"user{utag}")
+        ]
         if len(pglob) != 1 or rid not in baseline_preds:
             continue
         pers_preds = load_predictions_by_id(pglob[0])
@@ -294,8 +316,11 @@ def main():
     b_deg = [r for r in rows if r["baseline_degenerate"]]
 
     result = {
-        "schema_version": 1,
+        # schema 2 (2026-08-10): added `decode_tag` (None = plain greedy);
+        # existing schema-1 results on disk stay valid unchanged.
+        "schema_version": 2,
         "tag": args.tag,
+        "decode_tag": args.decode_tag or None,
         "temporal_task": temporal_task,
         "split": "test",
         "metric": "rouge1",
@@ -342,7 +367,9 @@ def main():
         n, m, t = (result[f"{label}_n"], result.get(f"{label}_mean_diff"),
                    result.get(f"{label}_t_statistic"))
         if n:
-            print(f"  {label:20s} n={n:3d}  mean={m:+.4f}  t={t:+.2f}")
+            # t is None in the all-tie case (paired_t_test's guard).
+            t_str = f"{t:+.2f}" if t is not None else "n/a"
+            print(f"  {label:20s} n={n:3d}  mean={m:+.4f}  t={t_str}")
     print(f"\n[write] {out_path}\n[write] {pairs_path}")
 
 
