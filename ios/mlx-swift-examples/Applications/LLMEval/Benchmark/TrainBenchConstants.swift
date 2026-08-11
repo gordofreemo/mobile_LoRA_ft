@@ -72,7 +72,8 @@ enum TrainBenchConstants {
     ///     phase timings are all under b87e61c.
     ///   31524ed — hard-link flattening + capture-dir cleanup.
     ///   6cc1488 — h12 task-adapter harness (this bake follows it).
-    static let gitCommit = "f654afe"
+    ///   d75d940 — nax rerun campaign harness (this bake follows it).
+    static let gitCommit = "d75d940"
     static let gitDirty = false
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
