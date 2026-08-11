@@ -73,9 +73,7 @@ def main():
     ax.set_xticklabels([str(t) for t in tokens])
     ax.set_xlabel("target tokens")
     ax.set_ylabel("seconds per iteration (barriered, phase-stacked)")
-    ax.set_title(
-        f"One training iteration, NAX off vs on ({args.pass_name} pass) — "
-        "backward-share % annotated")
+    ax.set_title(f"One training iteration, NAX off vs on ({args.pass_name} pass)")
     ax.legend(loc="upper left", frameon=False, ncol=2)
     save(fig, args.out)
 
