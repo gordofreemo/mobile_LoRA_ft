@@ -44,3 +44,8 @@ ios/mlx-swift-examples/**/*.xcuserstate
 # experiment): track the source, ignore SPM build output.
 ios/mlx-swift-lm-local/.build/
 *.DS_Store*
+
+# OPPU replication round (2026-08-11)
+.venv-audit/
+data/oppu_release/
+third_party/OPPU/
