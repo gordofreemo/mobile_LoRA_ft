@@ -72,7 +72,7 @@ enum TrainBenchConstants {
     ///     phase timings are all under b87e61c.
     ///   31524ed — hard-link flattening + capture-dir cleanup.
     ///   6cc1488 — h12 task-adapter harness (this bake follows it).
-    static let gitCommit = "6cc1488"
+    static let gitCommit = "f654afe"
     static let gitDirty = false
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
@@ -471,7 +471,10 @@ enum TrainBenchConstants {
     /// (`tokentimeColdCooldownCapSeconds`, 120s→300s) after v3's own data
     /// showed 120s was insufficient above ~200 tokens — see that constant's
     /// doc comment for the evidence.
-    static let tokentimeSchemaVersion = 4
+    /// v5 (2026-08-11): NAX rerun campaign — records gain `nax_arm`,
+    /// app_build gains `-nax-<arm>`, JSONL routes to a `_nax-<arm>` sibling
+    /// when `--nax-arm` is passed; absent arg is byte-identical to v4.
+    static let tokentimeSchemaVersion = 5
 
     /// Uniform 50-token-step grid, 50...1000 (20 cells) — locked design v2.
     static let tokentimeTokenCounts = Array(stride(from: 50, through: 1000, by: 50))
@@ -568,7 +571,9 @@ enum TrainBenchConstants {
     // fresh under h8's own (correct, 36-layer) LoRA config so all 9 K values
     // in the sweep are mutually apples-to-apples.
     static let granularityAppBuild = "smollm3-ondevice-train-granularity-h8"
-    static let granularitySchemaVersion = 1
+    /// v2 (2026-08-11): NAX rerun campaign — same `nax_arm` additions as
+    /// the token-time v5 note.
+    static let granularitySchemaVersion = 2
 
     /// h8-specific LoRA layer count — see the deviation note above. NOT the
     /// same as the shared `loraLayers` (28, still used unmodified by h1-h7).
@@ -639,7 +644,12 @@ enum TrainBenchConstants {
     // direct check on the cooldown gates used by h3/h4/h7/h8, all of which
     // poll `thermalState == .nominal`.
     static let thermalAppBuild = "smollm3-ondevice-thermal-cooldown-h10"
-    static let thermalSchemaVersion = 1
+    /// v2 (2026-08-11): NAX rerun campaign — same `nax_arm` additions as
+    /// the token-time v5 note. The h10 cold ref deliberately runs the SAME
+    /// arm as the rest of the session (unlike h11's): its arithmetic is
+    /// self-referential (cold-ref vs in-session plateau IS the measurement),
+    /// so both ends must run the same kernel.
+    static let thermalSchemaVersion = 2
 
     /// h10 FIXES the h1-h7 `loraLayers` bug (see h8's deviation note above):
     /// SmolLM3-3B has 36 hidden layers and `LoRAContainer.from` takes a
@@ -834,7 +844,10 @@ enum TrainBenchConstants {
     // proper AND the checkpoint recompute, and the two are indistinguishable
     // by construction at phase granularity.
     static let peropAppBuild = "smollm3-ondevice-train-perop-h11"
-    static let peropSchemaVersion = 1
+    /// v2 (2026-08-11): NAX rerun campaign — records gain `nax_arm` +
+    /// `pinned_arms` + `cell_index`; cold ref stays pinned OFF (anchor chain);
+    /// `--pin-arms` A/B variant added with its own JSONL/build suffix.
+    static let peropSchemaVersion = 2
 
     /// h11 uses the FIXED 36-layer count (like h8/h10), NOT the buggy shared
     /// `loraLayers` (28) that h1-h7 used — see h8's deviation note above.
@@ -934,6 +947,16 @@ enum TrainBenchConstants {
     /// Its own JSONL — `train_bench_metrics_e2e.jsonl` carries the h5 backlog
     /// and must not be touched.
     static let naxABE2EMetricsFileName = "train_bench_metrics_naxab_e2e.jsonl"
+
+    /// `--pin-arms` variant (2026-08-11): the arm is CONSTANT within each
+    /// sub-block (one fused + one barriered block per arm, order alternating
+    /// by cell) instead of alternating per iteration. Exists to close the
+    /// 1.93x-E2E vs ~1.56x-per-op discrepancy — the leading hypothesis is
+    /// that per-iteration switching itself costs time, which this design
+    /// removes while staying thermally paired at the block level. Its own
+    /// JSONL so the alternating round's data stays exactly as the 2026-08-06
+    /// runs left it.
+    static let naxABPinnedMetricsFileName = "train_bench_metrics_naxab_pinned.jsonl"
 
     /// Fixed seed for `LoRATrain.shuffleSeed` during the E2E A/B, so both arms
     /// consume an IDENTICAL batch sequence. Without it `LoRABatchIterator` uses

@@ -185,7 +185,10 @@ extension LLMEvaluator {
     }
 
     /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
-    private static func launchArgValue(_ flag: String) -> String? {
+    /// `nonisolated`: reads only the process-global `CommandLine.arguments`,
+    /// and the NAX-arm accessors below are needed from `nonisolated static`
+    /// record builders.
+    private nonisolated static func launchArgValue(_ flag: String) -> String? {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
         return args[i + 1]
@@ -196,9 +199,47 @@ extension LLMEvaluator {
     /// path, and enables the seeded batch shuffle so both arms see an IDENTICAL
     /// batch sequence (otherwise the loss curves would differ by data order
     /// rather than by the kernel under test). Absent → ordinary E2E run.
-    static var trainBenchmarkNaxArm: String? {
+    ///
+    /// 2026-08-11 NAX-ON rerun campaign: this arg is now honoured GLOBALLY —
+    /// `runTrainBenchmark` sets `MLX_ENABLE_NAX_N` once at entry for EVERY
+    /// mode, each mode's base record carries `nax_arm`, its `app_build` gains
+    /// a `-nax-<arm>` suffix, and its on-device JSONL routes to a `_nax-<arm>`
+    /// sibling file (see `naxArmFileName`) so pre-campaign data is never mixed
+    /// into a rerun pull. Absent → byte-identical behaviour to every prior
+    /// round.
+    nonisolated static var trainBenchmarkNaxArm: String? {
         guard let v = launchArgValue("--nax-arm"), v == "on" || v == "off" else { return nil }
         return v
+    }
+
+    /// `--pin-arms` — variant of `--benchmark-nax-ab` where the arm is held
+    /// CONSTANT within each sub-block instead of alternating per iteration.
+    /// Exists to close the 1.93x (E2E, one arm throughout) vs ~1.56x (per-op,
+    /// per-iteration alternation) discrepancy: if switching the dispatch arm
+    /// costs anything (recompiled graphs, cache state), the alternating design
+    /// UNDERSTATED the speedup, and this design measures it without switching
+    /// while keeping the cells thermally paired at the block level.
+    nonisolated static var trainBenchmarkPinArms: Bool {
+        CommandLine.arguments.contains("--pin-arms")
+    }
+
+    /// On-device JSONL filename for the current global NAX arm:
+    /// "x.jsonl" → "x_nax-on.jsonl". Identity when `--nax-arm` is absent, so
+    /// every existing round's file routing is untouched. A separate FILE (not
+    /// just a tag) because the Mac-side aggregators summarise whole files —
+    /// appending rerun records to the original JSONLs would mix kernels in one
+    /// pull.
+    nonisolated static func naxArmFileName(_ name: String) -> String {
+        guard let arm = trainBenchmarkNaxArm else { return name }
+        guard name.hasSuffix(".jsonl") else { return name + "_nax-\(arm)" }
+        return String(name.dropLast(".jsonl".count)) + "_nax-\(arm).jsonl"
+    }
+
+    /// `app_build` for the current global NAX arm: `base` → `base-nax-on`.
+    /// Identity when `--nax-arm` is absent.
+    nonisolated static func naxArmAppBuild(_ base: String) -> String {
+        guard let arm = trainBenchmarkNaxArm else { return base }
+        return base + "-nax-\(arm)"
     }
 
     /// `--user <fingerprint>` — which side-loaded per-user dataset to train (E2E).
@@ -370,6 +411,15 @@ extension LLMEvaluator {
 
     /// Run the training benchmark and exit. Safe to call once on launch.
     func runTrainBenchmark(mode: TrainBenchLaunchMode) async {
+        // 2026-08-11 NAX-ON rerun campaign: honour `--nax-arm on|off` for EVERY
+        // mode by setting the dispatch env once at entry. Modes that manage the
+        // arm themselves (`.naxAB` alternation, `.e2e`'s own setenv) simply
+        // overwrite it — harmless. Absent arg → env untouched → stock dispatch,
+        // byte-identical to every prior round.
+        if let arm = Self.trainBenchmarkNaxArm {
+            setenv("MLX_ENABLE_NAX_N", arm == "on" ? "1" : "0", 1)
+            tlog("global NAX arm=\(arm) (records tagged nax_arm, JSONLs suffixed _nax-\(arm))")
+        }
         // NAX qmm_n verification: no model, no training, seconds not minutes.
         // Checked first so it can never be shadowed by the model-loading paths.
         if mode == .verifyQmmN {
@@ -1483,7 +1533,8 @@ extension LLMEvaluator {
             "warmup_seconds": TrainBenchConstants.tokentimeWarmupSeconds,
             "warmup_seq_cap": TrainBenchConstants.tokentimeWarmupSeqCap,
             "cooldown_cap_seconds": TrainBenchConstants.cooldownCapSeconds,
-            "app_build": TrainBenchConstants.tokentimeAppBuild,
+            "app_build": naxArmAppBuild(TrainBenchConstants.tokentimeAppBuild),
+            "nax_arm": trainBenchmarkNaxArm ?? NSNull(),
             "bench_schema_version": TrainBenchConstants.tokentimeSchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -1502,7 +1553,7 @@ extension LLMEvaluator {
             let json = String(data: data, encoding: .utf8)
         else { return }
         let line = json + "\n"
-        let url = URL.documentsDirectory.appendingPathComponent(fileName)
+        let url = URL.documentsDirectory.appendingPathComponent(naxArmFileName(fileName))
         tokentimeFileLock.lock()
         defer { tokentimeFileLock.unlock() }
         do {
@@ -1686,7 +1737,8 @@ extension LLMEvaluator {
             "gradient_checkpointing": true,
             "optimizer": "adamw",
             "learning_rate": TrainBenchConstants.granularityLearningRate,
-            "app_build": TrainBenchConstants.granularityAppBuild,
+            "app_build": naxArmAppBuild(TrainBenchConstants.granularityAppBuild),
+            "nax_arm": trainBenchmarkNaxArm ?? NSNull(),
             "bench_schema_version": TrainBenchConstants.granularitySchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -1747,7 +1799,7 @@ extension LLMEvaluator {
         else { return }
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
-            TrainBenchConstants.granularityMetricsFileName)
+            naxArmFileName(TrainBenchConstants.granularityMetricsFileName))
         granularityFileLock.lock()
         defer { granularityFileLock.unlock() }
         do {
@@ -2218,7 +2270,8 @@ extension LLMEvaluator {
             "learning_rate": TrainBenchConstants.e2eLearningRate,
             "weight_decay": TrainBenchConstants.e2eWeightDecay,
             "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
-            "app_build": TrainBenchConstants.thermalSelfLimitAppBuild,
+            "app_build": naxArmAppBuild(TrainBenchConstants.thermalSelfLimitAppBuild),
+            "nax_arm": trainBenchmarkNaxArm ?? NSNull(),
             "bench_schema_version": TrainBenchConstants.thermalSchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -2280,7 +2333,7 @@ extension LLMEvaluator {
         else { return }
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
-            TrainBenchConstants.thermalSelfLimitMetricsFileName)
+            naxArmFileName(TrainBenchConstants.thermalSelfLimitMetricsFileName))
         thermalFileLock.lock()
         defer { thermalFileLock.unlock() }
         do {
@@ -2542,7 +2595,8 @@ extension LLMEvaluator {
             "learning_rate": TrainBenchConstants.e2eLearningRate,
             "weight_decay": TrainBenchConstants.e2eWeightDecay,
             "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
-            "app_build": TrainBenchConstants.thermalAppBuild,
+            "app_build": naxArmAppBuild(TrainBenchConstants.thermalAppBuild),
+            "nax_arm": trainBenchmarkNaxArm ?? NSNull(),
             "bench_schema_version": TrainBenchConstants.thermalSchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -2606,7 +2660,7 @@ extension LLMEvaluator {
         else { return }
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
-            TrainBenchConstants.thermalMetricsFileName)
+            naxArmFileName(TrainBenchConstants.thermalMetricsFileName))
         thermalFileLock.lock()
         defer { thermalFileLock.unlock() }
         do {
@@ -2636,6 +2690,10 @@ extension LLMEvaluator {
         /// to a separate JSONL under a separate build string, so h11's data and
         /// provenance are untouched. Defaults false — h11 behaviour verbatim.
         var naxAB: Bool = false
+        /// `--pin-arms` variant of the A/B: the arm is constant within each
+        /// sub-block (one block per arm) instead of alternating per iteration.
+        /// Separate JSONL + `-pinned` build suffix. See trainBenchmarkPinArms.
+        var pinnedArms: Bool = false
     }
 
     /// The six per-phase times of ONE barriered training iteration, seconds.
@@ -2703,7 +2761,8 @@ extension LLMEvaluator {
             modelName: modelConfiguration.name.components(separatedBy: "/").last
                 ?? modelConfiguration.name,
             idleMinutes: idleMinutes,
-            naxAB: naxAB)
+            naxAB: naxAB,
+            pinnedArms: naxAB && Self.trainBenchmarkPinArms)
 
         let runStart = Date.timeIntervalSinceReferenceDate
         let batteryStart = Self.batterySnapshot()
@@ -2740,20 +2799,29 @@ extension LLMEvaluator {
         // 1. Cold reference (h10 design, 2 iterations @500 tok).
         tlog("perop: cold-reference probe")
         // Pinned OFF: this probe's whole job is comparability with h11's
-        // 4.702 s/iter, so it must run stock dispatch in both rounds.
+        // 4.702 s/iter, so it must run stock dispatch in both rounds. The
+        // same reasoning holds for the global `--nax-arm` rerun — the anchor
+        // chain (h10 4.6xx / h11 4.702) only means something if every round's
+        // cold ref runs the same kernel.
         _ = Self.setNaxArm(on: false, enabled: naxAB)
+        if Self.trainBenchmarkNaxArm != nil { setenv("MLX_ENABLE_NAX_N", "0", 1) }
         await runPerOpColdRef(container: container, ctx: ctx, runStart: runStart)
+        if let arm = Self.trainBenchmarkNaxArm {
+            setenv("MLX_ENABLE_NAX_N", arm == "on" ? "1" : "0", 1)
+        }
 
         // 2+3. Both passes, ascending tokens, no cooldown gate anywhere.
         let grid =
             naxAB
             ? TrainBenchConstants.naxABTokenCounts
             : TrainBenchConstants.peropTokenCounts
+        var cellIndex = 0
         for pass in TrainBenchConstants.peropPasses {
             for tokens in grid {
                 await runPerOpCell(
                     container: container, ctx: ctx, targetTokens: tokens, pass: pass,
-                    runStart: runStart)
+                    runStart: runStart, cellIndex: cellIndex)
+                cellIndex += 1
             }
         }
 
@@ -2803,13 +2871,19 @@ extension LLMEvaluator {
                     optimizer: optimizer, tokenizer: c.tokenizer, parameters: params
                 ) { progress in
                     if case .train(let iteration, let loss, let ips, let tps) = progress {
+                        // The probe is pinned OFF in every arm-aware round (see
+                        // runPerOpBenchmark), so its rows say so explicitly
+                        // rather than inheriting the base record's global arm.
+                        let coldRefArm: String? =
+                            (ctx.naxAB || Self.trainBenchmarkNaxArm != nil) ? "off" : nil
                         Self.appendPerOpIterRecord(
                             ctx, recordType: "cold_ref", mode: "fused", pass: "cold_ref",
                             targetTokens: TrainBenchConstants.peropColdRefTokens,
                             iterIndex: iteration, warmup: iteration < 1,
                             iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
                             phases: nil,
-                            elapsed: Date.timeIntervalSinceReferenceDate - runStart)
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            arm: coldRefArm)
                     }
                     return .more
                 }
@@ -2853,21 +2927,28 @@ extension LLMEvaluator {
     /// which weights happen to be resident.
     private func runPerOpCell(
         container: ModelContainer, ctx: PerOpRunContext, targetTokens: Int, pass: String,
-        runStart: Double
+        runStart: Double, cellIndex: Int = 0
     ) async {
         let cellStart = Date.timeIntervalSinceReferenceDate
         let battery = Self.batterySnapshot()
-        Self.appendPerOpMarker(
-            ctx, recordType: "cell_start",
-            extra: [
-                "target_tokens": targetTokens,
-                "pass": pass,
-                "elapsed_s": cellStart - runStart,
-                "thermal_state": Self.thermalString(),
-                "battery_level": battery.level,
-                "charging": battery.charging,
-                "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
-            ])
+        // Pinned-arm block order alternates by cell so slow thermal drift
+        // cancels across the grid: even cells run OFF first, odd cells ON
+        // first. `armOrder` is unused (and unrecorded) outside pinned mode.
+        let armOrder: [Bool] = cellIndex % 2 == 0 ? [false, true] : [true, false]
+        var cellStartExtra: [String: Any] = [
+            "target_tokens": targetTokens,
+            "pass": pass,
+            "cell_index": cellIndex,
+            "elapsed_s": cellStart - runStart,
+            "thermal_state": Self.thermalString(),
+            "battery_level": battery.level,
+            "charging": battery.charging,
+            "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+        ]
+        if ctx.pinnedArms {
+            cellStartExtra["arm_first"] = armOrder[0] ? "on" : "off"
+        }
+        Self.appendPerOpMarker(ctx, recordType: "cell_start", extra: cellStartExtra)
         tlog("perop cell tokens=\(targetTokens) pass=\(pass): starting")
 
         do {
@@ -2893,29 +2974,61 @@ extension LLMEvaluator {
                     iterations: total, stepsPerReport: 1, stepsPerEval: total + 1,
                     validationBatches: 0, saveEvery: total + 1, adapterURL: nil)
                 GPU.resetPeakMemory()
-                // NAX A/B: alternate the arm per iteration. The callback fires
-                // AFTER an iteration completes, so it records the arm that just
-                // ran and arms the NEXT one; iteration 0's arm is set here.
-                // Even iterations are ON so each cell starts on the patched path.
-                var fusedArm = Self.setNaxArm(on: true, enabled: ctx.naxAB)
-                try LoRATrain.train(
-                    model: model, train: [example], validate: [example],
-                    optimizer: Self.perOpOptimizer(), tokenizer: c.tokenizer,
-                    parameters: fusedParams
-                ) { progress in
-                    if case .train(let iteration, let loss, let ips, let tps) = progress {
-                        Self.appendPerOpIterRecord(
-                            ctx, recordType: "iter", mode: "fused", pass: pass,
-                            targetTokens: targetTokens, iterIndex: iteration,
-                            warmup: iteration < warmupCount,
-                            iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
-                            phases: nil,
-                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
-                            arm: fusedArm)
-                        fusedArm = Self.setNaxArm(
-                            on: (iteration + 1) % 2 == 0, enabled: ctx.naxAB)
+                if ctx.pinnedArms {
+                    // Pinned arms (--pin-arms): one fused block PER ARM, arm
+                    // constant throughout — the design the alternating A/B is
+                    // being checked against. Each block's iteration 0 absorbs
+                    // the one arm-switch seam (recompile/first-alloc) and is
+                    // dropped as warmup, so no switch cost contaminates the
+                    // kept iterations. Block order = `armOrder` (alternates by
+                    // cell so drift cancels across the grid).
+                    for armOn in armOrder {
+                        let armLabel = Self.setNaxArm(on: armOn, enabled: true)
+                        try LoRATrain.train(
+                            model: model, train: [example], validate: [example],
+                            optimizer: Self.perOpOptimizer(), tokenizer: c.tokenizer,
+                            parameters: fusedParams
+                        ) { progress in
+                            if case .train(let iteration, let loss, let ips, let tps) =
+                                progress
+                            {
+                                Self.appendPerOpIterRecord(
+                                    ctx, recordType: "iter", mode: "fused", pass: pass,
+                                    targetTokens: targetTokens, iterIndex: iteration,
+                                    warmup: iteration < warmupCount,
+                                    iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
+                                    phases: nil,
+                                    elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                                    arm: armLabel)
+                            }
+                            return .more
+                        }
                     }
-                    return .more
+                } else {
+                    // NAX A/B: alternate the arm per iteration. The callback fires
+                    // AFTER an iteration completes, so it records the arm that just
+                    // ran and arms the NEXT one; iteration 0's arm is set here.
+                    // Even iterations are ON so each cell starts on the patched path.
+                    var fusedArm = Self.setNaxArm(on: true, enabled: ctx.naxAB)
+                    try LoRATrain.train(
+                        model: model, train: [example], validate: [example],
+                        optimizer: Self.perOpOptimizer(), tokenizer: c.tokenizer,
+                        parameters: fusedParams
+                    ) { progress in
+                        if case .train(let iteration, let loss, let ips, let tps) = progress {
+                            Self.appendPerOpIterRecord(
+                                ctx, recordType: "iter", mode: "fused", pass: pass,
+                                targetTokens: targetTokens, iterIndex: iteration,
+                                warmup: iteration < warmupCount,
+                                iterSeconds: 1.0 / ips, tokPerSec: tps, loss: loss,
+                                phases: nil,
+                                elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                                arm: fusedArm)
+                            fusedArm = Self.setNaxArm(
+                                on: (iteration + 1) % 2 == 0, enabled: ctx.naxAB)
+                        }
+                        return .more
+                    }
                 }
 
                 // --- barriered sub-block (the decomposition) -----------------
@@ -2923,7 +3036,6 @@ extension LLMEvaluator {
                 // the doc comment). A fresh AdamW restarts the Adam moments at
                 // the seam, which perturbs the first barriered step slightly —
                 // expected, and accounted for in the continuity check.
-                let optimizer = Self.perOpOptimizer()
                 let lossValueGrad = valueAndGrad(model: model) {
                     (m: Module, arrays: [MLXArray]) -> [MLXArray] in
                     let (ce, ntoks) = LoRATrain.loss(
@@ -2932,22 +3044,49 @@ extension LLMEvaluator {
                 }
 
                 GPU.resetPeakMemory()
-                for iteration in 0 ..< total {
-                    // Arm set BEFORE the iteration runs — unlike the fused
-                    // block, this loop brackets each iteration directly.
-                    let arm = Self.setNaxArm(on: iteration % 2 == 0, enabled: ctx.naxAB)
-                    let (phases, loss, ntokens, seqLen) = Self.perOpBarrieredIteration(
-                        model: model, tokenizer: c.tokenizer, example: example,
-                        lossValueGrad: lossValueGrad, optimizer: optimizer)
-                    Self.appendPerOpIterRecord(
-                        ctx, recordType: "iter", mode: "barriered", pass: pass,
-                        targetTokens: targetTokens, iterIndex: iteration,
-                        warmup: iteration < warmupCount,
-                        iterSeconds: phases.total,
-                        tokPerSec: Double(ntokens) / phases.total, loss: loss,
-                        phases: phases,
-                        elapsed: Date.timeIntervalSinceReferenceDate - runStart,
-                        arm: arm, seqLen: seqLen)
+                if ctx.pinnedArms {
+                    // Pinned arms: one barriered block per arm, same order as
+                    // the fused blocks. Fresh AdamW per block (timing is
+                    // value-independent; the loss trajectory just restarts its
+                    // moments at each seam, as at the fused/barriered seam).
+                    for armOn in armOrder {
+                        let armLabel = Self.setNaxArm(on: armOn, enabled: true)
+                        let optimizer = Self.perOpOptimizer()
+                        for iteration in 0 ..< total {
+                            let (phases, loss, ntokens, seqLen) =
+                                Self.perOpBarrieredIteration(
+                                    model: model, tokenizer: c.tokenizer, example: example,
+                                    lossValueGrad: lossValueGrad, optimizer: optimizer)
+                            Self.appendPerOpIterRecord(
+                                ctx, recordType: "iter", mode: "barriered", pass: pass,
+                                targetTokens: targetTokens, iterIndex: iteration,
+                                warmup: iteration < warmupCount,
+                                iterSeconds: phases.total,
+                                tokPerSec: Double(ntokens) / phases.total, loss: loss,
+                                phases: phases,
+                                elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                                arm: armLabel, seqLen: seqLen)
+                        }
+                    }
+                } else {
+                    let optimizer = Self.perOpOptimizer()
+                    for iteration in 0 ..< total {
+                        // Arm set BEFORE the iteration runs — unlike the fused
+                        // block, this loop brackets each iteration directly.
+                        let arm = Self.setNaxArm(on: iteration % 2 == 0, enabled: ctx.naxAB)
+                        let (phases, loss, ntokens, seqLen) = Self.perOpBarrieredIteration(
+                            model: model, tokenizer: c.tokenizer, example: example,
+                            lossValueGrad: lossValueGrad, optimizer: optimizer)
+                        Self.appendPerOpIterRecord(
+                            ctx, recordType: "iter", mode: "barriered", pass: pass,
+                            targetTokens: targetTokens, iterIndex: iteration,
+                            warmup: iteration < warmupCount,
+                            iterSeconds: phases.total,
+                            tokPerSec: Double(ntokens) / phases.total, loss: loss,
+                            phases: phases,
+                            elapsed: Date.timeIntervalSinceReferenceDate - runStart,
+                            arm: arm, seqLen: seqLen)
+                    }
                 }
             }
             tlog("perop cell tokens=\(targetTokens) pass=\(pass): complete")
@@ -3538,8 +3677,12 @@ extension LLMEvaluator {
             "weight_decay": TrainBenchConstants.e2eWeightDecay,
             "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
             "app_build": c.naxAB
-                ? TrainBenchConstants.naxABAppBuild
-                : TrainBenchConstants.peropAppBuild,
+                ? (c.pinnedArms
+                    ? TrainBenchConstants.naxABAppBuild + "-pinned"
+                    : TrainBenchConstants.naxABAppBuild)
+                : naxArmAppBuild(TrainBenchConstants.peropAppBuild),
+            "nax_arm": trainBenchmarkNaxArm ?? NSNull(),
+            "pinned_arms": c.pinnedArms,
             "bench_schema_version": TrainBenchConstants.peropSchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -3591,7 +3734,7 @@ extension LLMEvaluator {
             r["phase_optimizer_s"] = p.optimizer
             r["phase_readback_s"] = p.readback
         }
-        emitPerOp(r, naxAB: c.naxAB)
+        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms)
     }
 
     private nonisolated static func appendPerOpSample(
@@ -3605,7 +3748,7 @@ extension LLMEvaluator {
         r["thermal_state"] = thermal
         r["low_power_mode"] = lpm
         r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
-        emitPerOp(r, naxAB: c.naxAB)
+        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms)
     }
 
     private nonisolated static func appendPerOpMarker(
@@ -3613,13 +3756,15 @@ extension LLMEvaluator {
     ) {
         var r = perOpBaseRecord(c, recordType: recordType)
         for (k, v) in extra { r[k] = v }
-        emitPerOp(r, naxAB: c.naxAB)
+        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms)
     }
 
     /// Append one h11 JSONL line. Its own file: the h9 L run is still pending
     /// against `train_bench_metrics_e2e.jsonl`, which this round must not
     /// touch.
-    private nonisolated static func emitPerOp(_ record: [String: Any], naxAB: Bool = false) {
+    private nonisolated static func emitPerOp(
+        _ record: [String: Any], naxAB: Bool = false, pinned: Bool = false
+    ) {
         guard
             let data = try? JSONSerialization.data(
                 withJSONObject: record, options: [.sortedKeys]),
@@ -3628,8 +3773,10 @@ extension LLMEvaluator {
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
             naxAB
-                ? TrainBenchConstants.naxABMetricsFileName
-                : TrainBenchConstants.peropMetricsFileName)
+                ? (pinned
+                    ? TrainBenchConstants.naxABPinnedMetricsFileName
+                    : TrainBenchConstants.naxABMetricsFileName)
+                : naxArmFileName(TrainBenchConstants.peropMetricsFileName))
         peropFileLock.lock()
         defer { peropFileLock.unlock() }
         do {
