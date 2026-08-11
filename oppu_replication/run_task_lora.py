@@ -122,10 +122,19 @@ peft_config = LoraConfig(
 # dict, filter against the installed signature, and log what was dropped —
 # each dropped key is a recorded deviation, not a silent one.
 import inspect
+# PATCH P16: batch 16 x 2048 tokens OOMs 40GB GPUs on the two long-document
+# tasks (product reviews, scholarly abstracts) — their paper's Table 5 says
+# batch is "3-16, task-dependent" while the code hardcodes 16 for all. Use
+# per-device 4 x grad-accum 4 there (effective batch stays 16).
+if task_name in ("product_rating", "scholarly_title") and batch_size == 16:
+    _per_device, _grad_accum = 4, 4
+else:
+    _per_device, _grad_accum = batch_size, 1
+
 _ta_kwargs = dict(
     output_dir=str(ckpt_dir / "trainer_tmp"),
-    per_device_train_batch_size=batch_size,
-    gradient_accumulation_steps=1,
+    per_device_train_batch_size=_per_device,
+    gradient_accumulation_steps=_grad_accum,
     optim='adamw_torch',
     num_train_epochs=max_epoch,
     save_steps=int(1e9),                        # PATCH P6
