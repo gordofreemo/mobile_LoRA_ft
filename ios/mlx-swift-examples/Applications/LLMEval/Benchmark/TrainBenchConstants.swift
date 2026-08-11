@@ -71,7 +71,8 @@ enum TrainBenchConstants {
     ///     retrieval step only — no measurement depends on it, and the Tier-1
     ///     phase timings are all under b87e61c.
     ///   31524ed — hard-link flattening + capture-dir cleanup.
-    static let gitCommit = "31524ed"
+    ///   6cc1488 — h12 task-adapter harness (this bake follows it).
+    static let gitCommit = "6cc1488"
     static let gitDirty = false
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
@@ -990,7 +991,11 @@ enum TrainBenchConstants {
     /// Per-mode build string (h11 convention) so this round's records are never
     /// confused with any other round's provenance.
     static let taskAdapterAppBuild = "smollm3-ondevice-train-taskadapter-h12"
-    static let taskAdapterSchemaVersion = 1
+    /// v2 (2026-08-11): sliced-lm_head loss (`loss_impl` field) after v1's
+    /// full-logits masked loss put long-example windows on the jetsam wall —
+    /// 4 of 5 first-night sessions froze or were killed tracelessly on step
+    /// 11's 449-token example (6.07 GB peak vs 4.7–5.1 baseline).
+    static let taskAdapterSchemaVersion = 2
 
     /// Its own JSONL — every prior round's file stays exactly as its run left it.
     static let taskAdapterMetricsFileName = "train_bench_metrics_taskadapter.jsonl"
@@ -1047,4 +1052,12 @@ enum TrainBenchConstants {
     /// the longest sustained NAX-ON training characterization session to date,
     /// so the system-level trace is a primary deliverable, not bookkeeping.
     static let taskAdapterSampleSeconds = 30.0
+
+    /// v3: checkpoint (adapter + Adam moments + step counter, crash-safe dir
+    /// swap) every N optimizer steps. Added after the 2026-08-10/11 nights'
+    /// systematic ~15-min session killer made "bare single-shot" unable to
+    /// complete: with resume, each doomed session still banks ~2 checkpoints.
+    /// ~7-8 min of work per checkpoint at hot-device step times; a save costs
+    /// ~2 s (150 MB of safetensors).
+    static let taskAdapterCheckpointEverySteps = 5
 }

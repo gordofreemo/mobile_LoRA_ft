@@ -3984,6 +3984,56 @@ extension LLMEvaluator {
         let lossEnd: Int
     }
 
+    /// Reference-captured carrier for the current microbatch's supervised
+    /// position range: `valueAndGrad`'s closure signature only admits
+    /// MLXArrays, and slicing needs Swift ints. Mutated and read on the same
+    /// (container) actor, strictly between calls — hence @unchecked.
+    final class TaskAdapterSpanBox: @unchecked Sendable {
+        var range: Range<Int> = 0 ..< 1
+    }
+
+    /// Harness-owned AdamW (h12 v3). Exists because checkpoint/resume needs
+    /// the optimizer moments, and `MLXOptimizers.AdamW` keeps its state in an
+    /// internal store with no public round-trip (h6 finding, still true).
+    /// Same math as adamw_torch / MLX AdamW with biasCorrection, wd = 0:
+    ///   m ← β1·m + (1−β1)·g;  v ← β2·v + (1−β2)·g²;  t ← t+1
+    ///   p ← p − lr · (m/(1−β1ᵗ)) / (√(v/(1−β2ᵗ)) + eps)
+    /// Verified by trajectory match against the pre-v3 MLXOptimizers runs
+    /// (identical losses through the first 10 steps) and by the resume test
+    /// (kill at a checkpoint, resume, losses continue the same trajectory).
+    final class TaskAdapterAdamW: @unchecked Sendable {
+        var m: [String: MLXArray] = [:]
+        var v: [String: MLXArray] = [:]
+        var t: Int = 0
+        let beta1 = TrainBenchConstants.taskAdapterAdamBeta1
+        let beta2 = TrainBenchConstants.taskAdapterAdamBeta2
+        let eps = TrainBenchConstants.taskAdapterAdamEps
+
+        func update(model: Module, grads: [(String, MLXArray)], learningRate lr: Float) {
+            t += 1
+            let bc1 = 1 - pow(beta1, Float(t))
+            let bc2 = 1 - pow(beta2, Float(t))
+            let current = Dictionary(
+                uniqueKeysWithValues: model.trainableParameters().flattened())
+            var newParams: [(String, MLXArray)] = []
+            for (k, g) in grads {
+                let mNew = beta1 * (m[k] ?? MLXArray.zeros(g.shape, dtype: g.dtype))
+                    + (1 - beta1) * g
+                let vNew = beta2 * (v[k] ?? MLXArray.zeros(g.shape, dtype: g.dtype))
+                    + (1 - beta2) * (g * g)
+                m[k] = mNew
+                v[k] = vNew
+                let mHat = mNew / bc1
+                let vHat = vNew / bc2
+                guard let p = current[k] else { continue }
+                newParams.append((k, p - lr * mHat / (MLX.sqrt(vHat) + eps)))
+            }
+            model.update(parameters: ModuleParameters.unflattened(newParams))
+            eval(model)
+            eval(Array(m.values) + Array(v.values))
+        }
+    }
+
     struct TaskAdapterRunContext: Sendable {
         let sessionId: String
         let modelName: String
@@ -4029,6 +4079,19 @@ extension LLMEvaluator {
             UIDevice.current.isBatteryMonitoringEnabled = true
         #endif
 
+        // h12 v3: duplicate stderr into a pullable file. The overnight
+        // failures die TRACELESSLY under a detached launch — and mlx-c's
+        // fatal path prints its message to stderr then exit(-1)s (uncatchable
+        // from Swift, no crash report; h11 documented this for start_capture).
+        // A detached launch discards stderr, so the one line naming the killer
+        // was being thrown away. tlog() also lands here now.
+        let stderrURL = URL.documentsDirectory
+            .appendingPathComponent("taskadapter_stderr.log")
+        freopen(stderrURL.path, "a", stderr)
+        setvbuf(stderr, nil, _IONBF, 0)
+        FileHandle.standardError.write(
+            Data("\n===== launch \(ISO8601DateFormatter().string(from: Date())) =====\n".utf8))
+
         let sessionId = UUID().uuidString
         let naxArm = Self.trainBenchmarkNaxArm
         if let naxArm {
@@ -4056,6 +4119,43 @@ extension LLMEvaluator {
             finishTrainBenchmark()
             return
         }
+        // Lifecycle forensics (added after the 2026-08-10 freezes): the first
+        // full-run attempts froze ~15-20 min in with a signature that cannot
+        // distinguish "screen locked → app suspended → GPU revoked" from "MLX/
+        // Metal wedge with the training thread holding the allocator". These
+        // markers decide it: a `lifecycle` record BEFORE the silence means the
+        // OS took the app out (protectedDataWillBecomeUnavailable = the device
+        // LOCKED; willResignActive/didEnterBackground = foreground loss);
+        // silence with NO lifecycle marker means an in-process wedge. The
+        // observer writes synchronously on the main actor — cheap, and worth
+        // it: this is systems-characterization data in its own right.
+        #if canImport(UIKit)
+            let lifecycleEvents: [(Notification.Name, String)] = [
+                (UIApplication.willResignActiveNotification, "will_resign_active"),
+                (UIApplication.didBecomeActiveNotification, "did_become_active"),
+                (UIApplication.didEnterBackgroundNotification, "did_enter_background"),
+                (UIApplication.willEnterForegroundNotification, "will_enter_foreground"),
+                (UIApplication.protectedDataWillBecomeUnavailableNotification, "device_will_lock"),
+                (UIApplication.protectedDataDidBecomeAvailableNotification, "device_unlocked"),
+                (ProcessInfo.thermalStateDidChangeNotification, "thermal_change"),
+            ]
+            let lifecycleSessionId = sessionId
+            for (name, label) in lifecycleEvents {
+                NotificationCenter.default.addObserver(
+                    forName: name, object: nil, queue: .main
+                ) { _ in
+                    Self.emitTaskAdapter([
+                        "record_type": "lifecycle",
+                        "event": label,
+                        "thermal_state": Self.thermalString(),
+                        "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+                        "bench_session_id": lifecycleSessionId,
+                        "run_name": "lifecycle",
+                    ])
+                }
+            }
+        #endif
+
         let n = examples.count
         let window = TrainBenchConstants.taskAdapterAccumWindow
         let scheduleTotalSteps = (n + window - 1) / window
@@ -4154,32 +4254,61 @@ extension LLMEvaluator {
                 }
                 self.tlog("taskadapter LoRA applied (r=4, 7 proj, 36 layers), GC on")
 
-                // Masked loss: CE summed over the assistant span (arrays[2] is
-                // the 0/1 mask on the SHIFTED targets). Returns the UNREDUCED
-                // sum + the mask token count; normalization happens once per
-                // accumulation window, in token-weighted HF fashion.
+                // Masked loss via SLICED lm_head (h12b, 2026-08-11): logits are
+                // materialised ONLY for the assistant span — `arrays[1]` is the
+                // pre-sliced target tokens ids[lossStart..<lossEnd] and
+                // `spanBox.range` the matching shifted positions. Identical
+                // values and gradients to full-logits-plus-mask (outside-span
+                // positions have exactly zero cotangent), but removes the
+                // full-sequence [seq, vocab] fp32 transient that put long-
+                // example windows on the jetsam wall (measured 6.07 GB at 449
+                // tok vs 4.7–5.1 GB baseline; 4/5 sessions died on that step).
+                // The span bounds ride in a reference-captured box because
+                // valueAndGrad's closure only takes MLXArrays.
+                let spanBox = TaskAdapterSpanBox()
                 let lossValueGrad = valueAndGrad(model: mc.model) { model, arrays in
-                    let llm = model as! any LLMModel
-                    let logits = llm(arrays[0], cache: nil).asType(.float32)
-                    let ceSum = (crossEntropy(logits: logits, targets: arrays[1]) * arrays[2])
-                        .sum()
-                    return [ceSum, arrays[2].sum()]
+                    let llm = model as! SmolLM3Model
+                    let logits = llm.logits(arrays[0], positionRange: spanBox.range)
+                        .asType(.float32)
+                    let ceSum = crossEntropy(logits: logits, targets: arrays[1]).sum()
+                    return [ceSum]
                 }
 
-                let optimizer = AdamW(
-                    learningRate: TrainBenchConstants.taskAdapterBaseLR,
-                    betas: (
-                        TrainBenchConstants.taskAdapterAdamBeta1,
-                        TrainBenchConstants.taskAdapterAdamBeta2
-                    ),
-                    eps: TrainBenchConstants.taskAdapterAdamEps,
-                    weightDecay: TrainBenchConstants.taskAdapterWeightDecay,
-                    biasCorrection: true)
+                let optimizer = TaskAdapterAdamW()
+
+                // v3 resume: if a valid checkpoint exists in this run's dir,
+                // restore adapter weights + Adam moments + step counter and
+                // continue. Data order is deterministic (file order), the LR
+                // schedule is stateless in the step index, and the moments
+                // round-trip exactly — so a resumed run computes the same
+                // math as an uninterrupted one; only thermal/timing differ.
+                var startStep = 0
+                if let ck = Self.loadTaskAdapterCheckpoint(dir: adapterDir) {
+                    do {
+                        try mc.model.update(
+                            parameters: ModuleParameters.unflattened(
+                                Array(ck.params)),
+                            verify: .noUnusedKeys)
+                        optimizer.m = ck.m
+                        optimizer.v = ck.v
+                        optimizer.t = ck.adamT
+                        startStep = ck.nextStep
+                        self.tlog("taskadapter RESUMED from checkpoint: "
+                            + "next_step=\(ck.nextStep) adam_t=\(ck.adamT)")
+                    } catch {
+                        self.tlog("taskadapter checkpoint restore FAILED: \(error) "
+                            + "— starting fresh")
+                        startStep = 0
+                    }
+                }
+                Self.appendTaskAdapterMarker(
+                    ctx, recordType: "train_begin",
+                    extra: ["resumed_from_step": startStep])
 
                 GPU.resetPeakMemory()
 
-                var exampleIndex = 0
-                for step in 0 ..< totalSteps {
+                var exampleIndex = startStep * window
+                for step in startStep ..< totalSteps {
                     let stepStart = Date.timeIntervalSinceReferenceDate
                     let microCount = min(window, n - exampleIndex)
 
@@ -4197,22 +4326,19 @@ extension LLMEvaluator {
                         exampleIndex += 1
 
                         let nTok = ex.ids.count
-                        let m = nTok - 1
                         let full = MLXArray(ex.ids).reshaped([1, nTok])
                         let inputs = full[0..., .stride(to: -1)]
-                        let targets = full[0..., 1...]
-                        // Shifted-target mask: target position j supervises
-                        // token j+1, so the span [lossStart, lossEnd) in ids
-                        // becomes [lossStart−1, lossEnd−1) here. Written once,
-                        // verified against the Mac reference (smoke check 1).
-                        var maskVals = [Float](repeating: 0, count: m)
-                        for j in (ex.lossStart - 1) ..< (ex.lossEnd - 1) {
-                            maskVals[j] = 1
-                        }
-                        let mask = MLXArray(maskVals).reshaped([1, m])
+                        // Sliced-span loss: logits at shifted positions
+                        // [lossStart−1, lossEnd−1) predict exactly the tokens
+                        // ids[lossStart..<lossEnd]. Same off-by-one as the
+                        // original mask construction, verified against the Mac
+                        // reference (smoke check 1) in both implementations.
+                        spanBox.range = (ex.lossStart - 1) ..< (ex.lossEnd - 1)
+                        let targetsSlice = full[0..., ex.lossStart ..< ex.lossEnd]
+                        let spanTokens = Float(ex.lossEnd - ex.lossStart)
 
                         let (vals, grad) = lossValueGrad(
-                            mc.model, [inputs, targets, mask])
+                            mc.model, [inputs, targetsSlice])
                         let flat = grad.flattened()
                         if accum.isEmpty {
                             for (k, g) in flat { accum[k] = g }
@@ -4223,7 +4349,7 @@ extension LLMEvaluator {
                         // the accumulation window.
                         eval(Array(accum.values))
                         let ceSum = vals[0].item(Float.self)
-                        let ntoks = vals[1].item(Float.self)
+                        let ntoks = spanTokens
 
                         windowCESum += ceSum
                         windowMaskedTokens += ntoks
@@ -4247,12 +4373,9 @@ extension LLMEvaluator {
 
                     let lr = Self.taskAdapterLR(
                         step: step, scheduleTotalSteps: scheduleTotalSteps)
-                    optimizer.learningRate = lr
                     let scaled = accum.map { ($0.key, $0.value * finalScale) }
                     optimizer.update(
-                        model: mc.model,
-                        gradients: ModuleParameters.unflattened(scaled))
-                    eval(mc.model, optimizer)
+                        model: mc.model, grads: scaled, learningRate: lr)
 
                     let now = Date.timeIntervalSinceReferenceDate
                     let windowLoss = windowMaskedTokens > 0
@@ -4274,6 +4397,17 @@ extension LLMEvaluator {
                     if (step + 1) % 10 == 0 || step == 0 {
                         self.tlog("taskadapter step \(step + 1)/\(totalSteps) "
                             + "loss=\(windowLoss) lr=\(lr) gradNorm=\(gradNorm)")
+                    }
+                    if (step + 1) % TrainBenchConstants.taskAdapterCheckpointEverySteps == 0
+                        || step + 1 == totalSteps
+                    {
+                        do {
+                            try Self.saveTaskAdapterCheckpoint(
+                                dir: adapterDir, model: mc.model,
+                                optimizer: optimizer, nextStep: step + 1)
+                        } catch {
+                            self.tlog("taskadapter checkpoint save FAILED: \(error)")
+                        }
                     }
                 }
 
@@ -4310,6 +4444,78 @@ extension LLMEvaluator {
             + "error=\(trainError ?? "none")")
         benchLogLine("taskadapter complete adapter_saved=\(adapterSaved)")
         finishTrainBenchmark()
+    }
+
+    // MARK: - Task-adapter (h12 v3) checkpoint/resume
+
+    struct TaskAdapterCheckpoint {
+        let params: [String: MLXArray]
+        let m: [String: MLXArray]
+        let v: [String: MLXArray]
+        let adamT: Int
+        let nextStep: Int
+    }
+
+    /// Crash-safe save: everything is written into `checkpoint.new/`, which is
+    /// swapped in only when complete (meta.json written last). A kill at ANY
+    /// point leaves either the previous consistent checkpoint or a `.new` dir
+    /// the loader ignores — never a torn state where new weights pair with an
+    /// old step counter (which would silently re-run optimizer steps on
+    /// already-updated weights).
+    private nonisolated static func saveTaskAdapterCheckpoint(
+        dir: URL, model: Module, optimizer: TaskAdapterAdamW, nextStep: Int
+    ) throws {
+        let fm = FileManager.default
+        let newDir = dir.appendingPathComponent("checkpoint.new")
+        let ckDir = dir.appendingPathComponent("checkpoint")
+        let oldDir = dir.appendingPathComponent("checkpoint.old")
+        try? fm.removeItem(at: newDir)
+        try fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+
+        let params = Dictionary(
+            uniqueKeysWithValues: model.trainableParameters().flattened())
+        try save(arrays: params, url: newDir.appendingPathComponent("adapter.safetensors"))
+        try save(arrays: optimizer.m, url: newDir.appendingPathComponent("adam_m.safetensors"))
+        try save(arrays: optimizer.v, url: newDir.appendingPathComponent("adam_v.safetensors"))
+        let meta: [String: Any] = [
+            "next_step": nextStep,
+            "adam_t": optimizer.t,
+            "n_params": params.count,
+            "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
+        ]
+        let metaData = try JSONSerialization.data(withJSONObject: meta, options: [.sortedKeys])
+        try metaData.write(to: newDir.appendingPathComponent("meta.json"))
+
+        try? fm.removeItem(at: oldDir)
+        if fm.fileExists(atPath: ckDir.path) {
+            try fm.moveItem(at: ckDir, to: oldDir)
+        }
+        try fm.moveItem(at: newDir, to: ckDir)
+        try? fm.removeItem(at: oldDir)
+    }
+
+    /// Load `checkpoint/`, falling back to `checkpoint.old/` if the primary is
+    /// torn (missing meta or unreadable arrays). Returns nil when neither is
+    /// usable — the caller starts fresh.
+    private nonisolated static func loadTaskAdapterCheckpoint(dir: URL) -> TaskAdapterCheckpoint? {
+        for name in ["checkpoint", "checkpoint.old"] {
+            let ck = dir.appendingPathComponent(name)
+            let metaURL = ck.appendingPathComponent("meta.json")
+            guard
+                let metaData = try? Data(contentsOf: metaURL),
+                let meta = try? JSONSerialization.jsonObject(with: metaData) as? [String: Any],
+                let nextStep = meta["next_step"] as? Int,
+                let adamT = meta["adam_t"] as? Int,
+                let nParams = meta["n_params"] as? Int,
+                let params = try? MLX.loadArrays(url: ck.appendingPathComponent("adapter.safetensors")),
+                let m = try? MLX.loadArrays(url: ck.appendingPathComponent("adam_m.safetensors")),
+                let v = try? MLX.loadArrays(url: ck.appendingPathComponent("adam_v.safetensors")),
+                params.count == nParams, m.count == nParams, v.count == nParams
+            else { continue }
+            return TaskAdapterCheckpoint(
+                params: params, m: m, v: v, adamT: adamT, nextStep: nextStep)
+        }
+        return nil
     }
 
     /// HF cosine-with-warmup, 0-based step index. Verified against the cluster
@@ -4385,6 +4591,11 @@ extension LLMEvaluator {
             "weight_decay": TrainBenchConstants.taskAdapterWeightDecay,
             "grad_clip_norm": TrainBenchConstants.taskAdapterGradClipNorm,
             "adam_bias_correction": true,
+            // Schema v2 (2026-08-11): loss computes logits only on the sliced
+            // assistant span (see SmolLM3Model.logits(_:positionRange:)) —
+            // numerically identical to v1's full-logits+mask, but without the
+            // full-sequence fp32 logits transient.
+            "loss_impl": "sliced_lm_head",
             "app_build": TrainBenchConstants.taskAdapterAppBuild,
             "bench_schema_version": TrainBenchConstants.taskAdapterSchemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,

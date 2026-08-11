@@ -312,6 +312,30 @@ public class SmolLM3Model: Module, LLMModel, KVCacheDimensionProvider {
         return out
     }
 
+    /// LOCAL ADDITION (mobile_LoRA_ft, h12): logits for ONLY the given
+    /// position range — the hidden states are sliced BEFORE the lm_head
+    /// projection, so the [seq, vocab] logits tensor is materialised only for
+    /// the supervised span instead of the whole sequence.
+    ///
+    /// For an assistant-masked training loss this is mathematically identical
+    /// to computing full logits and masking (positions outside the span have
+    /// exactly zero cotangent, so values AND gradients match), but it removes
+    /// the dominant transient of the training-loss step: at 449 tokens the
+    /// full fp32 logits + CE buffers cost >1 GB, which put long-example
+    /// accumulation windows right on this device's jetsam wall (measured
+    /// 6.07 GB vs a 4.7–5.1 GB baseline, h12 2026-08-10). It also skips the
+    /// unsupervised majority of the lm_head backward, which h11 measured at
+    /// ~14% of the backward pass.
+    public func logits(_ inputs: MLXArray, positionRange range: Range<Int>) -> MLXArray {
+        var out = model(inputs, cache: nil)
+        out = out[0..., range.lowerBound ..< range.upperBound, 0...]
+        if let lmHead {
+            return lmHead(out)
+        } else {
+            return model.embedTokens.asLinear(out)
+        }
+    }
+
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var weights = weights
 
