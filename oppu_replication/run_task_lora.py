@@ -117,13 +117,18 @@ peft_config = LoraConfig(
     task_type="CAUSAL_LM"
 )
 
-training_arguments = transformers.TrainingArguments(
-    output_dir=str(ckpt_dir / "trainer_tmp"),   # PATCH P8: was a shared 'outputs/'
+# PATCH P15: the container's transformers (v5-era) removed some 2024
+# TrainingArguments params (first hit: group_by_length). Build the kwargs
+# dict, filter against the installed signature, and log what was dropped —
+# each dropped key is a recorded deviation, not a silent one.
+import inspect
+_ta_kwargs = dict(
+    output_dir=str(ckpt_dir / "trainer_tmp"),
     per_device_train_batch_size=batch_size,
     gradient_accumulation_steps=1,
     optim='adamw_torch',
     num_train_epochs=max_epoch,
-    save_steps=int(1e9),                        # PATCH P6: float 1e9 rejected by newer transformers
+    save_steps=int(1e9),                        # PATCH P6
     logging_steps=50,
     learning_rate=1e-4,
     weight_decay=1e-2,
@@ -134,6 +139,13 @@ training_arguments = transformers.TrainingArguments(
     lr_scheduler_type='linear',
     report_to='none',
 )
+_ta_sig = set(inspect.signature(transformers.TrainingArguments.__init__).parameters)
+_dropped = sorted(k for k in _ta_kwargs if k not in _ta_sig)
+if _dropped:
+    print(f"[PATCH P15] transformers {transformers.__version__} dropped "
+          f"TrainingArguments params, omitting: {_dropped}", flush=True)
+training_arguments = transformers.TrainingArguments(
+    **{k: v for k, v in _ta_kwargs.items() if k in _ta_sig})
 
 with open(f"{args.data_root}/{task_name}/user_others.json", 'r') as f:
     train = json.load(f)

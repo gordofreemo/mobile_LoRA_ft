@@ -127,8 +127,13 @@ peft_config = LoraConfig(
     task_type="CAUSAL_LM",
 )
 
-training_arguments = transformers.TrainingArguments(
-    output_dir=str(Path(args.ckpt_root) / task_name / f"trainer_tmp{shard}"),  # PATCH P8
+# PATCH P15: the container's transformers (v5-era) removed some 2024
+# TrainingArguments params (first hit: group_by_length). Build the kwargs
+# dict, filter against the installed signature, and log what was dropped —
+# each dropped key is a recorded deviation, not a silent one.
+import inspect
+_ta_kwargs = dict(
+    output_dir=str(Path(args.ckpt_root) / task_name / f"trainer_tmp{shard}"),
     per_device_train_batch_size=batch_size,
     gradient_accumulation_steps=1,
     optim='adamw_torch',
@@ -144,6 +149,13 @@ training_arguments = transformers.TrainingArguments(
     lr_scheduler_type='linear',
     report_to='none',
 )
+_ta_sig = set(inspect.signature(transformers.TrainingArguments.__init__).parameters)
+_dropped = sorted(k for k in _ta_kwargs if k not in _ta_sig)
+if _dropped:
+    print(f"[PATCH P15] transformers {transformers.__version__} dropped "
+          f"TrainingArguments params, omitting: {_dropped}", flush=True)
+training_arguments = transformers.TrainingArguments(
+    **{k: v for k, v in _ta_kwargs.items() if k in _ta_sig})
 
 format_flag = False
 if args.task_name == "movie_tagging":

@@ -49,3 +49,4 @@ ios/mlx-swift-lm-local/.build/
 .venv-audit/
 data/oppu_release/
 third_party/OPPU/
+__pycache__/

@@ -21,6 +21,8 @@ oppu_replication/run_task_lora.py`.
 | P11 | `transformers.set_seed(--seed)` immediately before each generation phase | their sampled decoding (do_sample, top_k=10, T=0.1, top_p=0.9) has no seed → irreproducible; decoding params untouched |
 | P12 | `run_oppu.py`: `--user-start/--user-end` sharding for cluster parallelism; per-user diagnostics (fresh-adapter zero check + merged-base weight-hash canary); adapter `unload()` after each user | upstream loops all users in one process, calling `get_peft_model()` repeatedly on the same model object — sharding + unload guarantee per-user independence; the canary logs if upstream's pattern would have differed |
 | P13 | `run_task_lora.py`: `--limit` (test users) / `--limit-train` (train users) | smoke runs, `_limitN` collision-free naming per repo convention |
+| P14 | `str()` coercion at the `get_first_k_tokens` truncation sites | citation/scholarly release data carries int `date` fields; their `.split()` helper crashes on them |
+| P15 | TrainingArguments kwargs filtered against the installed signature; dropped keys logged loudly | the container's transformers (v5-era) removed `group_by_length` (all 7 first-smoke jobs died on it); any key it drops is a printed, recorded deviation — first confirmed drop: `group_by_length` (their length-grouped batching, an efficiency/batch-composition feature, not a recipe value) |
 
 Known upstream behaviors kept deliberately (fidelity): dead `"out_proj"`
 target-module name (matches nothing on Llama-2 or SmolLM3 → effective q/v/k);
