@@ -1,0 +1,35 @@
+{
+ "generated_utc": "2026-08-12T13:28:10.570170+00:00",
+ "method": "h9 replication: gross = drained_frac x 55700.136 J; net = gross - 0.2612 W x duration",
+ "point_nax_on": {
+  "user": "u00005020",
+  "profile_size": 550,
+  "condition": "C2",
+  "nax_arm": "on",
+  "completed": true,
+  "iterations_total": 1650,
+  "iterations_reached": 1650,
+  "duration_s": 13015.0,
+  "gross_j": 38990.1,
+  "net_j": 35590.4,
+  "avg_power_w": 2.9958,
+  "pct_full_battery_gross": 70.0,
+  "pct_full_battery_net": 63.9,
+  "baseline_source": "proxy",
+  "baseline_user": "u00008075",
+  "bench_session_id": "A5E4E9DE-4B32-4372-9648-262F66080969",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "note": "launched plugged at 100%, unplugged ~2 min in (charging=true at run_start, battery still 1.0); h9 arithmetic replicated exactly (same full-battery J and XS idle baseline)"
+ },
+ "reference_nax_off": {
+  "duration_s": 17292.0,
+  "net_j": 48398.3,
+  "pct_net": 86.9,
+  "avg_power_w": 3.06
+ },
+ "ratios": {
+  "time": 1.329,
+  "net_energy": 1.36,
+  "avg_power_on_over_off": 0.979
+ }
+}
