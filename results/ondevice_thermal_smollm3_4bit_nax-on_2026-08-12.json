@@ -1,0 +1,645 @@
+{
+  "sessions": [
+    {
+      "bench_session_id": "E2FE4728-48F5-4F34-83E3-3E2EBADC996D",
+      "app_build": "smollm3-ondevice-thermal-cooldown-h10-nax-on",
+      "bench_schema_version": 2,
+      "model": "SmolLM3-3B-a1lamp-4bit",
+      "device_model": "iPhone18,1",
+      "num_lora_layers": 36,
+      "soak_seconds": 3600,
+      "probe_interval_s": 120,
+      "probe_tokens": 500,
+      "probe_iterations": 2,
+      "timestamp_utc": "2026-08-11T22:46:08Z",
+      "complete": true,
+      "run_elapsed_s": 9074.985853075981,
+      "battery_level_start": 1,
+      "battery_level_end": 1,
+      "stayed_charging": true,
+      "cold_ref_seconds_per_iter": 2.9947210550308228,
+      "cold_ref_n_iters": 1,
+      "soak_plateau_seconds_per_iter": 6.504900091437883,
+      "soak_plateau_n_iters": 93,
+      "soak_n_iters": 633,
+      "plateau_is_steady_state": true,
+      "cold_hot_ratio_R": 2.1721222016689405,
+      "n_probes": 45,
+      "t50_s": 163.7951084581901,
+      "t80_s": 248.17863823902596,
+      "t90_s": 311.7319301792906,
+      "t95_s": 343.5085761494229,
+      "enum_first_nominal_s": 1579.5254669189453,
+      "enum_vs_t90_gap_s": -1267.7935367396547,
+      "soak_iterations": 633,
+      "soak_span_s": 3600.225923061371,
+      "max_possible_gain": 0.14370649116899603,
+      "best_cooldown_s": 241.43162190914154,
+      "best_throughput_vs_continuous": 1.0434646816491442,
+      "duty_cycle_verdict": "duty_cycling_wins",
+      "best_cooldown_s_probe_bound": 362.00524497032166,
+      "best_throughput_vs_continuous_probe_bound": 1.9264730970106296,
+      "reference_plateau_seconds_per_iter": 6.504900091437883,
+      "reference_plateau_source": "own_soak"
+    }
+  ],
+  "curves": {
+    "E2FE4728-48F5-4F34-83E3-3E2EBADC996D": [
+      {
+        "probe_index": 0,
+        "cooldown_elapsed_s": 0.00040793418884277344,
+        "seconds_per_iter": 6.349613070487976,
+        "recovery": 0.04423905998505859,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 1,
+        "cooldown_elapsed_s": 121.34947800636292,
+        "seconds_per_iter": 5.30516505241394,
+        "recovery": 0.34178742069292406,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 2,
+        "cooldown_elapsed_s": 241.43162190914154,
+        "seconds_per_iter": 3.73402202129364,
+        "recovery": 0.7893836871011716,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 3,
+        "cooldown_elapsed_s": 362.00524497032166,
+        "seconds_per_iter": 3.0680691003799434,
+        "recovery": 0.9791041868268354,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 4,
+        "cooldown_elapsed_s": 484.4894779920578,
+        "seconds_per_iter": 3.0709609985351562,
+        "recovery": 0.9782803262416008,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 5,
+        "cooldown_elapsed_s": 604.5633689165115,
+        "seconds_per_iter": 3.061116933822632,
+        "recovery": 0.9810847600355536,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 6,
+        "cooldown_elapsed_s": 727.5031700134277,
+        "seconds_per_iter": 3.006497979164124,
+        "recovery": 0.9966449220933882,
+        "thermal_state": "serious",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 7,
+        "cooldown_elapsed_s": 850.5888199806213,
+        "seconds_per_iter": 2.9648420810699463,
+        "recovery": 1.0085120940131476,
+        "thermal_state": "fair",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 8,
+        "cooldown_elapsed_s": 973.564346909523,
+        "seconds_per_iter": 3.061697006225586,
+        "recovery": 0.9809195056719049,
+        "thermal_state": "fair",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 9,
+        "cooldown_elapsed_s": 1094.0538679361343,
+        "seconds_per_iter": 2.9668610095977783,
+        "recovery": 1.0079369300380647,
+        "thermal_state": "fair",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 10,
+        "cooldown_elapsed_s": 1216.5536489486694,
+        "seconds_per_iter": 3.0684300661087036,
+        "recovery": 0.9790013528331798,
+        "thermal_state": "fair",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 11,
+        "cooldown_elapsed_s": 1339.5891000032425,
+        "seconds_per_iter": 2.968608021736145,
+        "recovery": 1.0074392311685065,
+        "thermal_state": "fair",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 12,
+        "cooldown_elapsed_s": 1462.4844340085983,
+        "seconds_per_iter": 3.0775489807128906,
+        "recovery": 0.976403503974302,
+        "thermal_state": "fair",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 13,
+        "cooldown_elapsed_s": 1582.5954279899597,
+        "seconds_per_iter": 3.0098609924316406,
+        "recovery": 0.9956868475243602,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 14,
+        "cooldown_elapsed_s": 1703.066887974739,
+        "seconds_per_iter": 3.011125087738037,
+        "recovery": 0.9953267247803961,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 15,
+        "cooldown_elapsed_s": 1823.2536579370499,
+        "seconds_per_iter": 3.066452026367187,
+        "recovery": 0.9795648681755599,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 16,
+        "cooldown_elapsed_s": 1945.5631139278412,
+        "seconds_per_iter": 2.9616580009460445,
+        "recovery": 1.0094191930787157,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 17,
+        "cooldown_elapsed_s": 2068.593115925789,
+        "seconds_per_iter": 3.0081770420074463,
+        "recovery": 0.9961665810099541,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 18,
+        "cooldown_elapsed_s": 2191.5893470048904,
+        "seconds_per_iter": 2.9961899518966675,
+        "recovery": 0.9995815322094374,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 19,
+        "cooldown_elapsed_s": 2314.588005900383,
+        "seconds_per_iter": 2.983796000480652,
+        "recovery": 1.0031123923984668,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 20,
+        "cooldown_elapsed_s": 2434.629341006279,
+        "seconds_per_iter": 3.0705490112304688,
+        "recovery": 0.9783976955553635,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 21,
+        "cooldown_elapsed_s": 2557.552971959114,
+        "seconds_per_iter": 2.9965009689331055,
+        "recovery": 0.9994929278866344,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 22,
+        "cooldown_elapsed_s": 2679.5555769205093,
+        "seconds_per_iter": 2.9655290842056274,
+        "recovery": 1.0083163766071248,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 23,
+        "cooldown_elapsed_s": 2800.4677809476852,
+        "seconds_per_iter": 3.018090009689331,
+        "recovery": 0.993342517741651,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 24,
+        "cooldown_elapsed_s": 2923.4629019498825,
+        "seconds_per_iter": 2.9813289642333984,
+        "recovery": 1.0038152158788836,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 25,
+        "cooldown_elapsed_s": 3043.546714901924,
+        "seconds_per_iter": 3.048372983932495,
+        "recovery": 0.9847153298036361,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 26,
+        "cooldown_elapsed_s": 3163.572690010071,
+        "seconds_per_iter": 2.9614750146865845,
+        "recovery": 1.0094713232571373,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 27,
+        "cooldown_elapsed_s": 3283.5766429901123,
+        "seconds_per_iter": 2.9615060091018677,
+        "recovery": 1.0094624933897824,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 28,
+        "cooldown_elapsed_s": 3403.5806599855423,
+        "seconds_per_iter": 3.034316062927246,
+        "recovery": 0.9887199463372809,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 29,
+        "cooldown_elapsed_s": 3526.554551959038,
+        "seconds_per_iter": 3.028483033180237,
+        "recovery": 0.9903816934124329,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 30,
+        "cooldown_elapsed_s": 3649.574369907379,
+        "seconds_per_iter": 2.9911800622940063,
+        "recovery": 1.0010087783842618,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 31,
+        "cooldown_elapsed_s": 3769.5854469537735,
+        "seconds_per_iter": 3.0601390600204468,
+        "recovery": 0.9813633423505986,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 32,
+        "cooldown_elapsed_s": 3892.5551459789276,
+        "seconds_per_iter": 2.98471999168396,
+        "recovery": 1.0028491604682077,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 33,
+        "cooldown_elapsed_s": 4013.0424540042877,
+        "seconds_per_iter": 3.04743492603302,
+        "recovery": 0.9849825691352331,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 34,
+        "cooldown_elapsed_s": 4134.042881011963,
+        "seconds_per_iter": 3.0590590238571167,
+        "recovery": 0.9816710292668864,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 35,
+        "cooldown_elapsed_s": 4255.573401927948,
+        "seconds_per_iter": 3.0554280281066895,
+        "recovery": 0.9827054482275055,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 36,
+        "cooldown_elapsed_s": 4378.491303920746,
+        "seconds_per_iter": 3.0452189445495605,
+        "recovery": 0.9856138706900756,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 37,
+        "cooldown_elapsed_s": 4498.5649889707565,
+        "seconds_per_iter": 2.9601850509643555,
+        "recovery": 1.00983881554424,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 38,
+        "cooldown_elapsed_s": 4618.567784905434,
+        "seconds_per_iter": 2.9859390258789062,
+        "recovery": 1.0025018749929364,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 39,
+        "cooldown_elapsed_s": 4740.994339942932,
+        "seconds_per_iter": 3.0576549768447876,
+        "recovery": 0.9820710222580605,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 40,
+        "cooldown_elapsed_s": 4861.176065921783,
+        "seconds_per_iter": 3.0225380659103394,
+        "recovery": 0.9920753298931472,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 41,
+        "cooldown_elapsed_s": 4981.396369934082,
+        "seconds_per_iter": 2.9615169763565063,
+        "recovery": 1.00945936897518,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 42,
+        "cooldown_elapsed_s": 5101.513049960136,
+        "seconds_per_iter": 2.955953001976013,
+        "recovery": 1.0110444660094864,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 43,
+        "cooldown_elapsed_s": 5222.170658946037,
+        "seconds_per_iter": 2.950766086578369,
+        "recovery": 1.0125221443113184,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      },
+      {
+        "probe_index": 44,
+        "cooldown_elapsed_s": 5344.490625977516,
+        "seconds_per_iter": 3.017053008079529,
+        "recovery": 0.993637944726727,
+        "thermal_state": "nominal",
+        "n_iters_kept": 1
+      }
+    ]
+  },
+  "duty_cycle": {
+    "E2FE4728-48F5-4F34-83E3-3E2EBADC996D": [
+      {
+        "cooldown_s": 0.00040793418884277344,
+        "throughput_vs_continuous": 1.0063573260547902,
+        "throughput_vs_continuous_probe_bound": 1.0244560230872402
+      },
+      {
+        "cooldown_s": 121.34947800636292,
+        "throughput_vs_continuous": 1.014908491196843,
+        "throughput_vs_continuous_probe_bound": 1.1861613643748916
+      },
+      {
+        "cooldown_s": 241.43162190914154,
+        "throughput_vs_continuous": 1.0434646816491442,
+        "throughput_vs_continuous_probe_bound": 1.6325750289280292
+      },
+      {
+        "cooldown_s": 362.00524497032166,
+        "throughput_vs_continuous": 1.036484393497822,
+        "throughput_vs_continuous_probe_bound": 1.9264730970106296
+      },
+      {
+        "cooldown_s": 484.4894779920578,
+        "throughput_vs_continuous": 1.0053000320361178,
+        "throughput_vs_continuous_probe_bound": 1.866942958133934
+      },
+      {
+        "cooldown_s": 604.5633689165115,
+        "throughput_vs_continuous": 0.9769372933026353,
+        "throughput_vs_continuous_probe_bound": 1.8194591494476544
+      },
+      {
+        "cooldown_s": 727.5031700134277,
+        "throughput_vs_continuous": 0.9510451863157386,
+        "throughput_vs_continuous_probe_bound": 1.799885260381242
+      },
+      {
+        "cooldown_s": 850.5888199806213,
+        "throughput_vs_continuous": 0.9251343845117959,
+        "throughput_vs_continuous_probe_bound": 1.7746964993824113
+      },
+      {
+        "cooldown_s": 973.564346909523,
+        "throughput_vs_continuous": 0.8981019523714554,
+        "throughput_vs_continuous_probe_bound": 1.672345970825072
+      },
+      {
+        "cooldown_s": 1094.0538679361343,
+        "throughput_vs_continuous": 0.8771530333101886,
+        "throughput_vs_continuous_probe_bound": 1.6815038310047266
+      },
+      {
+        "cooldown_s": 1216.5536489486694,
+        "throughput_vs_continuous": 0.8525898899621934,
+        "throughput_vs_continuous_probe_bound": 1.5844936382684918
+      },
+      {
+        "cooldown_s": 1339.5891000032425,
+        "throughput_vs_continuous": 0.83355383524577,
+        "throughput_vs_continuous_probe_bound": 1.5969799040196022
+      },
+      {
+        "cooldown_s": 1462.4844340085983,
+        "throughput_vs_continuous": 0.8109082312633171,
+        "throughput_vs_continuous_probe_bound": 1.5030535610246185
+      },
+      {
+        "cooldown_s": 1582.5954279899597,
+        "throughput_vs_continuous": 0.7940405347335764,
+        "throughput_vs_continuous_probe_bound": 1.5012374341721806
+      },
+      {
+        "cooldown_s": 1703.066887974739,
+        "throughput_vs_continuous": 0.7759676987188855,
+        "throughput_vs_continuous_probe_bound": 1.4665174303480906
+      },
+      {
+        "cooldown_s": 1823.2536579370499,
+        "throughput_vs_continuous": 0.7572682911690441,
+        "throughput_vs_continuous_probe_bound": 1.4081439022374815
+      },
+      {
+        "cooldown_s": 1945.5631139278412,
+        "throughput_vs_continuous": 0.7424735651530681,
+        "throughput_vs_continuous_probe_bound": 1.425813007341115
+      },
+      {
+        "cooldown_s": 2068.593115925789,
+        "throughput_vs_continuous": 0.726009846358639,
+        "throughput_vs_continuous_probe_bound": 1.3732969449145427
+      },
+      {
+        "cooldown_s": 2191.5893470048904,
+        "throughput_vs_continuous": 0.7108971990245448,
+        "throughput_vs_continuous_probe_bound": 1.3495097529837825
+      },
+      {
+        "cooldown_s": 2314.588005900383,
+        "throughput_vs_continuous": 0.6961506832393214,
+        "throughput_vs_continuous_probe_bound": 1.3269345607306589
+      },
+      {
+        "cooldown_s": 2434.629341006279,
+        "throughput_vs_continuous": 0.6804513228402247,
+        "throughput_vs_continuous_probe_bound": 1.2637946063026413
+      },
+      {
+        "cooldown_s": 2557.552971959114,
+        "throughput_vs_continuous": 0.668640346010429,
+        "throughput_vs_continuous_probe_bound": 1.2691722045275005
+      },
+      {
+        "cooldown_s": 2679.5555769205093,
+        "throughput_vs_continuous": 0.6556918832115514,
+        "throughput_vs_continuous_probe_bound": 1.2575117021524196
+      },
+      {
+        "cooldown_s": 2800.4677809476852,
+        "throughput_vs_continuous": 0.6427674136105098,
+        "throughput_vs_continuous_probe_bound": 1.212269637298558
+      },
+      {
+        "cooldown_s": 2923.4629019498825,
+        "throughput_vs_continuous": 0.6311769105377396,
+        "throughput_vs_continuous_probe_bound": 1.2040791470052417
+      },
+      {
+        "cooldown_s": 3043.546714901924,
+        "throughput_vs_continuous": 0.6185783383666884,
+        "throughput_vs_continuous_probe_bound": 1.1563120039976165
+      },
+      {
+        "cooldown_s": 3163.572690010071,
+        "throughput_vs_continuous": 0.6087706026496221,
+        "throughput_vs_continuous_probe_bound": 1.1691194793195105
+      },
+      {
+        "cooldown_s": 3283.5766429901123,
+        "throughput_vs_continuous": 0.598158026522544,
+        "throughput_vs_continuous_probe_bound": 1.1487257619943396
+      },
+      {
+        "cooldown_s": 3403.5806599855423,
+        "throughput_vs_continuous": 0.5870758539581,
+        "throughput_vs_continuous_probe_bound": 1.1019507389927052
+      },
+      {
+        "cooldown_s": 3526.554551959038,
+        "throughput_vs_continuous": 0.5770663896404242,
+        "throughput_vs_continuous_probe_bound": 1.085021571594097
+      },
+      {
+        "cooldown_s": 3649.574369907379,
+        "throughput_vs_continuous": 0.5679607149832325,
+        "throughput_vs_continuous_probe_bound": 1.0799112478321902
+      },
+      {
+        "cooldown_s": 3769.5854469537735,
+        "throughput_vs_continuous": 0.5574036288478503,
+        "throughput_vs_continuous_probe_bound": 1.038386206320877
+      },
+      {
+        "cooldown_s": 3892.5551459789276,
+        "throughput_vs_continuous": 0.5495425156480085,
+        "throughput_vs_continuous_probe_bound": 1.0471516679228599
+      },
+      {
+        "cooldown_s": 4013.0424540042877,
+        "throughput_vs_continuous": 0.5398249343777525,
+        "throughput_vs_continuous_probe_bound": 1.0093701079824153
+      },
+      {
+        "cooldown_s": 4134.042881011963,
+        "throughput_vs_continuous": 0.5311580054189715,
+        "throughput_vs_continuous_probe_bound": 0.9898028479147664
+      },
+      {
+        "cooldown_s": 4255.573401927948,
+        "throughput_vs_continuous": 0.5230090287120025,
+        "throughput_vs_continuous_probe_bound": 0.9756480530217407
+      },
+      {
+        "cooldown_s": 4378.491303920746,
+        "throughput_vs_continuous": 0.515140292015748,
+        "throughput_vs_continuous_probe_bound": 0.9638375290529752
+      },
+      {
+        "cooldown_s": 4498.5649889707565,
+        "throughput_vs_continuous": 0.5084217882156686,
+        "throughput_vs_continuous_probe_bound": 0.9768237238620889
+      },
+      {
+        "cooldown_s": 4618.567784905434,
+        "throughput_vs_continuous": 0.500998309993938,
+        "throughput_vs_continuous_probe_bound": 0.9542585391913421
+      },
+      {
+        "cooldown_s": 4740.994339942932,
+        "throughput_vs_continuous": 0.4925329398475539,
+        "throughput_vs_continuous_probe_bound": 0.9181990233402512
+      },
+      {
+        "cooldown_s": 4861.176065921783,
+        "throughput_vs_continuous": 0.4861489538523062,
+        "throughput_vs_continuous_probe_bound": 0.9156734459958396
+      },
+      {
+        "cooldown_s": 4981.396369934082,
+        "throughput_vs_continuous": 0.4798162418825022,
+        "throughput_vs_continuous_probe_bound": 0.9214482353082675
+      },
+      {
+        "cooldown_s": 5101.513049960136,
+        "throughput_vs_continuous": 0.47319297563926166,
+        "throughput_vs_continuous_probe_bound": 0.9104389532931962
+      },
+      {
+        "cooldown_s": 5222.170658946037,
+        "throughput_vs_continuous": 0.4667214537008808,
+        "throughput_vs_continuous_probe_bound": 0.8995657117449554
+      },
+      {
+        "cooldown_s": 5344.490625977516,
+        "throughput_vs_continuous": 0.4599709964721119,
+        "throughput_vs_continuous_probe_bound": 0.8677698914592658
+      }
+    ]
+  },
+  "selflimit_phases": {},
+  "cycles": {},
+  "cycle_rest_probes": {},
+  "git_commit": "fbc4b3a",
+  "git_dirty": true,
+  "generated_utc": "2026-08-12T01:18:02.606492+00:00"
+}

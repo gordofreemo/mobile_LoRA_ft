@@ -1,0 +1,2724 @@
+{
+  "generated_utc": "2026-08-11T22:16:14.502344+00:00",
+  "source_files": [
+    "results/ondevice/train_bench_metrics_tokentime_cold_nax-on_2026-08-11.jsonl"
+  ],
+  "n_records": 400,
+  "app_builds": [
+    "smollm3-ondevice-train-tokentime-h7-nax-on"
+  ],
+  "bench_session_ids": [
+    "7BBBC6A2-2A26-49BB-9F0D-34789D491079"
+  ],
+  "device_model": "iPhone18,1",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "model": "SmolLM3-3B-a1lamp-4bit",
+  "lora": {
+    "rank": 8,
+    "keys": "q_proj,v_proj",
+    "num_layers": 28
+  },
+  "gradient_checkpointing": true,
+  "optimizer": "adamw",
+  "learning_rate": 9.999999747378752e-06,
+  "weight_decay": 0.009999999776482582,
+  "warmup_seconds": 75,
+  "warmup_seq_cap": 512,
+  "cells": [
+    {
+      "target_tokens": 50,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 0.3379558503627777,
+        "std": 0.00514574189849704,
+        "min": 0.3308149576187134,
+        "max": 0.35033297538757324,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 145.02094170169795,
+        "std": 2.1841387231868996,
+        "min": 139.86693643609004,
+        "max": 148.11905831802144,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 1959997665.2,
+        "std": 14026.026044089384,
+        "min": 1959970674,
+        "max": 1960005687,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 1869.199433517456,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 0.34359192848205566,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 0.33949100971221924,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 0.3308149576187134,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 0.3393890857696533,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 0.3323589563369751,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 0.35033297538757324,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 0.3417470455169678,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 0.3411400318145752,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 0.3337550163269043,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 0.33490192890167236,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 0.3325110673904419,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 0.3338639736175537,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 0.3355919122695923,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 0.3355250358581543,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 0.33541297912597656,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 0.3344780206680298,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 0.3366440534591675,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 0.3453559875488281,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 0.344789981842041,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 0.3374210596084595,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 100,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 0.5763688862323761,
+        "std": 0.00490410713962233,
+        "min": 0.5712770223617554,
+        "max": 0.586906909942627,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 171.7767213102519,
+        "std": 1.4505066243603941,
+        "min": 168.68092421961387,
+        "max": 173.29595997177924,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2113477322.75,
+        "std": 714.8170082357847,
+        "min": 2113476116,
+        "max": 2113477725,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2015.5690410137177,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 0.5712839365005493,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 0.5712770223617554,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 0.5719239711761475,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 0.5714370012283325,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 0.5856859683990479,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 0.5771609544754028,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 0.5728099346160889,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 0.5729479789733887,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 0.5764750242233276,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 0.5853210687637329,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 0.5776900053024292,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 0.5738459825515747,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 0.5759689807891846,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 0.5773499011993408,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 0.586906909942627,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 0.5784480571746826,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 0.5716040134429932,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 0.5732129812240601,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 0.5762180089950562,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 0.5798100233078003,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 150,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 0.867740797996521,
+        "std": 0.010052303325744078,
+        "min": 0.850701928138733,
+        "max": 0.8830599784851074,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 171.73223553446422,
+        "std": 1.9967026094506355,
+        "min": 168.73146063714725,
+        "max": 175.14947959034248,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2257594839.4,
+        "std": 6002.238235156861,
+        "min": 2257580913,
+        "max": 2257597297,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2153.010215187073,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 0.8553450107574464,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 0.850701928138733,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 0.8523930311203003,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 0.8556309938430785,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 0.8553160429000854,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 0.8635380268096925,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 0.8601679801940918,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 0.8742610216140746,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 0.862133026123047,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 0.8718889951705933,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 0.875262975692749,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 0.8715240955352783,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 0.8776530027389526,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 0.8662639856338501,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 0.87276291847229,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 0.8753659725189208,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 0.8830599784851074,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 0.875108003616333,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 0.8759900331497192,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 0.8804489374160767,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 200,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 1.1261646509170533,
+        "std": 0.008941000616329615,
+        "min": 1.1096150875091553,
+        "max": 1.143496036529541,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 176.71653985229236,
+        "std": 1.403469670034508,
+        "min": 174.0277129459548,
+        "max": 179.34146916361038,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2392626136.8,
+        "std": 3663.5737743356553,
+        "min": 2392610572,
+        "max": 2392626956,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2281.786095428467,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.113250970840454,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.1096150875091553,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.1114939451217651,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.143496036529541,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.1217560768127441,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.1348730325698853,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.1304819583892822,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.1223399639129639,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.120182991027832,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.1303809881210327,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 1.12807297706604,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 1.125514030456543,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 1.1260520219802856,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 1.1412419080734253,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 1.1246129274368286,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 1.1248669624328613,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 1.1322500705718994,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 1.1291770935058594,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 1.1338199377059937,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 1.1198140382766724,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 250,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 1.2510799884796142,
+        "std": 0.014577311110882531,
+        "min": 1.231384038925171,
+        "max": 1.278228998184204,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 199.05368415412897,
+        "std": 2.3166767599595004,
+        "min": 194.80077541169732,
+        "max": 202.21148896597913,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2546049647.2,
+        "std": 114.33358395962506,
+        "min": 2546049524,
+        "max": 2546049748,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2428.102156829834,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.2417049407958984,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.258405089378357,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.2317169904708862,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.231384038925171,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.239076018333435,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.253477931022644,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.260882019996643,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.2636089324951172,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.2451308965682983,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.2709410190582275,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 1.2657989263534546,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 1.2613070011138916,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 1.2598021030426025,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 1.2659729719161987,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 1.2364189624786377,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 1.2403079271316528,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 1.2501450777053833,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 1.232177972793579,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 1.235111951828003,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 1.278228998184204,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 300,
+      "n_iterations": 20,
+      "thermal_states": {
+        "nominal": 20
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "nominal",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 1.5277658343315124,
+        "std": 0.021082970561429493,
+        "min": 1.4910159111022951,
+        "max": 1.5624189376831055,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 195.74603844505017,
+        "std": 2.701843913552239,
+        "min": 191.36992824945142,
+        "max": 200.53441266025922,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2701536527.2,
+        "std": 1220.5687026524713,
+        "min": 2701534532,
+        "max": 2701537284,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2576.3860008239744,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.526043891906738,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.4910159111022951,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.4958770275115967,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.528467059135437,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.5404189825057983,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.5365329980850218,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.5138640403747559,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.507073998451233,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.530606985092163,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.5487799644470215,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 1.5219520330429077,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 1.505010962486267,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 1.51139497756958,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 1.5073620080947876,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 1.538017988204956,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 1.5612469911575317,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 1.5550109148025513,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 1.5274510383605957,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 1.5624189376831055,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 1.5467699766159058,
+          "thermal_state": "nominal"
+        }
+      ]
+    },
+    {
+      "target_tokens": 350,
+      "n_iterations": 20,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 18
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.095650452375412,
+        "std": 0.21596950317214908,
+        "min": 1.845566987991333,
+        "max": 2.50204598903656,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 168.14794765295903,
+        "std": 16.51890291416868,
+        "min": 139.48584539582592,
+        "max": 189.10177862459628,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2760530964.8,
+        "std": 1556.8895306110564,
+        "min": 2760525608,
+        "max": 2760531560,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2632.647480773926,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.845566987991333,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.8985220193862915,
+          "thermal_state": "nominal"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.921101927757263,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.8894400596618652,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.8949950933456423,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.9432339668273928,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.905745029449463,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.9172760248184204,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.9183980226516721,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.960654020309448,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.1074090003967285,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.1261450052261353,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.158810019493103,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.2108670473098755,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.2468149662017822,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.274308919906616,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 2.2923630475997925,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 2.40959095954895,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 2.489720940589905,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 2.50204598903656,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 400,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.135742950439453,
+        "std": 0.05301956603341769,
+        "min": 2.072836995124817,
+        "max": 2.225582003593445,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 186.9285151778813,
+        "std": 4.591909389926388,
+        "min": 179.2789478688141,
+        "max": 192.48981031235118,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2903231067.2,
+        "std": 3955.9736255839457,
+        "min": 2903223288,
+        "max": 2903237016,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2768.7369033813475,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 2.141638994216919,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 2.072836995124817,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 2.085545063018799,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 2.085314989089966,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 2.097929000854492,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 2.0979490280151367,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 2.101846933364868,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 2.0898929834365845,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 2.073333978652954,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 2.0985759496688843,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.110155940055847,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.1108410358428955,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.1431580781936646,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.1773200035095215,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.1870739459991455,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.1942250728607178,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 2.1902379989624023,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 2.211871027946472,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 2.2195299863815308,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 2.225582003593445,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 450,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.4543135821819306,
+        "std": 0.07202961841811809,
+        "min": 2.351839065551758,
+        "max": 2.609955906867981,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 183.09045572760616,
+        "std": 5.283719642154668,
+        "min": 172.03355766221063,
+        "max": 190.91442377017472,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3047136651.2,
+        "std": 5702.798072230121,
+        "min": 3047119976,
+        "max": 3047138504,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2905.9759628295897,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 2.4067718982696533,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 2.351839065551758,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 2.3957890272140503,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 2.36703097820282,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 2.3704280853271484,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 2.4519479274749756,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 2.406006932258606,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 2.411625027656555,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 2.442652940750122,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 2.455976963043213,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.409309983253479,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.423601984977722,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.445120930671692,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.468829035758972,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.5346219539642334,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.496456027030945,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 2.5159000158309937,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 2.5844199657440186,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 2.537986993789673,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 2.609955906867981,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 500,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.608582156896591,
+        "std": 0.11709945680521443,
+        "min": 2.4877049922943115,
+        "max": 2.912708044052124,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 191.64596822476068,
+        "std": 8.31785522382061,
+        "min": 171.31823459580153,
+        "max": 200.58648495125306,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3121132276.6,
+        "std": 5862.614383577204,
+        "min": 3121119835,
+        "max": 3121135387,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2976.5436902999877,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 2.499729037284851,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 2.504407048225403,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 2.4877049922943115,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 2.5110700130462646,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 2.5080889463424683,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 2.516648054122925,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 2.490602970123291,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 2.512887954711914,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 2.531255006790161,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 2.554816961288452,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.574208974838257,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.6637250185012817,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.648476004600525,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.693937063217163,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.686814069747925,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.686793088912964,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 2.7068629264831543,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 2.7187000513076782,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 2.7622069120407104,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 2.912708044052124,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 550,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.9174275636672973,
+        "std": 0.19329869528634347,
+        "min": 2.7504119873046875,
+        "max": 3.4354140758514404,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 188.90186115292607,
+        "std": 11.50210202438405,
+        "min": 159.80606351329996,
+        "max": 199.6064598809438,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3239207350.8,
+        "std": 347961.1736972963,
+        "min": 3238189897,
+        "max": 3239320401,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3089.14885597229,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 2.7504290342330933,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 2.7504119873046875,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 2.757422924041748,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 2.8291910886764526,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 2.762721061706543,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 2.7686010599136353,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 2.767232060432434,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 2.7847191095352173,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 2.811287999153137,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 2.832434058189392,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.9310050010681152,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.8929250240325928,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.9076778888702393,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.9346330165863037,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.9361059665679936,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.986953020095825,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 3.012576937675476,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 3.1671760082244877,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 3.329633951187134,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 3.4354140758514404,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 600,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 3.3332767248153687,
+        "std": 0.32388922056046116,
+        "min": 3.0394450426101685,
+        "max": 4.127156019210815,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 181.15869309252244,
+        "std": 15.815710621924772,
+        "min": 145.13626264958583,
+        "max": 197.07545015704574,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3392988591.0,
+        "std": 1235250.4380212051,
+        "min": 3392005551,
+        "max": 3394463151,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3235.8060750961304,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 3.0394450426101685,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 3.054694890975952,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 3.0634490251541138,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 3.147681951522827,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 3.1345869302749634,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 3.0868079662323,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 3.089818000793457,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 3.1227309703826904,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 3.173914074897766,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 3.1901209354400635,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 3.2294789552688603,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 3.2603999376296997,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 3.289152979850769,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 3.3042039871215816,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 3.3533579111099243,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 3.4822499752044673,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 3.704028964042663,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 3.84792697429657,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 3.9643290042877197,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 4.127156019210815,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 650,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 3.822835350036621,
+        "std": 0.47946928498750085,
+        "min": 3.342751026153564,
+        "max": 4.968376040458679,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 172.05411953341383,
+        "std": 19.275622238923255,
+        "min": 130.62618342795255,
+        "max": 194.15146235009644,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3513762607.2,
+        "std": 2922350.5772556593,
+        "min": 3508056053,
+        "max": 3515396093,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3350.9851524353026,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 3.342751026153564,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 3.376322031021118,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 3.4592620134353633,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 3.4651960134506226,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 3.475450992584228,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 3.43717098236084,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 3.474195957183838,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 3.510248064994812,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 3.6287139654159546,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 3.582509040832519,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 3.6367170810699463,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 3.7644599676132207,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 3.735649943351745,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 3.7957129478454585,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 4.0730299949646,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 4.170107007026672,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 4.311658024787903,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 4.507411956787109,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 4.741763949394226,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 4.968376040458679,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 700,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 20
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 4.163873159885407,
+        "std": 0.686546885274263,
+        "min": 3.5821759700775146,
+        "max": 5.867132067680359,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 171.60426417950046,
+        "std": 24.01673523222207,
+        "min": 119.13827606685493,
+        "max": 195.1327924252907,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3652691747.6,
+        "std": 3294898.1161392117,
+        "min": 3649141331,
+        "max": 3655596631,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3483.4783054351806,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 3.661170959472656,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 3.594539046287537,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 3.5821759700775146,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 3.5867780447006226,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 3.6193619966506954,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 3.758373022079468,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 3.7049959897994995,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 3.7580130100250244,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 3.8099079132080074,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 3.8635939359664917,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 3.8833709955215454,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 3.9075610637664795,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 3.936689972877502,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 4.230254054069519,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 4.410025000572205,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 4.551347017288208,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 4.864758014678955,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 5.159072041511536,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 5.528343081474304,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 5.867132067680359,
+          "thermal_state": "fair"
+        }
+      ]
+    },
+    {
+      "target_tokens": 750,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 17,
+        "serious": 3
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 4.670619404315948,
+        "std": 0.8789416680048848,
+        "min": 3.857527017593384,
+        "max": 6.385169982910157,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 165.15830702953428,
+        "std": 27.012355452093054,
+        "min": 117.30306350570008,
+        "max": 194.16584681946898,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3742649661.0,
+        "std": 1891083.298563356,
+        "min": 3737120061,
+        "max": 3743264061,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3569.2688570022583,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 3.954246044158936,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 3.857527017593384,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 3.912350058555603,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 3.9025179147720332,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 3.958233952522278,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 3.9810609817504887,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 4.167408108711243,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 4.090415954589844,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 4.177217960357666,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 4.27043604850769,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 4.225797057151794,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 4.301448941230774,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 4.620179057121277,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 4.809747934341431,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 5.08272910118103,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 5.343495011329651,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 5.8694339990615845,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 6.185294032096863,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 6.385169982910157,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 6.317678928375244,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 800,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 14,
+        "serious": 6
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 5.309256511926651,
+        "std": 1.06910042265724,
+        "min": 4.240963935852051,
+        "max": 7.020127892494202,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 155.8928744640367,
+        "std": 28.41638929611003,
+        "min": 113.81559029063799,
+        "max": 188.40056460877994,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3880914439.0,
+        "std": 3416282.5445679985,
+        "min": 3866400263,
+        "max": 3881678343,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3701.12842464447,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 4.240963935852051,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 4.271504044532776,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 4.3015570640563965,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 4.310553073883057,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 4.365962028503418,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 4.551184058189392,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 4.501991033554077,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 4.649188041687012,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 4.647046089172363,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 4.6622819900512695,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 4.7765419483184814,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 5.147841930389404,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 5.3731369972229,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 5.653998017311096,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 6.189072012901306,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 6.658138036727904,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 7.020127892494202,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 6.951763987541199,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 6.9769760370254525,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 6.935302019119264,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 850,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 13,
+        "serious": 7
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 5.868425595760345,
+        "std": 1.1859285057909406,
+        "min": 4.666028022766113,
+        "max": 7.508673071861267,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 150.10127935835513,
+        "std": 28.413170889044636,
+        "min": 113.06924564096755,
+        "max": 181.95347217325457,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3868278481.0,
+        "std": 0.0,
+        "min": 3868278481,
+        "max": 3868278481,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3689.077836036682,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 4.666028022766113,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 4.696055054664612,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 4.7143659591674805,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 4.671546936035156,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 4.757711052894592,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 4.827513098716736,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 5.015951991081238,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 4.974432945251465,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 5.031723976135254,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 5.105156064033508,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 5.519091963768005,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 5.76452898979187,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 6.142851948738098,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 6.817103028297424,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 7.408360958099365,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 7.508673071861267,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 7.461447954177856,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 7.4436789751052865,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 7.401278972625732,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 7.441010951995849,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 900,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 11,
+        "serious": 9
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 6.483768403530121,
+        "std": 1.3062086233910517,
+        "min": 4.998217940330505,
+        "max": 8.090144038200378,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 144.04985164530984,
+        "std": 28.31951154811718,
+        "min": 111.12286700398218,
+        "max": 179.86410571375643,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4001439640.0,
+        "std": 1444836.6504192564,
+        "min": 3999000475,
+        "max": 4002252695,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3816.070213317871,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 5.110759019851685,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 4.998217940330505,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 5.0519410371780396,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 5.096626043319702,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 5.212726950645447,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 5.27739405632019,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 5.403234004974365,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 5.418025970458984,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 5.510132074356079,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 5.931348919868468,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 6.3087650537490845,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 6.721807956695557,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 7.427955985069275,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 8.08316195011139,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 8.090144038200378,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 8.064267992973328,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 8.061817049980164,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 7.981465935707092,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 7.95401906967163,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 7.971557021141052,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 950,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 10,
+        "serious": 10
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 6.805780094861984,
+        "std": 1.3673048761390871,
+        "min": 5.163302063941956,
+        "max": 8.40956699848175,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 144.94807953191855,
+        "std": 28.986239349257982,
+        "min": 112.84766506662363,
+        "max": 183.7971105017009,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4138201189.0,
+        "std": 0.0,
+        "min": 4138201189,
+        "max": 4138201189,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3946.496190071106,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 5.163302063941956,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 5.187291979789734,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 5.25766396522522,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 5.330859065055847,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 5.454725980758667,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 5.6813119649887085,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 5.62015700340271,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 5.677779912948608,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 5.820748925209045,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 6.295561909675598,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 6.6886290311813354,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 7.425864934921265,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 8.205425024032593,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 8.40956699848175,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 8.379137992858887,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 8.382152080535889,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 8.316140055656433,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 8.290226936340332,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 8.301492094993591,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 8.227563977241516,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 1000,
+      "n_iterations": 20,
+      "thermal_states": {
+        "fair": 9,
+        "serious": 11
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 6.898853492736817,
+        "std": 0.9216003821399188,
+        "min": 5.6297630071640015,
+        "max": 7.99521791934967,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 147.37083075529054,
+        "std": 20.262968771531433,
+        "min": 124.94968993681394,
+        "max": 177.44974321809812,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4270946607.0,
+        "std": 0.0,
+        "min": 4270946607,
+        "max": 4270946607,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 4073.092085838318,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 5.6297630071640015,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 5.631622910499573,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 5.698089003562927,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 5.8232890367507935,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 5.943121910095216,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 6.050113081932068,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 6.105051040649414,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 6.2211350202560425,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 6.645739912986755,
+          "thermal_state": "fair"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 6.9460519552230835,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 7.130138993263245,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 7.434340000152589,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 7.606706023216248,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 7.702944040298461,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 7.838003039360046,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 7.900344967842102,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 7.884295940399169,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 7.8857680559158325,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 7.905333995819092,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 7.99521791934967,
+          "thermal_state": "serious"
+        }
+      ]
+    }
+  ],
+  "linear_fit": {
+    "intercept_s": -0.4890514415502545,
+    "slope_s_per_token": 0.007146334312643323,
+    "pearson_r": 0.9867363111937945,
+    "r_squared": 0.9736485478283368,
+    "n_points": 20,
+    "residual_std_s": 0.3477671225529321
+  }
+}

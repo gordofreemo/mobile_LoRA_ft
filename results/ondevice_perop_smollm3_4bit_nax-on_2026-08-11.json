@@ -1,0 +1,1614 @@
+{
+  "generated_utc": "2026-08-11T18:01:40.895547+00:00",
+  "source_files": [
+    "results/ondevice/train_bench_metrics_perop_nax-on_2026-08-11.jsonl"
+  ],
+  "n_records": 332,
+  "app_builds": [
+    "smollm3-ondevice-train-perop-h11-nax-on"
+  ],
+  "bench_session_ids": [
+    "494FA521-5997-41D6-9CF4-6B43D6B0E900"
+  ],
+  "device_model": "iPhone18,1",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "model": "SmolLM3-3B-a1lamp-4bit",
+  "schema_version": 2,
+  "git_commit": "d75d940",
+  "git_dirty": false,
+  "idle_minutes": 60,
+  "lora": {
+    "rank": 8,
+    "keys": "q_proj,v_proj",
+    "num_layers": 36
+  },
+  "gradient_checkpointing": true,
+  "checkpoint_granularity": "per_block",
+  "optimizer": "adamw",
+  "learning_rate": 9.999999747378752e-06,
+  "weight_decay": 0.009999999776482582,
+  "warmup_iterations": 1,
+  "kept_iterations": 10,
+  "phases": [
+    "data_prep",
+    "graph_build",
+    "forward",
+    "backward",
+    "optimizer",
+    "readback"
+  ],
+  "run": {
+    "start_utc": "2026-08-11T17:40:18Z",
+    "end_utc": "2026-08-11T18:00:54Z",
+    "elapsed_s": 1236.2947670221329,
+    "battery_level_start": 1,
+    "battery_level_end": 1
+  },
+  "cold_ref": {
+    "target_tokens": 500,
+    "n_iterations": 2,
+    "n_warmup_dropped": 1,
+    "seconds_per_iter": {
+      "mean": 4.686210036277771,
+      "std": 0.0,
+      "min": 4.686210036277771,
+      "max": 4.686210036277771,
+      "n": 1
+    },
+    "all_iterations": [
+      {
+        "iter_index": 0,
+        "warmup": true,
+        "iter_seconds": 4.633883953094482,
+        "thermal_state": "nominal"
+      },
+      {
+        "iter_index": 1,
+        "warmup": false,
+        "iter_seconds": 4.686210036277771,
+        "thermal_state": "nominal"
+      }
+    ]
+  },
+  "cells": [
+    {
+      "pass": "cool",
+      "target_tokens": 50,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 0.41416971683502196,
+        "std": 0.002115717527321048,
+        "min": 0.4105260372161865,
+        "max": 0.41805803775787354,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 0.4327391147613525,
+        "std": 0.0019611449206801725,
+        "min": 0.42836904525756836,
+        "max": 0.4347090721130371,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.0008804202079772949,
+          "std": 1.1434187897344833e-05,
+          "min": 0.0008599758148193359,
+          "max": 0.0009020566940307617,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03201758861541748,
+          "std": 0.0009832578939188456,
+          "min": 0.030650973320007324,
+          "max": 0.03319907188415527,
+          "n": 10
+        },
+        "forward": {
+          "mean": 0.1184270977973938,
+          "std": 0.0006435274764858229,
+          "min": 0.11694502830505371,
+          "max": 0.11920595169067383,
+          "n": 10
+        },
+        "backward": {
+          "mean": 0.21448320150375366,
+          "std": 0.0018388724977411116,
+          "min": 0.21206700801849365,
+          "max": 0.2182779312133789,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.06687120199203492,
+          "std": 0.001116143337530863,
+          "min": 0.06488096714019775,
+          "max": 0.06896698474884033,
+          "n": 10
+        },
+        "readback": {
+          "mean": 5.9604644775390625e-05,
+          "std": 5.782162587933565e-06,
+          "min": 4.398822784423828e-05,
+          "max": 6.496906280517578e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0020345288372252417,
+        "graph_build": 0.07398820102748183,
+        "forward": 0.2736685771118798,
+        "backward": 0.49564089352550694,
+        "optimizer": 0.1545300614410905,
+        "readback": 0.00013773805681573635
+      },
+      "decomposition_overhead_ratio": 1.044835238240577,
+      "loss_continuity": {
+        "fused_first_loss": 0.5877546072006226,
+        "fused_last_loss": 0.4423348903656006,
+        "barriered_first_loss": 0.4302319586277008,
+        "barriered_last_loss": 0.3287311792373657,
+        "fused_last_step_delta": -0.012682467699050903,
+        "boundary_step_delta": -0.01210293173789978,
+        "barriered_first_step_delta": -0.012301743030548096,
+        "continuity_residual": 0.000579535961151123
+      },
+      "peak_mem_mb_fused": 1877.9353767395019,
+      "peak_mem_mb_barriered": 1850.1961416244508,
+      "thermal_states": {
+        "nominal": 22
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "nominal",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9852288659883428
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 100,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 0.6810691237449646,
+        "std": 0.0035217065051603817,
+        "min": 0.67650306224823,
+        "max": 0.6875470876693726,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 0.7092103004455567,
+        "std": 0.005344076218296398,
+        "min": 0.6969279050827026,
+        "max": 0.715175986289978,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.0016184210777282714,
+          "std": 1.389185246577392e-05,
+          "min": 0.0015980005264282227,
+          "max": 0.0016440153121948242,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03514389991760254,
+          "std": 0.0017665936912807038,
+          "min": 0.033136963844299316,
+          "max": 0.03810000419616699,
+          "n": 10
+        },
+        "forward": {
+          "mean": 0.20018608570098878,
+          "std": 0.00037559439015445994,
+          "min": 0.19970500469207764,
+          "max": 0.20083999633789062,
+          "n": 10
+        },
+        "backward": {
+          "mean": 0.3791469931602478,
+          "std": 0.003606492232882844,
+          "min": 0.3720909357070923,
+          "max": 0.3832129240036011,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.09305299520492553,
+          "std": 0.0025556399991135434,
+          "min": 0.08732306957244873,
+          "max": 0.09553289413452148,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.19053840637207e-05,
+          "std": 1.830534883981783e-05,
+          "min": 3.600120544433594e-05,
+          "max": 8.094310760498047e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.002282004472737507,
+        "graph_build": 0.04955356668610653,
+        "forward": 0.28226618476243676,
+        "backward": 0.5346044648844654,
+        "optimizer": 0.13120649142640145,
+        "readback": 8.728776785225631e-05
+      },
+      "decomposition_overhead_ratio": 1.0413191197772311,
+      "loss_continuity": {
+        "fused_first_loss": 0.2920202314853668,
+        "fused_last_loss": 0.21894238889217377,
+        "barriered_first_loss": 0.21299368143081665,
+        "barriered_last_loss": 0.16259750723838806,
+        "fused_last_step_delta": -0.006303519010543823,
+        "boundary_step_delta": -0.005948707461357117,
+        "barriered_first_step_delta": -0.006253987550735474,
+        "continuity_residual": 0.00035481154918670654
+      },
+      "peak_mem_mb_fused": 2028.248371696472,
+      "peak_mem_mb_barriered": 1979.4459325790406,
+      "thermal_states": {
+        "nominal": 22
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "nominal",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9759386277349198
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 250,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 1.5537580132484436,
+        "std": 0.06903260302213893,
+        "min": 1.4880729913711548,
+        "max": 1.660849928855896,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 1.769634771347046,
+        "std": 0.06031165840484379,
+        "min": 1.6801329851150513,
+        "max": 1.871006965637207,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.004110074043273926,
+          "std": 0.0004861615404050234,
+          "min": 0.0037980079650878906,
+          "max": 0.005450010299682617,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.034902429580688475,
+          "std": 0.001060498006971099,
+          "min": 0.03374803066253662,
+          "max": 0.03715503215789795,
+          "n": 10
+        },
+        "forward": {
+          "mean": 0.5029222965240479,
+          "std": 0.01907854540193648,
+          "min": 0.4754209518432617,
+          "max": 0.5362269878387451,
+          "n": 10
+        },
+        "backward": {
+          "mean": 1.1278567790985108,
+          "std": 0.04172721590988273,
+          "min": 1.0697730779647827,
+          "max": 1.196619987487793,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.09977568387985229,
+          "std": 0.003990368902681445,
+          "min": 0.09441995620727539,
+          "max": 0.10490894317626953,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.750822067260742e-05,
+          "std": 4.941413185194824e-06,
+          "min": 5.805492401123047e-05,
+          "max": 7.49826431274414e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0023225549756492056,
+        "graph_build": 0.019722956479952498,
+        "forward": 0.28419553269809644,
+        "backward": 0.637338730770975,
+        "optimizer": 0.05638207696603014,
+        "readback": 3.8148109296711074e-05
+      },
+      "decomposition_overhead_ratio": 1.138938468061232,
+      "loss_continuity": {
+        "fused_first_loss": 0.116450235247612,
+        "fused_last_loss": 0.08687321096658707,
+        "barriered_first_loss": 0.08443821966648102,
+        "barriered_last_loss": 0.06469347327947617,
+        "fused_last_step_delta": -0.0026135146617889404,
+        "boundary_step_delta": -0.0024349913001060486,
+        "barriered_first_step_delta": -0.002512700855731964,
+        "continuity_residual": 0.00017852336168289185
+      },
+      "peak_mem_mb_fused": 2431.7826652526855,
+      "peak_mem_mb_barriered": 2348.546112060547,
+      "thermal_states": {
+        "nominal": 22
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "nominal",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9657713847616849
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 500,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 4.2106963992118835,
+        "std": 0.1080549032997406,
+        "min": 3.9695850610733032,
+        "max": 4.2981380224227905,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 4.395725679397583,
+        "std": 0.046265161677800565,
+        "min": 4.325923919677734,
+        "max": 4.466356039047241,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.007369017601013184,
+          "std": 0.00018081206331770135,
+          "min": 0.007206082344055176,
+          "max": 0.00784909725189209,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03153308629989624,
+          "std": 0.0004655630214217426,
+          "min": 0.030890941619873047,
+          "max": 0.03251492977142334,
+          "n": 10
+        },
+        "forward": {
+          "mean": 1.3931712985038758,
+          "std": 0.032870131189590965,
+          "min": 1.3505300283432007,
+          "max": 1.4394609928131104,
+          "n": 10
+        },
+        "backward": {
+          "mean": 2.885398507118225,
+          "std": 0.02444666278885798,
+          "min": 2.8580379486083984,
+          "max": 2.93122398853302,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.07819278240203857,
+          "std": 0.02034996406563087,
+          "min": 0.056463003158569336,
+          "max": 0.10320103168487549,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.098747253417969e-05,
+          "std": 1.6045469998881316e-05,
+          "min": 3.790855407714844e-05,
+          "max": 7.796287536621094e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0016764052487513459,
+        "graph_build": 0.007173579199377548,
+        "forward": 0.31693772544396,
+        "backward": 0.6564100486620124,
+        "optimizer": 0.017788367178716798,
+        "readback": 1.3874267181872409e-05
+      },
+      "decomposition_overhead_ratio": 1.043942678987811,
+      "loss_continuity": {
+        "fused_first_loss": 0.05824558064341545,
+        "fused_last_loss": 0.04366941377520561,
+        "barriered_first_loss": 0.04245148226618767,
+        "barriered_last_loss": 0.03241334110498428,
+        "fused_last_step_delta": -0.0012940429151058197,
+        "boundary_step_delta": -0.0012179315090179443,
+        "barriered_first_step_delta": -0.0012461021542549133,
+        "continuity_residual": 7.611140608787537e-05
+      },
+      "peak_mem_mb_fused": 3147.453426361084,
+      "peak_mem_mb_barriered": 2915.061428833008,
+      "thermal_states": {
+        "nominal": 5,
+        "fair": 17
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9261650718699418
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 750,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 7.095933282375336,
+        "std": 0.1645443513025173,
+        "min": 6.764383912086488,
+        "max": 7.324234962463379,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 7.469003295898437,
+        "std": 0.05652586111872518,
+        "min": 7.382128953933716,
+        "max": 7.550531983375549,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.010675394535064697,
+          "std": 0.0001472172256385056,
+          "min": 0.010377049446105957,
+          "max": 0.010904073715209961,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03103891611099243,
+          "std": 0.0006379216822397549,
+          "min": 0.029941082000732422,
+          "max": 0.03214001655578613,
+          "n": 10
+        },
+        "forward": {
+          "mean": 2.380607378482819,
+          "std": 0.023394342162719742,
+          "min": 2.341075897216797,
+          "max": 2.414920926094055,
+          "n": 10
+        },
+        "backward": {
+          "mean": 4.948391723632812,
+          "std": 0.03460829155369324,
+          "min": 4.897204041481018,
+          "max": 5.00573992729187,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.09821369647979736,
+          "std": 0.010202047758598665,
+          "min": 0.06925404071807861,
+          "max": 0.10220503807067871,
+          "n": 10
+        },
+        "readback": {
+          "mean": 7.61866569519043e-05,
+          "std": 1.1101970231192108e-05,
+          "min": 6.794929504394531e-05,
+          "max": 0.00010406970977783203,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.001429293054526704,
+        "graph_build": 0.0041556972036733844,
+        "forward": 0.31873160101430353,
+        "backward": 0.6625237033099443,
+        "optimizer": 0.013149505039545354,
+        "readback": 1.0200378006760525e-05
+      },
+      "decomposition_overhead_ratio": 1.0525751861914656,
+      "loss_continuity": {
+        "fused_first_loss": 0.03887592628598213,
+        "fused_last_loss": 0.02920278161764145,
+        "barriered_first_loss": 0.028395850211381912,
+        "barriered_last_loss": 0.021679500117897987,
+        "fused_last_step_delta": -0.0008397474884986877,
+        "boundary_step_delta": -0.0008069314062595367,
+        "barriered_first_step_delta": -0.0008546654134988785,
+        "continuity_residual": 3.2816082239151e-05
+      },
+      "peak_mem_mb_fused": 3744.7654991149902,
+      "peak_mem_mb_barriered": 3378.0841751098633,
+      "thermal_states": {
+        "fair": 22
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "fair",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9020816325904023
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 1000,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 10.519960510730744,
+        "std": 0.05855775282544562,
+        "min": 10.366183996200562,
+        "max": 10.570680022239685,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 10.699043405055999,
+        "std": 0.11429016440147943,
+        "min": 10.57562005519867,
+        "max": 10.90372097492218,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.014366495609283447,
+          "std": 0.00027744754701135744,
+          "min": 0.01408696174621582,
+          "max": 0.01506197452545166,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03315911293029785,
+          "std": 0.00017628897529400417,
+          "min": 0.03281700611114502,
+          "max": 0.03331899642944336,
+          "n": 10
+        },
+        "forward": {
+          "mean": 3.4060104966163633,
+          "std": 0.03622603285714365,
+          "min": 3.366689920425415,
+          "max": 3.475973963737488,
+          "n": 10
+        },
+        "backward": {
+          "mean": 7.179745101928711,
+          "std": 0.0803555391162734,
+          "min": 7.098050951957703,
+          "max": 7.3183900117874146,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.06570022106170655,
+          "std": 0.0018414100414379834,
+          "min": 0.06166398525238037,
+          "max": 0.06794500350952148,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.197690963745117e-05,
+          "std": 1.7822969323831515e-05,
+          "min": 3.898143768310547e-05,
+          "max": 8.90493392944336e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0013427831877468911,
+        "graph_build": 0.0030992595949865943,
+        "forward": 0.3183471986857068,
+        "backward": 0.67106420921106,
+        "optimizer": 0.0061407565680740095,
+        "readback": 5.792752425713407e-06
+      },
+      "decomposition_overhead_ratio": 1.0170231527145548,
+      "loss_continuity": {
+        "fused_first_loss": 0.029199182987213135,
+        "fused_last_loss": 0.021546518430113792,
+        "barriered_first_loss": 0.02090567722916603,
+        "barriered_last_loss": 0.015925662592053413,
+        "fused_last_step_delta": -0.000652732327580452,
+        "boundary_step_delta": -0.0006408412009477615,
+        "barriered_first_step_delta": -0.0006667021661996841,
+        "continuity_residual": 1.189112663269043e-05
+      },
+      "peak_mem_mb_fused": 4170.485594749451,
+      "peak_mem_mb_barriered": 3603.774726867676,
+      "thermal_states": {
+        "fair": 17,
+        "serious": 5
+      },
+      "first_thermal_state": "fair",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.864113937092781
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 50,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 0.6755909204483033,
+        "std": 0.020120232448981173,
+        "min": 0.6590790748596191,
+        "max": 0.7276120185852051,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 0.7205037951469422,
+        "std": 0.01916595598296035,
+        "min": 0.687769889831543,
+        "max": 0.7397890090942383,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.0010744929313659668,
+          "std": 3.766758901101258e-05,
+          "min": 0.0010349750518798828,
+          "max": 0.0011559724807739258,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03166320323944092,
+          "std": 0.0011472899190143623,
+          "min": 0.030784010887145996,
+          "max": 0.03455793857574463,
+          "n": 10
+        },
+        "forward": {
+          "mean": 0.19500352144241334,
+          "std": 0.007354430636809919,
+          "min": 0.18249905109405518,
+          "max": 0.20205795764923096,
+          "n": 10
+        },
+        "backward": {
+          "mean": 0.39595288038253784,
+          "std": 0.012842298631289177,
+          "min": 0.37148594856262207,
+          "max": 0.40782594680786133,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.09673969745635987,
+          "std": 0.0024067560504986304,
+          "min": 0.09295892715454102,
+          "max": 0.09990394115447998,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.999969482421876e-05,
+          "std": 1.9707089990713238e-05,
+          "min": 3.898143768310547e-05,
+          "max": 9.489059448242188e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0014913078024062743,
+        "graph_build": 0.04394592152423487,
+        "forward": 0.27064884703715353,
+        "backward": 0.5495500274246102,
+        "optimizer": 0.1342667423932589,
+        "readback": 9.715381833615846e-05
+      },
+      "decomposition_overhead_ratio": 1.0664793935786407,
+      "loss_continuity": {
+        "fused_first_loss": 0.5877546072006226,
+        "fused_last_loss": 0.440530389547348,
+        "barriered_first_loss": 0.4280991852283478,
+        "barriered_last_loss": 0.32657620310783386,
+        "fused_last_step_delta": -0.01277044415473938,
+        "boundary_step_delta": -0.012431204319000244,
+        "barriered_first_step_delta": -0.012889862060546875,
+        "continuity_residual": 0.00033923983573913574
+      },
+      "peak_mem_mb_fused": 1877.936291694641,
+      "peak_mem_mb_barriered": 1850.199439048767,
+      "thermal_states": {
+        "serious": 22
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9852301418485052
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 100,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 1.1042737126350404,
+        "std": 0.02468432673954806,
+        "min": 1.0881600379943848,
+        "max": 1.1730810403823853,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 1.1433530926704407,
+        "std": 0.01728214720266529,
+        "min": 1.1190580129623413,
+        "max": 1.1722309589385986,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.0017807722091674806,
+          "std": 9.558116948896262e-05,
+          "min": 0.0017130374908447266,
+          "max": 0.002035975456237793,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03172191381454468,
+          "std": 0.0018792104948629285,
+          "min": 0.030228018760681152,
+          "max": 0.03668999671936035,
+          "n": 10
+        },
+        "forward": {
+          "mean": 0.3220178008079529,
+          "std": 0.007083359362686557,
+          "min": 0.31105804443359375,
+          "max": 0.3334629535675049,
+          "n": 10
+        },
+        "backward": {
+          "mean": 0.6855601072311401,
+          "std": 0.01128986017202803,
+          "min": 0.6709729433059692,
+          "max": 0.7071390151977539,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.10220659971237182,
+          "std": 0.0049740576092228385,
+          "min": 0.09198498725891113,
+          "max": 0.11057305335998535,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.589889526367187e-05,
+          "std": 3.5828071628063162e-06,
+          "min": 6.103515625e-05,
+          "max": 7.295608520507812e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0015574997965049184,
+        "graph_build": 0.027744634634655405,
+        "forward": 0.2816433548588573,
+        "backward": 0.5996048916349461,
+        "optimizer": 0.08939198255339988,
+        "readback": 5.7636521636336294e-05
+      },
+      "decomposition_overhead_ratio": 1.0353892151812147,
+      "loss_continuity": {
+        "fused_first_loss": 0.2920202314853668,
+        "fused_last_loss": 0.2185583859682083,
+        "barriered_first_loss": 0.21242958307266235,
+        "barriered_last_loss": 0.16248880326747894,
+        "fused_last_step_delta": -0.006278485059738159,
+        "boundary_step_delta": -0.0061288028955459595,
+        "barriered_first_step_delta": -0.006431505084037781,
+        "continuity_residual": 0.0001496821641921997
+      },
+      "peak_mem_mb_fused": 2028.423064804077,
+      "peak_mem_mb_barriered": 1979.450355243683,
+      "thermal_states": {
+        "serious": 22
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9758567576901792
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 250,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 2.419503998756409,
+        "std": 0.006844243277981016,
+        "min": 2.403087019920349,
+        "max": 2.4250320196151733,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 2.4833867073059084,
+        "std": 0.021939991995861847,
+        "min": 2.451789975166321,
+        "max": 2.5201059579849243,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.003997325897216797,
+          "std": 0.00022537365954430034,
+          "min": 0.0037970542907714844,
+          "max": 0.004360079765319824,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.0314228892326355,
+          "std": 0.0004351679924005918,
+          "min": 0.030606985092163086,
+          "max": 0.032202959060668945,
+          "n": 10
+        },
+        "forward": {
+          "mean": 0.7648568868637085,
+          "std": 0.014390574270967434,
+          "min": 0.7467869520187378,
+          "max": 0.7827259302139282,
+          "n": 10
+        },
+        "backward": {
+          "mean": 1.5962512135505675,
+          "std": 0.0056539544874036765,
+          "min": 1.5864360332489014,
+          "max": 1.6033689975738525,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.08679168224334717,
+          "std": 0.013815596365624239,
+          "min": 0.07384800910949707,
+          "max": 0.1066809892654419,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.670951843261719e-05,
+          "std": 1.3834693304634999e-05,
+          "min": 3.802776336669922e-05,
+          "max": 8.499622344970703e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0016096268396126189,
+        "graph_build": 0.012653240488157596,
+        "forward": 0.30798944224577096,
+        "backward": 0.6427719085612139,
+        "optimizer": 0.034948919549264545,
+        "readback": 2.6862315980174803e-05
+      },
+      "decomposition_overhead_ratio": 1.0264032250338642,
+      "loss_continuity": {
+        "fused_first_loss": 0.116450235247612,
+        "fused_last_loss": 0.08755428344011307,
+        "barriered_first_loss": 0.08513344079256058,
+        "barriered_last_loss": 0.06503438204526901,
+        "fused_last_step_delta": -0.0024162158370018005,
+        "boundary_step_delta": -0.0024208426475524902,
+        "barriered_first_step_delta": -0.0026029199361801147,
+        "continuity_residual": -4.626810550689697e-06
+      },
+      "peak_mem_mb_fused": 2431.7826652526855,
+      "peak_mem_mb_barriered": 2348.546112060547,
+      "thermal_states": {
+        "serious": 22
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9657713847616849
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 500,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 5.146310305595398,
+        "std": 0.05414049936500293,
+        "min": 5.027772068977356,
+        "max": 5.226824998855591,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 5.306409180164337,
+        "std": 0.054724666322393326,
+        "min": 5.198188900947571,
+        "max": 5.397318005561829,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.007358980178833008,
+          "std": 0.00010313979342515959,
+          "min": 0.007173061370849609,
+          "max": 0.007491946220397949,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.031136810779571533,
+          "std": 0.00028736329587828135,
+          "min": 0.030715107917785645,
+          "max": 0.03155505657196045,
+          "n": 10
+        },
+        "forward": {
+          "mean": 1.707567274570465,
+          "std": 0.025989785574215607,
+          "min": 1.6763780117034912,
+          "max": 1.7508230209350586,
+          "n": 10
+        },
+        "backward": {
+          "mean": 3.4643187046051027,
+          "std": 0.028105740102554573,
+          "min": 3.4220809936523438,
+          "max": 3.506065011024475,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.09595201015472413,
+          "std": 0.015469259285195045,
+          "min": 0.06093895435333252,
+          "max": 0.10418093204498291,
+          "n": 10
+        },
+        "readback": {
+          "mean": 7.539987564086914e-05,
+          "std": 1.259641692461514e-05,
+          "min": 6.401538848876953e-05,
+          "max": 0.00010800361633300781,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0013868097858607095,
+        "graph_build": 0.005867774180695059,
+        "forward": 0.32179336658647617,
+        "backward": 0.6528555539129786,
+        "optimizer": 0.01808228632526083,
+        "readback": 1.4209208728704567e-05
+      },
+      "decomposition_overhead_ratio": 1.031109448335222,
+      "loss_continuity": {
+        "fused_first_loss": 0.05824558064341545,
+        "fused_last_loss": 0.04412733018398285,
+        "barriered_first_loss": 0.04289975017309189,
+        "barriered_last_loss": 0.032727498561143875,
+        "fused_last_step_delta": -0.0011910796165466309,
+        "boundary_step_delta": -0.0012275800108909607,
+        "barriered_first_step_delta": -0.0012494511902332306,
+        "continuity_residual": -3.6500394344329834e-05
+      },
+      "peak_mem_mb_fused": 3147.453426361084,
+      "peak_mem_mb_barriered": 2915.061428833008,
+      "thermal_states": {
+        "serious": 22
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9261650718699418
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 750,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 8.213238084316254,
+        "std": 0.08439814363248468,
+        "min": 7.982520937919616,
+        "max": 8.28923499584198,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 8.468692672252654,
+        "std": 0.03778748974868516,
+        "min": 8.424880981445312,
+        "max": 8.547131896018982,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.010857093334197997,
+          "std": 0.0001444111461769035,
+          "min": 0.010631918907165527,
+          "max": 0.011050939559936523,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.032059895992279056,
+          "std": 0.0007478187224222405,
+          "min": 0.030662059783935547,
+          "max": 0.03296792507171631,
+          "n": 10
+        },
+        "forward": {
+          "mean": 2.756908094882965,
+          "std": 0.007876022827621587,
+          "min": 2.743945002555847,
+          "max": 2.7685790061950684,
+          "n": 10
+        },
+        "backward": {
+          "mean": 5.600131988525391,
+          "std": 0.03278635354085649,
+          "min": 5.558556914329529,
+          "max": 5.666041016578674,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.06866782903671265,
+          "std": 0.009321478612288627,
+          "min": 0.059873104095458984,
+          "max": 0.09238505363464355,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.777048110961914e-05,
+          "std": 1.5169560999295182e-05,
+          "min": 4.1961669921875e-05,
+          "max": 8.797645568847656e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0012820270795480448,
+        "graph_build": 0.00378569600209039,
+        "forward": 0.3255411669283818,
+        "backward": 0.6612746742922916,
+        "optimizer": 0.00810843322508327,
+        "readback": 8.002472604970838e-06
+      },
+      "decomposition_overhead_ratio": 1.0311027861744577,
+      "loss_continuity": {
+        "fused_first_loss": 0.03887592628598213,
+        "fused_last_loss": 0.029138823971152306,
+        "barriered_first_loss": 0.028311122208833694,
+        "barriered_last_loss": 0.021616067737340927,
+        "fused_last_step_delta": -0.0008491352200508118,
+        "boundary_step_delta": -0.0008277017623186111,
+        "barriered_first_step_delta": -0.0008524935692548752,
+        "continuity_residual": 2.1433457732200623e-05
+      },
+      "peak_mem_mb_fused": 3744.7654991149902,
+      "peak_mem_mb_barriered": 3378.0841751098633,
+      "thermal_states": {
+        "serious": 22
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.9020816325904023
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 1000,
+      "n_fused": 10,
+      "n_barriered": 10,
+      "n_warmup_dropped": 2,
+      "fused_seconds_per_iter": {
+        "mean": 11.93535521030426,
+        "std": 0.14148186934761786,
+        "min": 11.571614980697632,
+        "max": 12.097128987312317,
+        "n": 10
+      },
+      "barriered_seconds_per_iter": {
+        "mean": 12.205951774120331,
+        "std": 0.05916018335167285,
+        "min": 12.07152009010315,
+        "max": 12.259384989738464,
+        "n": 10
+      },
+      "phases": {
+        "data_prep": {
+          "mean": 0.014384102821350098,
+          "std": 0.00014119739926965935,
+          "min": 0.014104962348937988,
+          "max": 0.014523029327392578,
+          "n": 10
+        },
+        "graph_build": {
+          "mean": 0.03231478929519653,
+          "std": 0.0004936880989110178,
+          "min": 0.03145098686218262,
+          "max": 0.033038973808288574,
+          "n": 10
+        },
+        "forward": {
+          "mean": 3.8965370893478393,
+          "std": 0.020302151026907772,
+          "min": 3.8655539751052856,
+          "max": 3.922715902328491,
+          "n": 10
+        },
+        "backward": {
+          "mean": 8.198713088035584,
+          "std": 0.04568908803767606,
+          "min": 8.0954430103302,
+          "max": 8.25146996974945,
+          "n": 10
+        },
+        "optimizer": {
+          "mean": 0.06394091844558716,
+          "std": 0.0020093889125993073,
+          "min": 0.060632944107055664,
+          "max": 0.06638705730438232,
+          "n": 10
+        },
+        "readback": {
+          "mean": 6.178617477416992e-05,
+          "std": 1.0241219733606221e-05,
+          "min": 4.1961669921875e-05,
+          "max": 7.891654968261719e-05,
+          "n": 10
+        }
+      },
+      "phase_shares": {
+        "data_prep": 0.0011784499142334802,
+        "graph_build": 0.002647461655854807,
+        "forward": 0.31923254830561204,
+        "backward": 0.6716979748698422,
+        "optimizer": 0.005238503283386544,
+        "readback": 5.06197107096327e-06
+      },
+      "decomposition_overhead_ratio": 1.0226718483906079,
+      "loss_continuity": {
+        "fused_first_loss": 0.029199182987213135,
+        "fused_last_loss": 0.02206479385495186,
+        "barriered_first_loss": 0.021483266726136208,
+        "barriered_last_loss": 0.01637905463576317,
+        "fused_last_step_delta": -0.0006217323243618011,
+        "boundary_step_delta": -0.0005815271288156509,
+        "barriered_first_step_delta": -0.0006394516676664352,
+        "continuity_residual": 4.020519554615021e-05
+      },
+      "peak_mem_mb_fused": 4140.468871116638,
+      "peak_mem_mb_barriered": 3603.774726867676,
+      "thermal_states": {
+        "serious": 22
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "peak_mem_ratio_barriered_over_fused": 0.8703784134224822
+    }
+  ],
+  "optimizer_flatness": {
+    "hot": {
+      "min_s": 0.06394091844558716,
+      "max_s": 0.10220659971237182,
+      "max_over_min": 1.598453731929863,
+      "by_tokens": {
+        "50": 0.09673969745635987,
+        "100": 0.10220659971237182,
+        "250": 0.08679168224334717,
+        "500": 0.09595201015472413,
+        "750": 0.06866782903671265,
+        "1000": 0.06394091844558716
+      }
+    },
+    "cool": {
+      "min_s": 0.06570022106170655,
+      "max_s": 0.09977568387985229,
+      "max_over_min": 1.518650656991574,
+      "by_tokens": {
+        "50": 0.06687120199203492,
+        "100": 0.09305299520492553,
+        "250": 0.09977568387985229,
+        "500": 0.07819278240203857,
+        "750": 0.09821369647979736,
+        "1000": 0.06570022106170655
+      }
+    }
+  },
+  "h7_cross_check": [
+    {
+      "pass": "cool",
+      "target_tokens": 50,
+      "observed_s": 0.41416971683502196,
+      "h7_hot_predicted_s": -0.8800000000000001,
+      "h7_hot_observed_over_predicted": null,
+      "h7_cold_predicted_s": -0.09900000000000009,
+      "h7_cold_observed_over_predicted": null
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 100,
+      "observed_s": 0.6810691237449646,
+      "h7_hot_predicted_s": 0.19699999999999984,
+      "h7_hot_observed_over_predicted": 3.4572036738323106,
+      "h7_cold_predicted_s": 0.47999999999999987,
+      "h7_cold_observed_over_predicted": 1.41889400780201
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 250,
+      "observed_s": 1.5537580132484436,
+      "h7_hot_predicted_s": 3.428,
+      "h7_hot_observed_over_predicted": 0.45325496302463353,
+      "h7_cold_predicted_s": 2.217,
+      "h7_cold_observed_over_predicted": 0.7008380754390815
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 500,
+      "observed_s": 4.2106963992118835,
+      "h7_hot_predicted_s": 8.812999999999999,
+      "h7_hot_observed_over_predicted": 0.47778241225597234,
+      "h7_cold_predicted_s": 5.112,
+      "h7_cold_observed_over_predicted": 0.823688653992935
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 750,
+      "observed_s": 7.095933282375336,
+      "h7_hot_predicted_s": 14.198,
+      "h7_hot_observed_over_predicted": 0.4997840035480586,
+      "h7_cold_predicted_s": 8.007,
+      "h7_cold_observed_over_predicted": 0.8862162211034516
+    },
+    {
+      "pass": "cool",
+      "target_tokens": 1000,
+      "observed_s": 10.519960510730744,
+      "h7_hot_predicted_s": 19.583,
+      "h7_hot_observed_over_predicted": 0.5371986166946201,
+      "h7_cold_predicted_s": 10.902,
+      "h7_cold_observed_over_predicted": 0.9649569354917212
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 50,
+      "observed_s": 0.6755909204483033,
+      "h7_hot_predicted_s": -0.8800000000000001,
+      "h7_hot_observed_over_predicted": null,
+      "h7_cold_predicted_s": -0.09900000000000009,
+      "h7_cold_observed_over_predicted": null
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 100,
+      "observed_s": 1.1042737126350404,
+      "h7_hot_predicted_s": 0.19699999999999984,
+      "h7_hot_observed_over_predicted": 5.6054503179443715,
+      "h7_cold_predicted_s": 0.47999999999999987,
+      "h7_cold_observed_over_predicted": 2.300570234656335
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 250,
+      "observed_s": 2.419503998756409,
+      "h7_hot_predicted_s": 3.428,
+      "h7_hot_observed_over_predicted": 0.7058063006874005,
+      "h7_cold_predicted_s": 2.217,
+      "h7_cold_observed_over_predicted": 1.0913414518522366
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 500,
+      "observed_s": 5.146310305595398,
+      "h7_hot_predicted_s": 8.812999999999999,
+      "h7_hot_observed_over_predicted": 0.583945342743152,
+      "h7_cold_predicted_s": 5.112,
+      "h7_cold_observed_over_predicted": 1.0067117186219479
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 750,
+      "observed_s": 8.213238084316254,
+      "h7_hot_predicted_s": 14.198,
+      "h7_hot_observed_over_predicted": 0.5784785240397418,
+      "h7_cold_predicted_s": 8.007,
+      "h7_cold_observed_over_predicted": 1.0257572229694336
+    },
+    {
+      "pass": "hot",
+      "target_tokens": 1000,
+      "observed_s": 11.93535521030426,
+      "h7_hot_predicted_s": 19.583,
+      "h7_hot_observed_over_predicted": 0.60947532095717,
+      "h7_cold_predicted_s": 10.902,
+      "h7_cold_observed_over_predicted": 1.094785838406188
+    }
+  ],
+  "capture_runs": [],
+  "samples": [
+    {
+      "elapsed_s": 30.195159077644348,
+      "thermal_state": "nominal",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 13.520549462722942
+    },
+    {
+      "elapsed_s": 60.620416045188904,
+      "thermal_state": "nominal",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 12.870634746321107
+    },
+    {
+      "elapsed_s": 91.13814306259155,
+      "thermal_state": "nominal",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 11.00716669402046
+    },
+    {
+      "elapsed_s": 121.1949360370636,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 10.08996001776988
+    },
+    {
+      "elapsed_s": 151.20641803741455,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.563525159855436
+    },
+    {
+      "elapsed_s": 181.43189108371735,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.311830332486469
+    },
+    {
+      "elapsed_s": 211.61614406108856,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.580407982751948
+    },
+    {
+      "elapsed_s": 242.22980499267578,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.302579202791865
+    },
+    {
+      "elapsed_s": 272.28953206539154,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.953649736330835
+    },
+    {
+      "elapsed_s": 302.43185806274414,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.837209302325581
+    },
+    {
+      "elapsed_s": 332.62010502815247,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.170305676855895
+    },
+    {
+      "elapsed_s": 363.22082006931305,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.523749795495446
+    },
+    {
+      "elapsed_s": 393.29474198818207,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.72412453521283
+    },
+    {
+      "elapsed_s": 424.26157200336456,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.491836844657579
+    },
+    {
+      "elapsed_s": 454.27309906482697,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.152143691263971
+    },
+    {
+      "elapsed_s": 484.4315710067749,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.067282686880983
+    },
+    {
+      "elapsed_s": 515.2364990711212,
+      "thermal_state": "fair",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.915267092859465
+    },
+    {
+      "elapsed_s": 545.2814950942993,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.557752110173256
+    },
+    {
+      "elapsed_s": 576.1995780467987,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.719747286570549
+    },
+    {
+      "elapsed_s": 606.2766890525818,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 12.395821757973108
+    },
+    {
+      "elapsed_s": 636.619803071022,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 11.361135563380282
+    },
+    {
+      "elapsed_s": 666.8301360607147,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 10.429447852760736
+    },
+    {
+      "elapsed_s": 696.8329939842224,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.890965732087228
+    },
+    {
+      "elapsed_s": 727.1387580633163,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.587004405286343
+    },
+    {
+      "elapsed_s": 757.3813860416412,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.472812586254486
+    },
+    {
+      "elapsed_s": 787.4381210803986,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.1747195379318
+    },
+    {
+      "elapsed_s": 817.4426950216293,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.39265850945495
+    },
+    {
+      "elapsed_s": 848.2843070030212,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.634961856841421
+    },
+    {
+      "elapsed_s": 878.3641980886459,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.577452285841101
+    },
+    {
+      "elapsed_s": 908.4429520368576,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.172436750998669
+    },
+    {
+      "elapsed_s": 938.6273310184479,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.402896788103266
+    },
+    {
+      "elapsed_s": 968.6315270662308,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 9.123275478415666
+    },
+    {
+      "elapsed_s": 999.3449580669403,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.187873519504509
+    },
+    {
+      "elapsed_s": 1029.3930720090866,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 8.913695434855049
+    },
+    {
+      "elapsed_s": 1059.443400979042,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.529568549058804
+    },
+    {
+      "elapsed_s": 1089.6319350004196,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.66637187707274
+    },
+    {
+      "elapsed_s": 1120.4071120023727,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.503795272175233
+    },
+    {
+      "elapsed_s": 1151.3608840703964,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.569141193595342
+    },
+    {
+      "elapsed_s": 1181.392275094986,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 6.89003722842696
+    },
+    {
+      "elapsed_s": 1211.4438910484314,
+      "thermal_state": "serious",
+      "battery_level": 1,
+      "charging": true,
+      "cpu_util_pct": 7.6350713532122825
+    }
+  ]
+}

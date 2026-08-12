@@ -1,0 +1,1276 @@
+{
+  "generated_utc": "2026-08-12T04:45:25.672943+00:00",
+  "source_files": [
+    "results/ondevice/train_bench_metrics_granularity_nax-on_2026-08-12.jsonl"
+  ],
+  "n_records": 110,
+  "app_builds": [
+    "smollm3-ondevice-train-granularity-h8-nax-on"
+  ],
+  "bench_session_ids": [
+    "0AC93DA6-E667-4D1E-9283-8D11646E8BAB",
+    "1F21088F-AB15-4D0E-B0AE-740FD883B900",
+    "2C8FC79B-C6B7-4752-AF60-15BB13FEF2FB",
+    "32571097-20DF-4ED3-BF05-5558A7C58547",
+    "47621A05-A73B-420A-BFAC-CDD2A3A73A17",
+    "5012FD19-456D-40B7-AC25-3EAD5F11A499",
+    "A1CF990C-8173-4AF6-A44B-6211B17BEB75",
+    "BC7BD05A-9355-487F-A727-E490F1F6EA2C",
+    "F5BF489A-1A79-4E12-982A-CDBB3205ED18"
+  ],
+  "device_model": "iPhone18,1",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "model": "SmolLM3-3B-a1lamp-4bit",
+  "seq_cap": 1024,
+  "lora": {
+    "rank": 8,
+    "keys": "q_proj,v_proj",
+    "num_layers": 36
+  },
+  "gradient_checkpointing": true,
+  "optimizer": "adamw",
+  "learning_rate": 9.999999747378752e-06,
+  "cells": [
+    {
+      "checkpoint_granularity": 1,
+      "num_checkpoint_groups": 36,
+      "n_windows": 20,
+      "n_expected_windows": 20,
+      "completed": true,
+      "oom": false,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": 711.200924038887,
+      "thermal_states": {
+        "nominal": 4,
+        "fair": 12,
+        "serious": 4
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "F5BF489A-1A79-4E12-982A-CDBB3205ED18"
+      ],
+      "iter_per_sec": {
+        "mean": 0.15519423107942923,
+        "std": 0.054987861828812185,
+        "min": 0.10437546545775492,
+        "max": 0.3214629295454532,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 114.38189753777189,
+        "std": 27.44058009487377,
+        "min": 96.50555536224019,
+        "max": 214.3514814209082,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4322065961.75,
+        "std": 126247735.95322345,
+        "min": 3965671948,
+        "max": 4390099891,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 4121.843301534653,
+      "peak_mem_mb_max": 4186.725512504578,
+      "windows": [
+        {
+          "step": 5,
+          "iter_per_sec": 0.3214629295454532,
+          "tok_per_sec": 214.3514814209082,
+          "elapsed_s": 24.849961042404175,
+          "peak_mem_bytes": 4202742316,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 10,
+          "iter_per_sec": 0.16750308772995706,
+          "tok_per_sec": 150.2502696937715,
+          "elapsed_s": 54.702219009399414,
+          "peak_mem_bytes": 4379576204,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 15,
+          "iter_per_sec": 0.2006056445217706,
+          "tok_per_sec": 137.69571439974334,
+          "elapsed_s": 79.6280870437622,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 20,
+          "iter_per_sec": 0.1469278981461737,
+          "tok_per_sec": 123.39004886315668,
+          "elapsed_s": 113.65915703773499,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 25,
+          "iter_per_sec": 0.12873774609614122,
+          "tok_per_sec": 116.2244371755963,
+          "elapsed_s": 152.49861896038055,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 30,
+          "iter_per_sec": 0.1426166138944669,
+          "tok_per_sec": 113.92215117890015,
+          "elapsed_s": 187.55915093421936,
+          "peak_mem_bytes": 4382259746,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 35,
+          "iter_per_sec": 0.2002122965288926,
+          "tok_per_sec": 113.03986262021277,
+          "elapsed_s": 212.53662204742432,
+          "peak_mem_bytes": 4376721864,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 40,
+          "iter_per_sec": 0.1890189798119603,
+          "tok_per_sec": 111.71021706886853,
+          "elapsed_s": 238.99051296710968,
+          "peak_mem_bytes": 4224664236,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 45,
+          "iter_per_sec": 0.12079150624589523,
+          "tok_per_sec": 106.10325908639437,
+          "elapsed_s": 280.38486194610596,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 50,
+          "iter_per_sec": 0.11746671572315655,
+          "tok_per_sec": 104.3809235915969,
+          "elapsed_s": 322.9507819414139,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 55,
+          "iter_per_sec": 0.12421493352364738,
+          "tok_per_sec": 102.55184911712328,
+          "elapsed_s": 363.2052229642868,
+          "peak_mem_bytes": 4390099891,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 60,
+          "iter_per_sec": 0.13270832306808872,
+          "tok_per_sec": 101.5749504763151,
+          "elapsed_s": 400.8825260400772,
+          "peak_mem_bytes": 4244702028,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 65,
+          "iter_per_sec": 0.15413936944140505,
+          "tok_per_sec": 103.15006603018826,
+          "elapsed_s": 433.3212879896164,
+          "peak_mem_bytes": 4028177260,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 70,
+          "iter_per_sec": 0.10922484881247718,
+          "tok_per_sec": 98.19313908241699,
+          "elapsed_s": 479.09914898872375,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 75,
+          "iter_per_sec": 0.10812181684208504,
+          "tok_per_sec": 98.2827315094553,
+          "elapsed_s": 525.3439780473709,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 80,
+          "iter_per_sec": 0.12696699823821084,
+          "tok_per_sec": 97.68840844447942,
+          "elapsed_s": 564.7249950170517,
+          "peak_mem_bytes": 4382259782,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 85,
+          "iter_per_sec": 0.1286736719361486,
+          "tok_per_sec": 97.97213381218354,
+          "elapsed_s": 603.5864230394363,
+          "peak_mem_bytes": 4379576204,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 90,
+          "iter_per_sec": 0.1245694627550774,
+          "tok_per_sec": 98.53444503926622,
+          "elapsed_s": 643.7262489795685,
+          "peak_mem_bytes": 4379576204,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 95,
+          "iter_per_sec": 0.255546313269822,
+          "tok_per_sec": 102.11630678262088,
+          "elapsed_s": 663.2954540252686,
+          "peak_mem_bytes": 3965671948,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 100,
+          "iter_per_sec": 0.10437546545775492,
+          "tok_per_sec": 96.50555536224019,
+          "elapsed_s": 711.200924038887,
+          "peak_mem_bytes": 4388161444,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "checkpoint_granularity": 2,
+      "num_checkpoint_groups": 18,
+      "n_windows": 20,
+      "n_expected_windows": 20,
+      "completed": true,
+      "oom": false,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": 790.4657880067825,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 12,
+        "serious": 6
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "1F21088F-AB15-4D0E-B0AE-740FD883B900"
+      ],
+      "iter_per_sec": {
+        "mean": 0.13314343237610143,
+        "std": 0.03159604512909106,
+        "min": 0.10132329013529631,
+        "max": 0.23151596318237874,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 101.44938739438253,
+        "std": 22.175801701146124,
+        "min": 90.4816980908196,
+        "max": 185.81471205017718,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4461610163.2,
+        "std": 129236853.06014672,
+        "min": 4103643504,
+        "max": 4532373408,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 4254.923022460937,
+      "peak_mem_mb_max": 4322.408111572266,
+      "windows": [
+        {
+          "step": 5,
+          "iter_per_sec": 0.23151596318237874,
+          "tok_per_sec": 185.81471205017718,
+          "elapsed_s": 29.861111998558044,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 10,
+          "iter_per_sec": 0.17054312352366519,
+          "tok_per_sec": 136.6732591918653,
+          "elapsed_s": 59.181058049201965,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 15,
+          "iter_per_sec": 0.13463506784455959,
+          "tok_per_sec": 104.58452070165389,
+          "elapsed_s": 96.31918406486511,
+          "peak_mem_bytes": 4470105400,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 20,
+          "iter_per_sec": 0.18276151687095082,
+          "tok_per_sec": 99.78778821153915,
+          "elapsed_s": 123.67871105670929,
+          "peak_mem_bytes": 4130267576,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 25,
+          "iter_per_sec": 0.16131602924197638,
+          "tok_per_sec": 99.0803051604219,
+          "elapsed_s": 154.67515099048615,
+          "peak_mem_bytes": 4103643504,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 30,
+          "iter_per_sec": 0.11705785842942944,
+          "tok_per_sec": 96.05767862718979,
+          "elapsed_s": 197.39049899578094,
+          "peak_mem_bytes": 4400047232,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 35,
+          "iter_per_sec": 0.11505249506814014,
+          "tok_per_sec": 95.01035042727013,
+          "elapsed_s": 240.84998095035553,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 40,
+          "iter_per_sec": 0.11254975715956637,
+          "tok_per_sec": 94.29418654828471,
+          "elapsed_s": 285.275524020195,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 45,
+          "iter_per_sec": 0.11143361729231722,
+          "tok_per_sec": 93.78253231321418,
+          "elapsed_s": 330.14603900909424,
+          "peak_mem_bytes": 4335805400,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 50,
+          "iter_per_sec": 0.10986767761493375,
+          "tok_per_sec": 93.10187001089487,
+          "elapsed_s": 375.65607595443726,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 55,
+          "iter_per_sec": 0.13720516790657367,
+          "tok_per_sec": 94.25995035181612,
+          "elapsed_s": 412.0986349582672,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 60,
+          "iter_per_sec": 0.11773039503083726,
+          "tok_per_sec": 93.45438757547862,
+          "elapsed_s": 454.5692939758301,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 65,
+          "iter_per_sec": 0.13111987924340499,
+          "tok_per_sec": 94.51120895864631,
+          "elapsed_s": 492.7029860019684,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 70,
+          "iter_per_sec": 0.11729481560541559,
+          "tok_per_sec": 93.81239352121139,
+          "elapsed_s": 535.3341220617294,
+          "peak_mem_bytes": 4463650088,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 75,
+          "iter_per_sec": 0.13887263334884825,
+          "tok_per_sec": 94.04454730384005,
+          "elapsed_s": 571.3390840291977,
+          "peak_mem_bytes": 4505716568,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 80,
+          "iter_per_sec": 0.12206882523848771,
+          "tok_per_sec": 93.55354766277698,
+          "elapsed_s": 612.3009370565414,
+          "peak_mem_bytes": 4523329416,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 85,
+          "iter_per_sec": 0.10819666540583951,
+          "tok_per_sec": 92.83273891821031,
+          "elapsed_s": 658.5137619972229,
+          "peak_mem_bytes": 4523329416,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 90,
+          "iter_per_sec": 0.1246362958091364,
+          "tok_per_sec": 92.85404037780663,
+          "elapsed_s": 698.6312739849091,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 95,
+          "iter_per_sec": 0.10132329013529631,
+          "tok_per_sec": 90.4816980908196,
+          "elapsed_s": 747.9790120124817,
+          "peak_mem_bytes": 4532373408,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 100,
+          "iter_per_sec": 0.1176875735702711,
+          "tok_per_sec": 90.99603188453361,
+          "elapsed_s": 790.4657880067825,
+          "peak_mem_bytes": 4452574584,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "checkpoint_granularity": 3,
+      "num_checkpoint_groups": 12,
+      "n_windows": 20,
+      "n_expected_windows": 20,
+      "completed": true,
+      "oom": false,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": 794.710324048996,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 12,
+        "serious": 6
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "BC7BD05A-9355-487F-A727-E490F1F6EA2C"
+      ],
+      "iter_per_sec": {
+        "mean": 0.13806394341804362,
+        "std": 0.0511077888514987,
+        "min": 0.09899518297541458,
+        "max": 0.30665426919830974,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 102.17207232494661,
+        "std": 23.98423873531699,
+        "min": 90.3034892828437,
+        "max": 186.32969249107168,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4661029613.6,
+        "std": 214409704.94988066,
+        "min": 4194377852,
+        "max": 4777248668,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 4445.104230499268,
+      "peak_mem_mb_max": 4555.939357757568,
+      "windows": [
+        {
+          "step": 5,
+          "iter_per_sec": 0.23687985315417198,
+          "tok_per_sec": 186.32969249107168,
+          "elapsed_s": 29.74393904209137,
+          "peak_mem_bytes": 4677281140,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 10,
+          "iter_per_sec": 0.30665426919830974,
+          "tok_per_sec": 149.83127593029414,
+          "elapsed_s": 46.05076003074646,
+          "peak_mem_bytes": 4194377852,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 15,
+          "iter_per_sec": 0.1374772493527836,
+          "tok_per_sec": 117.43306639714775,
+          "elapsed_s": 82.42160201072693,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 20,
+          "iter_per_sec": 0.13479927363434233,
+          "tok_per_sec": 97.2981157092683,
+          "elapsed_s": 119.51533007621765,
+          "peak_mem_bytes": 4767352708,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 25,
+          "iter_per_sec": 0.11200969035250666,
+          "tok_per_sec": 96.75397052649525,
+          "elapsed_s": 164.15504705905914,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 30,
+          "iter_per_sec": 0.10250864690271957,
+          "tok_per_sec": 95.23053297262648,
+          "elapsed_s": 212.93294203281403,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 35,
+          "iter_per_sec": 0.15485056194791874,
+          "tok_per_sec": 95.79055762098254,
+          "elapsed_s": 245.2228480577469,
+          "peak_mem_bytes": 4229800148,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 40,
+          "iter_per_sec": 0.1241034949076665,
+          "tok_per_sec": 93.00315908380527,
+          "elapsed_s": 285.51352405548096,
+          "peak_mem_bytes": 4748003156,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 45,
+          "iter_per_sec": 0.10585936222973914,
+          "tok_per_sec": 92.26702011944063,
+          "elapsed_s": 332.74747002124786,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 50,
+          "iter_per_sec": 0.11327391534340779,
+          "tok_per_sec": 94.08531408423451,
+          "elapsed_s": 376.8889580965042,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 55,
+          "iter_per_sec": 0.11765865288379462,
+          "tok_per_sec": 93.09152616165831,
+          "elapsed_s": 419.38555908203125,
+          "peak_mem_bytes": 4741449540,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 60,
+          "iter_per_sec": 0.12657932706458389,
+          "tok_per_sec": 92.9598577962304,
+          "elapsed_s": 458.88802909851074,
+          "peak_mem_bytes": 4748003156,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 65,
+          "iter_per_sec": 0.152636195031148,
+          "tok_per_sec": 93.68809651011864,
+          "elapsed_s": 491.64629209041595,
+          "peak_mem_bytes": 4360544788,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 70,
+          "iter_per_sec": 0.1731675918385085,
+          "tok_per_sec": 95.7963118050629,
+          "elapsed_s": 520.5213950872421,
+          "peak_mem_bytes": 4213924012,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 75,
+          "iter_per_sec": 0.10866041066751522,
+          "tok_per_sec": 93.12197194206054,
+          "elapsed_s": 566.5373179912567,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 80,
+          "iter_per_sec": 0.10880066136046548,
+          "tok_per_sec": 91.50135620415148,
+          "elapsed_s": 612.4937100410461,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 85,
+          "iter_per_sec": 0.09899518297541458,
+          "tok_per_sec": 91.29335773992733,
+          "elapsed_s": 663.0019730329514,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 90,
+          "iter_per_sec": 0.13505406618722257,
+          "tok_per_sec": 93.32235973537078,
+          "elapsed_s": 700.0248860120773,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 95,
+          "iter_per_sec": 0.10358280486676268,
+          "tok_per_sec": 90.3034892828437,
+          "elapsed_s": 748.2962020635605,
+          "peak_mem_bytes": 4777248668,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 100,
+          "iter_per_sec": 0.10772765846189086,
+          "tok_per_sec": 90.34041438614167,
+          "elapsed_s": 794.710324048996,
+          "peak_mem_bytes": 4767369092,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "checkpoint_granularity": 4,
+      "num_checkpoint_groups": 9,
+      "n_windows": 20,
+      "n_expected_windows": 20,
+      "completed": true,
+      "oom": false,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": 805.3602340221405,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 12,
+        "serious": 6
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "0AC93DA6-E667-4D1E-9283-8D11646E8BAB"
+      ],
+      "iter_per_sec": {
+        "mean": 0.13409239950937799,
+        "std": 0.049144851918088824,
+        "min": 0.09738312252142915,
+        "max": 0.32859682879410185,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 100.6804053715275,
+        "std": 27.229259769976053,
+        "min": 88.54846926685447,
+        "max": 207.54175706635473,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4945686656.6,
+        "std": 176021457.20764416,
+        "min": 4510754256,
+        "max": 5047289752,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 4716.574341392517,
+      "peak_mem_mb_max": 4813.470603942871,
+      "windows": [
+        {
+          "step": 5,
+          "iter_per_sec": 0.32859682879410185,
+          "tok_per_sec": 207.54175706635473,
+          "elapsed_s": 23.699657082557678,
+          "peak_mem_bytes": 4510754256,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 10,
+          "iter_per_sec": 0.14832008523833268,
+          "tok_per_sec": 137.4037269647914,
+          "elapsed_s": 57.41235101222992,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 15,
+          "iter_per_sec": 0.1104636198713831,
+          "tok_per_sec": 101.60443755769818,
+          "elapsed_s": 102.6774389743805,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 20,
+          "iter_per_sec": 0.12501835272913794,
+          "tok_per_sec": 96.48916463634866,
+          "elapsed_s": 142.6730020046234,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 25,
+          "iter_per_sec": 0.13988520599311768,
+          "tok_per_sec": 96.82853958843606,
+          "elapsed_s": 178.41812205314636,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 30,
+          "iter_per_sec": 0.12340576399078378,
+          "tok_per_sec": 94.9730759673072,
+          "elapsed_s": 218.93615198135376,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 35,
+          "iter_per_sec": 0.10515472677329152,
+          "tok_per_sec": 92.28378821624064,
+          "elapsed_s": 266.489569067955,
+          "peak_mem_bytes": 5036459904,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 40,
+          "iter_per_sec": 0.17430801036782376,
+          "tok_per_sec": 88.54846926685447,
+          "elapsed_s": 295.17502903938293,
+          "peak_mem_bytes": 4680409848,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 45,
+          "iter_per_sec": 0.11336913959978676,
+          "tok_per_sec": 90.40055191686996,
+          "elapsed_s": 339.28014302253723,
+          "peak_mem_bytes": 5007937388,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 50,
+          "iter_per_sec": 0.11223390397755527,
+          "tok_per_sec": 92.00935448079981,
+          "elapsed_s": 383.83329701423645,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 55,
+          "iter_per_sec": 0.12504806503397134,
+          "tok_per_sec": 92.86069309422712,
+          "elapsed_s": 423.81870102882385,
+          "peak_mem_bytes": 5036443520,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 60,
+          "iter_per_sec": 0.10494109480796754,
+          "tok_per_sec": 92.7889160292049,
+          "elapsed_s": 471.46541798114777,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 65,
+          "iter_per_sec": 0.13203766738323233,
+          "tok_per_sec": 93.32422330646861,
+          "elapsed_s": 509.3341900110245,
+          "peak_mem_bytes": 4901446880,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 70,
+          "iter_per_sec": 0.1354506072289529,
+          "tok_per_sec": 93.1629276520738,
+          "elapsed_s": 546.2495160102844,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 75,
+          "iter_per_sec": 0.14112616635274988,
+          "tok_per_sec": 92.07071092853403,
+          "elapsed_s": 581.6804440021515,
+          "peak_mem_bytes": 4938212656,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 80,
+          "iter_per_sec": 0.09738312252142915,
+          "tok_per_sec": 91.50118192113483,
+          "elapsed_s": 633.0256630182266,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 85,
+          "iter_per_sec": 0.11548152498352841,
+          "tok_per_sec": 91.11492321200392,
+          "elapsed_s": 676.3234130144119,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 90,
+          "iter_per_sec": 0.10857216313138977,
+          "tok_per_sec": 90.0280376685484,
+          "elapsed_s": 722.3772339820862,
+          "peak_mem_bytes": 5047289752,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 95,
+          "iter_per_sec": 0.12192414069346971,
+          "tok_per_sec": 89.58985858156154,
+          "elapsed_s": 763.3870429992676,
+          "peak_mem_bytes": 4579746328,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 100,
+          "iter_per_sec": 0.11912780071555457,
+          "tok_per_sec": 89.0837693750917,
+          "elapsed_s": 805.3602340221405,
+          "peak_mem_bytes": 4702135080,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "checkpoint_granularity": 6,
+      "num_checkpoint_groups": 6,
+      "n_windows": 20,
+      "n_expected_windows": 20,
+      "completed": true,
+      "oom": false,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": 803.8877749443054,
+      "thermal_states": {
+        "nominal": 2,
+        "fair": 12,
+        "serious": 6
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "A1CF990C-8173-4AF6-A44B-6211B17BEB75"
+      ],
+      "iter_per_sec": {
+        "mean": 0.12995152935233206,
+        "std": 0.02568412162978284,
+        "min": 0.09538461134013357,
+        "max": 0.1991851581017803,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 98.9793962740295,
+        "std": 20.53957775267346,
+        "min": 89.56582787588974,
+        "max": 177.47397586868627,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 5517094545.6,
+        "std": 183978705.0076704,
+        "min": 4888944896,
+        "max": 5612537744,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 5261.511369323731,
+      "peak_mem_mb_max": 5352.533096313477,
+      "windows": [
+        {
+          "step": 5,
+          "iter_per_sec": 0.1991851581017803,
+          "tok_per_sec": 177.47397586868627,
+          "elapsed_s": 33.46776294708252,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 10,
+          "iter_per_sec": 0.14887200133260953,
+          "tok_per_sec": 131.3944283761612,
+          "elapsed_s": 67.05557894706726,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "nominal"
+        },
+        {
+          "step": 15,
+          "iter_per_sec": 0.12020417489166596,
+          "tok_per_sec": 99.36077096545108,
+          "elapsed_s": 108.65215504169464,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 20,
+          "iter_per_sec": 0.1494300318350897,
+          "tok_per_sec": 97.6076967946806,
+          "elapsed_s": 142.11341893672943,
+          "peak_mem_bytes": 5445182824,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 25,
+          "iter_per_sec": 0.14194751465953664,
+          "tok_per_sec": 97.06371052419117,
+          "elapsed_s": 177.33913600444794,
+          "peak_mem_bytes": 5599692664,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 30,
+          "iter_per_sec": 0.11095038843418045,
+          "tok_per_sec": 94.06373931449819,
+          "elapsed_s": 222.40499997138977,
+          "peak_mem_bytes": 5574379336,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 35,
+          "iter_per_sec": 0.12945427905181978,
+          "tok_per_sec": 92.8704997917755,
+          "elapsed_s": 261.02936398983,
+          "peak_mem_bytes": 5565761336,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 40,
+          "iter_per_sec": 0.15480012729154755,
+          "tok_per_sec": 92.04415568755417,
+          "elapsed_s": 293.3298579454422,
+          "peak_mem_bytes": 5452817704,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 45,
+          "iter_per_sec": 0.11582301510164383,
+          "tok_per_sec": 91.84765097560356,
+          "elapsed_s": 336.50067698955536,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 50,
+          "iter_per_sec": 0.11196495568300317,
+          "tok_per_sec": 92.28151647393122,
+          "elapsed_s": 381.15921199321747,
+          "peak_mem_bytes": 5264253896,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 55,
+          "iter_per_sec": 0.1028484834169049,
+          "tok_per_sec": 91.98768356807975,
+          "elapsed_s": 429.7751109600067,
+          "peak_mem_bytes": 5574379336,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 60,
+          "iter_per_sec": 0.17136293597481034,
+          "tok_per_sec": 92.39889507761774,
+          "elapsed_s": 458.95395398139954,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 65,
+          "iter_per_sec": 0.11621025731713171,
+          "tok_per_sec": 91.48071456004608,
+          "elapsed_s": 501.9808679819107,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 70,
+          "iter_per_sec": 0.13498570595649806,
+          "tok_per_sec": 92.35722001543598,
+          "elapsed_s": 539.0232889652252,
+          "peak_mem_bytes": 5264253896,
+          "thermal_state": "fair"
+        },
+        {
+          "step": 75,
+          "iter_per_sec": 0.12385044211299844,
+          "tok_per_sec": 92.76398114263583,
+          "elapsed_s": 579.3952020406723,
+          "peak_mem_bytes": 5599692664,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 80,
+          "iter_per_sec": 0.09816507088643897,
+          "tok_per_sec": 90.31186521552385,
+          "elapsed_s": 630.3305679559708,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 85,
+          "iter_per_sec": 0.09538461134013357,
+          "tok_per_sec": 89.6996885042616,
+          "elapsed_s": 682.7505799531937,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 90,
+          "iter_per_sec": 0.12232823824248493,
+          "tok_per_sec": 91.35472831948775,
+          "elapsed_s": 723.6252039670944,
+          "peak_mem_bytes": 5612537744,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 95,
+          "iter_per_sec": 0.1370502039908473,
+          "tok_per_sec": 91.65917642907867,
+          "elapsed_s": 760.1089019775391,
+          "peak_mem_bytes": 4888944896,
+          "thermal_state": "serious"
+        },
+        {
+          "step": 100,
+          "iter_per_sec": 0.11421299142551611,
+          "tok_per_sec": 89.56582787588974,
+          "elapsed_s": 803.8877749443054,
+          "peak_mem_bytes": 5599692664,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "checkpoint_granularity": 9,
+      "num_checkpoint_groups": 4,
+      "n_windows": 1,
+      "n_expected_windows": 20,
+      "completed": false,
+      "oom": false,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": 29.613776922225952,
+      "thermal_states": {
+        "nominal": 1
+      },
+      "first_thermal_state": "nominal",
+      "last_thermal_state": "nominal",
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "32571097-20DF-4ED3-BF05-5558A7C58547"
+      ],
+      "iter_per_sec": {
+        "mean": 0.2476615424204203,
+        "std": 0.0,
+        "min": 0.2476615424204203,
+        "max": 0.2476615424204203,
+        "n": 1
+      },
+      "tok_per_sec": {
+        "mean": 191.14517844008037,
+        "std": 0.0,
+        "min": 191.14517844008037,
+        "max": 191.14517844008037,
+        "n": 1
+      },
+      "peak_mem_bytes": {
+        "mean": 6228502940.0,
+        "std": 0.0,
+        "min": 6228502940,
+        "max": 6228502940,
+        "n": 1
+      },
+      "peak_mem_mb_mean": 5939.963283538818,
+      "peak_mem_mb_max": 5939.963283538818,
+      "windows": [
+        {
+          "step": 5,
+          "iter_per_sec": 0.2476615424204203,
+          "tok_per_sec": 191.14517844008037,
+          "elapsed_s": 29.613776922225952,
+          "peak_mem_bytes": 6228502940,
+          "thermal_state": "nominal"
+        }
+      ]
+    },
+    {
+      "checkpoint_granularity": 12,
+      "num_checkpoint_groups": 3,
+      "n_windows": 0,
+      "n_expected_windows": 20,
+      "completed": false,
+      "oom": true,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": null,
+      "thermal_states": {},
+      "first_thermal_state": null,
+      "last_thermal_state": null,
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "47621A05-A73B-420A-BFAC-CDD2A3A73A17"
+      ],
+      "iter_per_sec": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "tok_per_sec": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "peak_mem_bytes": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "peak_mem_mb_mean": null,
+      "peak_mem_mb_max": null,
+      "windows": []
+    },
+    {
+      "checkpoint_granularity": 18,
+      "num_checkpoint_groups": 2,
+      "n_windows": 0,
+      "n_expected_windows": 20,
+      "completed": false,
+      "oom": true,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": null,
+      "thermal_states": {},
+      "first_thermal_state": null,
+      "last_thermal_state": null,
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "2C8FC79B-C6B7-4752-AF60-15BB13FEF2FB"
+      ],
+      "iter_per_sec": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "tok_per_sec": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "peak_mem_bytes": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "peak_mem_mb_mean": null,
+      "peak_mem_mb_max": null,
+      "windows": []
+    },
+    {
+      "checkpoint_granularity": 36,
+      "num_checkpoint_groups": 1,
+      "n_windows": 0,
+      "n_expected_windows": 20,
+      "completed": false,
+      "oom": true,
+      "n_errors": 0,
+      "error_messages": [],
+      "seq_cap": 1024,
+      "iterations_total": 100,
+      "steps_per_report": 5,
+      "wall_time_s": null,
+      "thermal_states": {},
+      "first_thermal_state": null,
+      "last_thermal_state": null,
+      "low_power_mode_any": false,
+      "bench_session_ids": [
+        "5012FD19-456D-40B7-AC25-3EAD5F11A499"
+      ],
+      "iter_per_sec": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "tok_per_sec": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "peak_mem_bytes": {
+        "mean": null,
+        "std": null,
+        "min": null,
+        "max": null,
+        "n": 0
+      },
+      "peak_mem_mb_mean": null,
+      "peak_mem_mb_max": null,
+      "windows": []
+    }
+  ]
+}

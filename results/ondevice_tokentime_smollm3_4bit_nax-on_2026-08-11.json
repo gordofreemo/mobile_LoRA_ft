@@ -1,0 +1,2717 @@
+{
+  "generated_utc": "2026-08-11T20:12:59.621258+00:00",
+  "source_files": [
+    "results/ondevice/train_bench_metrics_tokentime_nax-on_2026-08-11.jsonl"
+  ],
+  "n_records": 400,
+  "app_builds": [
+    "smollm3-ondevice-train-tokentime-h7-nax-on"
+  ],
+  "bench_session_ids": [
+    "E054799E-8BC3-41BE-B659-EFF9895879F6"
+  ],
+  "device_model": "iPhone18,1",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "model": "SmolLM3-3B-a1lamp-4bit",
+  "lora": {
+    "rank": 8,
+    "keys": "q_proj,v_proj",
+    "num_layers": 28
+  },
+  "gradient_checkpointing": true,
+  "optimizer": "adamw",
+  "learning_rate": 9.999999747378752e-06,
+  "weight_decay": 0.009999999776482582,
+  "warmup_seconds": 75,
+  "warmup_seq_cap": 512,
+  "cells": [
+    {
+      "target_tokens": 50,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 0.46639205813407897,
+        "std": 0.008252221538216281,
+        "min": 0.45040702819824224,
+        "max": 0.47628498077392584,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 105.09334950659304,
+        "std": 1.8757300882450239,
+        "min": 102.87958255660054,
+        "max": 108.7904871200925,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 1959998790.2,
+        "std": 11810.021269199618,
+        "min": 1959970674,
+        "max": 1960005785,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 1869.200506401062,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 0.45751500129699707,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 0.45040702819824224,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 0.4535359144210815,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 0.4581470489501953,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 0.4551000595092774,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 0.46076798439025884,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 0.46384000778198237,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 0.46082401275634766,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 0.4685249328613281,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 0.47628498077392584,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 0.4741500616073608,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 0.46631693840026855,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 0.47068595886230463,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 0.4733589887619019,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 0.4684710502624512,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 0.4747970104217529,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 0.47532403469085693,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 0.47325599193573004,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 0.47191309928894043,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 0.4746210575103759,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 100,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 0.7851065039634705,
+        "std": 0.009982908742592533,
+        "min": 0.7728910446166992,
+        "max": 0.8188999891281128,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 126.1164694211835,
+        "std": 1.5672722054496264,
+        "min": 120.89388364189115,
+        "max": 128.09049954653983,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2113479197.8,
+        "std": 729.330377812415,
+        "min": 2113476116,
+        "max": 2113479581,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2015.5708292007446,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 0.8188999891281128,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 0.7872819900512694,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 0.7728910446166992,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 0.774953007698059,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 0.7764010429382324,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 0.7772829532623291,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 0.7777349948883057,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 0.7809140682220458,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 0.7790529727935791,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 0.7820489406585693,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 0.782657027244568,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 0.7833350896835327,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 0.78166401386261,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 0.7861679792404175,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 0.7884620428085327,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 0.7843930721282958,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 0.7888600826263428,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 0.7935808897018432,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 0.7917299270629883,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 0.7938189506530762,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 150,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 1.1938445568084717,
+        "std": 0.01594161101967979,
+        "min": 1.1800200939178467,
+        "max": 1.2366139888763428,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 124.82751129153004,
+        "std": 1.627416118345544,
+        "min": 120.49030767910834,
+        "max": 126.2690362375926,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2257597297.0,
+        "std": 0.0,
+        "min": 2257597297,
+        "max": 2257597297,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2153.0125589370728,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.2149709463119507,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.1800200939178467,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.180719017982483,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.1865229606628418,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.1838890314102173,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.188576102256775,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.183485984802246,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.1843680143356323,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.187013030052185,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.1865869760513306,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 1.1879409551620483,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 1.1874090433120728,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 1.1895149946212769,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 1.1902400255203247,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 1.1934980154037476,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 1.1902419328689575,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 1.1944900751113892,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 1.1971969604492188,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 1.2366139888763428,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 1.2335929870605469,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 200,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 1.5639630556106567,
+        "std": 0.011828587401628376,
+        "min": 1.5384210348129272,
+        "max": 1.584697961807251,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 127.24778893858108,
+        "std": 0.9647701399420922,
+        "min": 125.57598027895024,
+        "max": 129.3534055351749,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2392626136.8,
+        "std": 3663.5737743356553,
+        "min": 2392610572,
+        "max": 2392626956,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2281.786095428467,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.5676939487457275,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.5384210348129272,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.5437469482421873,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.5572199821472168,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.5598739385604858,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.5610100030899048,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.5538721084594727,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.5703260898590086,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.5531220436096191,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.5606560707092283,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 1.555585026741028,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 1.560397028923035,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 1.581557035446167,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 1.584697961807251,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 1.5743470191955566,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 1.5674309730529787,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 1.5725558996200562,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 1.568668007850647,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 1.5744819641113281,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 1.573598027229309,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 250,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 1.8126301169395447,
+        "std": 0.025928594447084206,
+        "min": 1.7705219984054565,
+        "max": 1.8701279163360596,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 137.39602223675826,
+        "std": 1.9558025058713675,
+        "min": 133.14597243585288,
+        "max": 140.63649038207433,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2546049927.2,
+        "std": 137.8914905202447,
+        "min": 2546049524,
+        "max": 2546049972,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2428.1024238586424,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 1.7910070419311526,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 1.771277904510498,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 1.7705219984054565,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 1.788644075393677,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 1.8701279163360596,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 1.8468800783157346,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 1.8055920600891113,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 1.807805061340332,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 1.8124099969863892,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 1.7897199392318726,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 1.789106011390686,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 1.8183810710906982,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 1.8058719635009766,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 1.8256551027297974,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 1.8118709325790405,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 1.8196120262145996,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 1.8214939832687376,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 1.8198180198669434,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 1.831250071525574,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 1.8555570840835574,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 300,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.3227848052978515,
+        "std": 0.03446633569482344,
+        "min": 2.246240973472595,
+        "max": 2.36720609664917,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 128.7520469472381,
+        "std": 1.9334255271785548,
+        "min": 126.30923873643313,
+        "max": 133.11127502841265,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2701537140.0,
+        "std": 870.2154603133761,
+        "min": 2701534532,
+        "max": 2701538596,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2576.3865852355957,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 2.254876971244812,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 2.246240973472595,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 2.277631998062134,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 2.2993210554122925,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 2.321740984916687,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 2.3078900575637817,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 2.3430449962615967,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 2.294477939605713,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 2.3114670515060425,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 2.3267369270324707,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.3330219984054565,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.322859048843384,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.339790940284729,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.3440829515457153,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.3328880071640015,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.3545690774917603,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 2.36067795753479,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 2.358525037765503,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 2.358646035194397,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 2.36720609664917,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 350,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 2.8801501095294952,
+        "std": 0.035088443478136305,
+        "min": 2.7835700511932373,
+        "max": 2.93959903717041,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 121.19156818861256,
+        "std": 1.4974493379053189,
+        "min": 118.72367475529565,
+        "max": 125.3785583195198,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2760528584.0,
+        "std": 0.0,
+        "min": 2760528584,
+        "max": 2760528584,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2632.6452102661133,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 2.7835700511932373,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 2.816016912460327,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 2.840806007385254,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 2.913985013961792,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 2.8640769720077515,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 2.8742759227752686,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 2.8677330017089844,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 2.874617099761963,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 2.873404026031494,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 2.877316951751709,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 2.8984830379486084,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 2.8971790075302124,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 2.900259017944336,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 2.896512031555176,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 2.887971043586731,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 2.907634973526001,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 2.88299298286438,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 2.903855085372925,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 2.9027140140533447,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 2.93959903717041,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 400,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 3.442247223854065,
+        "std": 0.03280595370857518,
+        "min": 3.361756086349487,
+        "max": 3.496622085571289,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 115.92269161129677,
+        "std": 1.1091193910626798,
+        "min": 114.11012978681971,
+        "max": 118.68796835682149,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 2903231524.8,
+        "std": 1877.950775656666,
+        "min": 2903227864,
+        "max": 2903232440,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2768.737339782715,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 3.361756086349487,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 3.4095640182495117,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 3.433724045753479,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 3.4115129709243774,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 3.4295960664749146,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 3.4595870971679688,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 3.454586982727051,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 3.433988928794861,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 3.4097660779953003,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 3.4264429807662964,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 3.456903100013733,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 3.4578219652175908,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 3.408565044403076,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 3.454118967056274,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 3.473596096038818,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 3.496622085571289,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 3.444520950317383,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 3.478796005249024,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 3.4478039741516113,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 3.495671033859253,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 450,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 3.963850033283234,
+        "std": 0.045710761327828586,
+        "min": 3.8838800191879277,
+        "max": 4.113769054412842,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 113.28778471238743,
+        "std": 1.2850210769490689,
+        "min": 109.14565063353703,
+        "max": 115.6060428699547,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3047136960.0,
+        "std": 4424.180066764676,
+        "min": 3047119976,
+        "max": 3047138504,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2905.9762573242188,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 3.8838800191879277,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 3.953771948814392,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 3.937865972518921,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 3.980069994926452,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 3.9070299863815308,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 3.9609739780426025,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 3.9574660062789913,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 3.9356569051742554,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 4.004389047622681,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 3.9345849752426147,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 3.9401369094848637,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 3.9492388963699345,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 3.9550009965896606,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 3.975497961044312,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 4.113769054412842,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 4.00311803817749,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 3.9687030315399165,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 3.9797259569168095,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 3.9817389249801636,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 3.9543820619583134,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 500,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 4.341343200206756,
+        "std": 0.05659627492834006,
+        "min": 4.214000105857849,
+        "max": 4.435220003128052,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 114.96005524154005,
+        "std": 1.5077248752344088,
+        "min": 112.50851133609326,
+        "max": 118.4148048089377,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3123632614.2,
+        "std": 7682318.384585364,
+        "min": 3121119835,
+        "max": 3146095995,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 2978.9281980514525,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 4.214000105857849,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 4.2396299839019775,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 4.343613028526306,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 4.291705012321472,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 4.311867952346802,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 4.298804044723511,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 4.319731950759888,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 4.317548990249634,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 4.31476902961731,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 4.3894230127334595,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 4.343003034591675,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 4.325966954231262,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 4.413938999176025,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 4.34831690788269,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 4.400938987731934,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 4.374629974365234,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 4.354663014411926,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 4.405274033546448,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 4.435220003128052,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 4.383818984031677,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 550,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 4.878549802303314,
+        "std": 0.059324481830864126,
+        "min": 4.702067971229553,
+        "max": 4.969254016876221,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 112.54945315946657,
+        "std": 1.3863010012847596,
+        "min": 110.47935930333324,
+        "max": 116.75713821219834,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3238132556.2,
+        "std": 176502.20224706308,
+        "min": 3237616457,
+        "max": 3238189901,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3088.1238519668577,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 4.702067971229553,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 4.969254016876221,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 4.845753073692322,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 4.856512904167175,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 4.890350937843323,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 4.889968037605286,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 4.902950048446655,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 4.847213983535767,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 4.828886985778809,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 4.8878010511398315,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 4.864101052284241,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 4.828095078468323,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 4.950199007987976,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 4.903847932815552,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 4.943168044090271,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 4.884860992431641,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 4.848514914512634,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 4.954699993133545,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 4.855002999305725,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 4.9177470207214355,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 600,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 5.611165511608124,
+        "std": 0.10396401013153392,
+        "min": 5.360527992248535,
+        "max": 5.758677005767822,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 106.78660997121645,
+        "std": 1.9985859254148122,
+        "min": 104.01694684387556,
+        "max": 111.74272401266626,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3394463151.0,
+        "std": 0.0,
+        "min": 3394463151,
+        "max": 3394463151,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3237.2123250961304,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 5.360527992248535,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 5.560544013977051,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 5.515874028205872,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 5.490996956825256,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 5.608284950256348,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 5.491858959197998,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 5.537297010421753,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 5.5556480884552,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 5.758677005767822,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 5.545745015144348,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 5.6010589599609375,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 5.650722026824951,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 5.641221046447754,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 5.622002005577087,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 5.695417046546936,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 5.689158082008362,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 5.716608047485352,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 5.739101052284241,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 5.7172839641571045,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 5.725283980369568,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 650,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 6.56699977517128,
+        "std": 0.14864324181442345,
+        "min": 6.139080047607422,
+        "max": 6.74223792552948,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 98.87687367433766,
+        "std": 2.2985525512575915,
+        "min": 96.2588397455631,
+        "max": 105.71616512036428,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3515328918.6,
+        "std": 206758.44064292693,
+        "min": 3514724349,
+        "max": 3515396093,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3352.478903388977,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 6.139080047607422,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 6.419603943824768,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 6.4149240255355835,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 6.420414924621582,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 6.476417899131775,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 6.516937017440795,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 6.52858293056488,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 6.5133339166641235,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 6.509971022605896,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 6.697946906089782,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 6.594478011131287,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 6.573572993278503,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 6.694785952568054,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 6.631989002227782,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 6.675734043121338,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 6.653976917266847,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 6.726171970367431,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 6.699751019477844,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 6.7100850343704215,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 6.74223792552948,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 700,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 7.340668052434921,
+        "std": 0.13278990446568303,
+        "min": 7.04458999633789,
+        "max": 7.558344006538391,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 95.2526553141989,
+        "std": 1.7295220328446193,
+        "min": 92.4805750301026,
+        "max": 99.22507915483699,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3654875735.0,
+        "std": 0.0,
+        "min": 3654875735,
+        "max": 3654875735,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3485.5611181259155,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 7.04458999633789,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 7.172013998031617,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 7.2172349691391,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 7.226331949234009,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 7.20406198501587,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 7.324385046958923,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 7.306525945663453,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 7.2812299728393555,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 7.369313955307007,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 7.322970032691956,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 7.303937077522277,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 7.3484779596328735,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 7.32696807384491,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 7.380717992782594,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 7.5338460206985465,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 7.4002180099487305,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 7.558344006538391,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 7.490373969078065,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 7.48300802707672,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 7.51881206035614,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 750,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 8.324355554580688,
+        "std": 0.12920218580335668,
+        "min": 7.927983045578004,
+        "max": 8.512578964233398,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 89.99798352290154,
+        "std": 1.4279450029662757,
+        "min": 87.98743637468876,
+        "max": 94.47547953798542,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3729321277.0,
+        "std": 1420538.0037243858,
+        "min": 3727625533,
+        "max": 3730451773,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3556.5579195022583,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 7.927983045578004,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 8.172975897789001,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 8.175678968429565,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 8.37445604801178,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 8.280728101730347,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 8.3335200548172,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 8.247521996498108,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 8.354189038276672,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 8.280580997467041,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 8.301707983016968,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 8.35912299156189,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 8.315232992172241,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 8.38483202457428,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 8.354705929756165,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 8.327699899673462,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 8.449074029922485,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 8.464270949363708,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 8.512578964233398,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 8.422117114067078,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 8.448134064674377,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 800,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 9.421119797229768,
+        "std": 0.13165971399140755,
+        "min": 9.040081977844238,
+        "max": 9.676322937011719,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 84.82539823862122,
+        "std": 1.2015310841019538,
+        "min": 82.57268853066519,
+        "max": 88.38415425415592,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3880039943.0,
+        "std": 0.0,
+        "min": 3880039943,
+        "max": 3880039943,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3700.29444026947,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 9.040081977844238,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 9.252689003944397,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 9.30404794216156,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 9.433236002922058,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 9.464478969573975,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 9.378486037254333,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 9.35786497592926,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 9.380954027175903,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 9.345623016357422,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 9.449802041053772,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 9.438905000686646,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 9.408347964286804,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 9.405066013336182,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 9.447557091712952,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 9.530933022499084,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 9.507961988449097,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 9.568938970565796,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 9.504241943359375,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 9.676322937011719,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 9.526857018470764,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 850,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 10.487825286388397,
+        "std": 0.1589046437904264,
+        "min": 9.985739946365356,
+        "max": 10.762887001037598,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 80.96901259546976,
+        "std": 1.251575256151988,
+        "min": 78.8821809536932,
+        "max": 85.0212407453112,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3870639005.8,
+        "std": 10556587.830748191,
+        "min": 3868278481,
+        "max": 3915488977,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3691.3290079116823,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 9.985739946365356,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 10.416417956352234,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 10.373545050621033,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 10.386260986328125,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 10.419309973716736,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 10.386066913604736,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 10.505007982254028,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 10.435631036758423,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 10.42245602607727,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 10.509829044342041,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 10.531492948532104,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 10.551572918891907,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 10.483896017074585,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 10.53430700302124,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 10.57243299484253,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 10.62379801273346,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 10.586039900779724,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 10.551216006278992,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 10.762887001037598,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 10.718598008155823,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 900,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 11.61087589263916,
+        "std": 0.11100926940566178,
+        "min": 11.238816976547241,
+        "max": 11.761697053909302,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 77.4342455276634,
+        "std": 0.7531467303141424,
+        "min": 76.4345481676213,
+        "max": 79.99062551476733,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 3999000475.0,
+        "std": 0.0,
+        "min": 3999000475,
+        "max": 3999000475,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3813.744044303894,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 11.238816976547241,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 11.535286903381348,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 11.598632097244263,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 11.547508955001831,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 11.55207097530365,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 11.552526950836182,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 11.613535046577454,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 11.692971110343933,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 11.614011883735657,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 11.52992308139801,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 11.71557092666626,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 11.60214900970459,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 11.6785728931427,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 11.67214298248291,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 11.67764401435852,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 11.631236910820007,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 11.599395990371704,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 11.761697053909302,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 11.670619010925293,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 11.733205080032349,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 950,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 12.284461200237274,
+        "std": 0.09229630910493597,
+        "min": 12.15161395072937,
+        "max": 12.47932004928589,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 77.25618503291848,
+        "std": 0.5771927529622984,
+        "min": 76.04580988803995,
+        "max": 78.09662188478582,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4138201189.0,
+        "std": 0.0,
+        "min": 4138201189,
+        "max": 4138201189,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 3946.496190071106,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 12.164705038070679,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 12.452003002166748,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 12.22551691532135,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 12.15161395072937,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 12.301316976547241,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 12.297992944717409,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 12.47932004928589,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 12.388393998146057,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 12.278321981430055,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 12.205607056617737,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 12.190369963645935,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 12.444273948669432,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 12.226091027259827,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 12.244826078414917,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 12.259986996650698,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 12.253782987594604,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 12.249774098396301,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 12.283798933029175,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 12.310822010040283,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 12.28070604801178,
+          "thermal_state": "serious"
+        }
+      ]
+    },
+    {
+      "target_tokens": 1000,
+      "n_iterations": 20,
+      "thermal_states": {
+        "serious": 20
+      },
+      "first_thermal_state": "serious",
+      "last_thermal_state": "serious",
+      "low_power_mode_any": false,
+      "seconds_per_iter": {
+        "mean": 13.177646046876907,
+        "std": 0.11383254136369128,
+        "min": 12.78698992729187,
+        "max": 13.393571972846985,
+        "n": 20
+      },
+      "tok_per_sec": {
+        "mean": 75.81565564068816,
+        "std": 0.6647504038136447,
+        "min": 74.58801894112263,
+        "max": 78.12628348660756,
+        "n": 20
+      },
+      "peak_mem_bytes": {
+        "mean": 4270946607.0,
+        "std": 0.0,
+        "min": 4270946607,
+        "max": 4270946607,
+        "n": 20
+      },
+      "peak_mem_mb_mean": 4073.092085838318,
+      "iterations": [
+        {
+          "iteration": 1,
+          "seconds_per_iter": 12.78698992729187,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 2,
+          "seconds_per_iter": 13.251253962516785,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 3,
+          "seconds_per_iter": 13.157652020454407,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 4,
+          "seconds_per_iter": 13.157700061798094,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 5,
+          "seconds_per_iter": 13.208653926849363,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 6,
+          "seconds_per_iter": 13.14019501209259,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 7,
+          "seconds_per_iter": 13.151753067970276,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 8,
+          "seconds_per_iter": 13.154420018196106,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 9,
+          "seconds_per_iter": 13.13655209541321,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 10,
+          "seconds_per_iter": 13.29244601726532,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 11,
+          "seconds_per_iter": 13.205065965652466,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 12,
+          "seconds_per_iter": 13.247866988182068,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 13,
+          "seconds_per_iter": 13.175205945968628,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 14,
+          "seconds_per_iter": 13.227316975593567,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 15,
+          "seconds_per_iter": 13.393571972846985,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 16,
+          "seconds_per_iter": 13.144194006919859,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 17,
+          "seconds_per_iter": 13.142055988311768,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 18,
+          "seconds_per_iter": 13.143656969070433,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 19,
+          "seconds_per_iter": 13.278689980506897,
+          "thermal_state": "serious"
+        },
+        {
+          "iteration": 20,
+          "seconds_per_iter": 13.157680034637451,
+          "thermal_state": "serious"
+        }
+      ]
+    }
+  ],
+  "linear_fit": {
+    "intercept_s": -1.4759584335904377,
+    "slope_s_per_token": 0.013523347357610115,
+    "pearson_r": 0.9820408665315858,
+    "r_squared": 0.964404263538108,
+    "n_points": 20,
+    "residual_std_s": 0.7685243997754582
+  }
+}
