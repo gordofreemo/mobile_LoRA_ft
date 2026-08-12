@@ -45,5 +45,6 @@ requirements          = UidDomain == "cs.uni-saarland.de"
 +WantScratchMounted   = true
 
 queue task from (
-  LaMP_7
+  LaMP_5
+  LaMP_4
 )

@@ -53,6 +53,9 @@ parser.add_argument('--limit', type=int, default=0, help='smoke: cap test users'
 parser.add_argument('--limit-train', type=int, default=0, help='smoke: cap train users')
 parser.add_argument('--seed', type=int, default=0, help='generation seed (their code sets none)')
 parser.add_argument('--overwrite', action='store_true')
+parser.add_argument('--base-only', action='store_true',
+                    help='PATCH P17: skip all training — evaluate the bare base model '
+                         'under the identical retrieval prompts/decoding (chart baseline arm)')
 
 args = parser.parse_args()
 model_name = args.model_name
@@ -69,12 +72,13 @@ banner("run_task_lora", args)
 suffix = ""
 if args.limit > 0 or args.limit_train > 0:
     suffix = f"_limit{args.limit}t{args.limit_train}"
+stem = "base" if args.base_only else "task"
 ckpt_dir = Path(args.ckpt_root) / task_name / f"task_lora_k{k}{suffix}"
 out_dir = Path(args.out_root) / task_name
-pred_json = out_dir / f"task_k{k}{suffix}_preds.json"
-pred_jsonl = out_dir / f"task_k{k}{suffix}_preds.jsonl"
-meta_json = out_dir / f"task_k{k}{suffix}_meta.json"
-refuse_overwrite([ckpt_dir, pred_json, pred_jsonl], args.overwrite)
+pred_json = out_dir / f"{stem}_k{k}{suffix}_preds.json"
+pred_jsonl = out_dir / f"{stem}_k{k}{suffix}_preds.jsonl"
+meta_json = out_dir / f"{stem}_k{k}{suffix}_meta.json"
+refuse_overwrite(([pred_json, pred_jsonl] if args.base_only else [ckpt_dir, pred_json, pred_jsonl]), args.overwrite)
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left", token=args.access_token)
 # PATCH P4: their Llama-2-specific special-token surgery ("</s>", '[PAD]') only
@@ -156,8 +160,11 @@ if _dropped:
 training_arguments = transformers.TrainingArguments(
     **{k: v for k, v in _ta_kwargs.items() if k in _ta_sig})
 
-with open(f"{args.data_root}/{task_name}/user_others.json", 'r') as f:
-    train = json.load(f)
+if args.base_only:
+    train = []   # PATCH P17: no training corpus needed
+else:
+    with open(f"{args.data_root}/{task_name}/user_others.json", 'r') as f:
+        train = json.load(f)
 
 # PATCH P5: per-task test filename (tweet_paraphrase ships user_more_100_history.json)
 with open(f"{args.data_root}/{task_name}/{TEST_FILE[task_name]}", 'r') as f:
@@ -236,8 +243,11 @@ def generate_and_tokenize_prompt(data_point):
 
 # training
 from datasets import Dataset
-model = get_peft_model(base_model, peft_config)
-print_trainable_parameters(model)
+if args.base_only:
+    model = base_model   # PATCH P17
+else:
+    model = get_peft_model(base_model, peft_config)
+    print_trainable_parameters(model)
 
 pred_all = []
 train_data = []
@@ -293,37 +303,40 @@ for i in tqdm(range(len(train))):
 # PATCH P7: upstream `print(train_data)` (dumps the whole corpus to stdout) removed
 print(f"[run_task_lora] built {len(train_data)} training examples", flush=True)
 
-train_dataset = Dataset.from_list(train_data)
-train_dataset = train_dataset.map(generate_and_tokenize_prompt).shuffle()
+if not args.base_only:   # PATCH P17: base arm skips training entirely
+    train_dataset = Dataset.from_list(train_data)
+    train_dataset = train_dataset.map(generate_and_tokenize_prompt).shuffle()
 
-trainer = transformers.Trainer(
-    model=model,
-    train_dataset=train_dataset,
-    args=training_arguments,
-    data_collator=transformers.DataCollatorForSeq2Seq(
-            tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-    ),
-)
+    trainer = transformers.Trainer(
+        model=model,
+        train_dataset=train_dataset,
+        args=training_arguments,
+        data_collator=transformers.DataCollatorForSeq2Seq(
+                tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
+        ),
+    )
 
-for name, module in trainer.model.named_modules():
-    if "norm" in name:
-        module = module.to(torch.float32)
+    for name, module in trainer.model.named_modules():
+        if "norm" in name:
+            module = module.to(torch.float32)
 
-model.config.use_cache = False
-trainer.train()
+    model.config.use_cache = False
+    trainer.train()
 
-# PATCH P8/P9: save to our layout + weight-delta guard + meta sidecar
-delta = lora_delta_stats(model)
-if delta["lora_B_abs_sum"] == 0.0:
-    print("FATAL: lora_B still all-zero after training — adapter did not train")
-    sys.exit(2)
-ckpt_dir.mkdir(parents=True, exist_ok=True)
-model.save_pretrained(str(ckpt_dir))
-write_meta(meta_json, args, {
-    "stage": "task_lora", "n_train_examples": len(train_data),
-    "n_train_users": len(train), "n_test_users": len(test_data), **delta,
-})
-print(f"[run_task_lora] saved adapter to {ckpt_dir} ({delta})", flush=True)
+    # PATCH P8/P9: save to our layout + weight-delta guard + meta sidecar
+    delta = lora_delta_stats(model)
+    if delta["lora_B_abs_sum"] == 0.0:
+        print("FATAL: lora_B still all-zero after training — adapter did not train")
+        sys.exit(2)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(str(ckpt_dir))
+    write_meta(meta_json, args, {
+        "stage": "task_lora", "n_train_examples": len(train_data),
+        "n_train_users": len(train), "n_test_users": len(test_data), **delta,
+    })
+    print(f"[run_task_lora] saved adapter to {ckpt_dir} ({delta})", flush=True)
+else:
+    write_meta(meta_json, args, {"stage": "base_only", "n_test_users": len(test_data)})
 
 model.eval()
 model.config.use_cache = True
