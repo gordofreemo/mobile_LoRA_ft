@@ -66,11 +66,16 @@ latest_run_start() {
 }
 
 # Wait until the start time (tonight, or tomorrow if already past it).
-NOW=$(date +%s)
-TARGET=$(date -j -v${START_HOUR}H -v${START_MIN}M -v0S +%s)
-if [ "$TARGET" -le "$NOW" ]; then TARGET=$(date -j -v+1d -v${START_HOUR}H -v${START_MIN}M -v0S +%s); fi
-log "night 2 subject=$SUBJECT — sleeping until $(date -r "$TARGET" '+%m-%d %H:%M')"
-sleep $((TARGET - NOW))
+# Second arg "now" skips the wait (operator-initiated daytime run).
+if [ "${2:-}" = "now" ]; then
+    log "night 2 subject=$SUBJECT — starting immediately (operator request)"
+else
+    NOW=$(date +%s)
+    TARGET=$(date -j -v${START_HOUR}H -v${START_MIN}M -v0S +%s)
+    if [ "$TARGET" -le "$NOW" ]; then TARGET=$(date -j -v+1d -v${START_HOUR}H -v${START_MIN}M -v0S +%s); fi
+    log "night 2 subject=$SUBJECT — sleeping until $(date -r "$TARGET" '+%m-%d %H:%M')"
+    sleep $((TARGET - NOW))
+fi
 
 # Probe-launch loop: verify the device is actually unplugged.
 STARTED=0
