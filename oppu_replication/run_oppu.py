@@ -63,6 +63,17 @@ parser.add_argument('--user-end', type=int, default=-1, help='shard: last test-u
 parser.add_argument('--tag', type=str, default='', help="output namespace tag, e.g. '_smoke' (keeps smoke artifacts off real-run paths)")
 parser.add_argument('--seed', type=int, default=0, help='generation seed (their code sets none)')
 parser.add_argument('--overwrite', action='store_true')
+parser.add_argument('--user-recipe', choices=['code', 'r5'], default='code',
+                    help="PATCH P19 (recipe ablation): 'code' = their released recipe "
+                         "(LR 1e-4, alpha 8, linear, warmup 0.1, 2 epochs, batch 16); "
+                         "'r5' = this project's R5 user recipe verbatim (LR 1e-5, alpha 16, "
+                         "cosine, warmup 0.03, 3 epochs, per-device 2 x accum 4, grad-norm 1.0)")
+parser.add_argument('--eval-only', action='store_true',
+                    help='PATCH P20: skip training — load each user\'s saved adapter and '
+                         'only generate (seed re-decodes)')
+parser.add_argument('--ckpt-tag', type=str, default='',
+                    help="PATCH P20: tag of the saved checkpoints to load under --eval-only "
+                         "(default '' = the original run's untagged adapters)")
 
 args = parser.parse_args()
 model_name = args.model_name
@@ -90,7 +101,17 @@ pred_jsonl = out_dir / f"oppu_k{k}{shard}_preds.jsonl"
 meta_json = out_dir / f"oppu_k{k}{shard}_meta.json"
 user_ckpt_dirs = [Path(args.ckpt_root) / task_name / f"oppu_k{k}{args.tag}_user{i:03d}"
                   for i in range(user_start, user_end)]
-refuse_overwrite([pred_json, pred_jsonl] + user_ckpt_dirs, args.overwrite)
+if args.eval_only:
+    # PATCH P20: outputs are predictions only; the adapters to load must exist
+    refuse_overwrite([pred_json, pred_jsonl], args.overwrite)
+    load_ckpt_dirs = [Path(args.ckpt_root) / task_name / f"oppu_k{k}{args.ckpt_tag}_user{i:03d}"
+                      for i in range(user_start, user_end)]
+    _missing = [d for d in load_ckpt_dirs if not (d / "adapter_config.json").exists()]
+    if _missing:
+        print(f"FATAL: --eval-only but {len(_missing)} adapters missing, e.g. {_missing[:3]}")
+        sys.exit(1)
+else:
+    refuse_overwrite([pred_json, pred_jsonl] + user_ckpt_dirs, args.overwrite)
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left", token=args.access_token)
 # PATCH P4: Llama-2-specific token surgery only when those tokens exist
@@ -120,7 +141,7 @@ base_model = prepare_model_for_kbit_training(base_model)
 
 peft_config = LoraConfig(
     r=8,
-    lora_alpha=8,
+    lora_alpha=16 if args.user_recipe == 'r5' else 8,   # PATCH P19
     target_modules=["q_proj", "v_proj"],
     lora_dropout=0.05,
     bias="none",
@@ -158,6 +179,16 @@ _ta_kwargs = dict(
     lr_scheduler_type='linear',
     report_to='none',
 )
+if args.user_recipe == 'r5':
+    # PATCH P19: the R5 user-stage recipe every null round R5->warm ran,
+    # swapped in as a bundle; everything else (their data, prompts, trainer,
+    # loss, decoding) stays their code's.
+    _ta_kwargs.update(
+        learning_rate=1e-5, warmup_ratio=0.03, lr_scheduler_type='cosine',
+        num_train_epochs=3, per_device_train_batch_size=2,
+        gradient_accumulation_steps=4, max_grad_norm=1.0)
+    print("[PATCH P19] user recipe = r5 (LR 1e-5, alpha 16, cosine, wu 0.03, "
+          "3 epochs, 2x4 batch, grad-norm 1.0)", flush=True)
 _ta_sig = set(inspect.signature(transformers.TrainingArguments.__init__).parameters)
 _dropped = sorted(k for k in _ta_kwargs if k not in _ta_sig)
 if _dropped:
@@ -249,85 +280,98 @@ per_user_meta = []
 
 for i in tqdm(range(user_start, user_end)):
 
-    train_data = []
-    model = get_peft_model(base_model, peft_config)
-    print_trainable_parameters(model)
+    if args.eval_only:
+        # PATCH P20: seed re-decode — load this user's already-trained adapter
+        # and skip straight to generation. Never writes checkpoints.
+        load_name = Path(args.ckpt_root) / task_name / f"oppu_k{k}{args.ckpt_tag}_user{i:03d}"
+        model = PeftModel.from_pretrained(model=base_model, model_id=str(load_name),
+                                          is_trainable=False)
+        delta = lora_delta_stats(model)
+        if delta["lora_B_abs_sum"] == 0.0:
+            print(f"FATAL user {i}: loaded adapter {load_name} has all-zero lora_B")
+            sys.exit(2)
+        per_user_meta.append({"user_index": i, "user_id": str(test_data[i]['user_id']),
+                              "loaded_adapter": str(load_name), **delta})
+    else:
+        train_data = []
+        model = get_peft_model(base_model, peft_config)
+        print_trainable_parameters(model)
 
-    # PATCH P12: diagnostics — fresh adapter must start at zero, base unchanged
-    fresh = lora_delta_stats(model)
-    drift = base_weights_hash(base_model)
-    if fresh["lora_B_abs_sum"] != 0.0 or drift != merged_hash:
-        print(f"WARNING user {i}: fresh adapter nonzero ({fresh}) or base drift "
-              f"({drift} != {merged_hash}) — upstream get_peft_model reuse pattern", flush=True)
+        # PATCH P12: diagnostics — fresh adapter must start at zero, base unchanged
+        fresh = lora_delta_stats(model)
+        drift = base_weights_hash(base_model)
+        if fresh["lora_B_abs_sum"] != 0.0 or drift != merged_hash:
+            print(f"WARNING user {i}: fresh adapter nonzero ({fresh}) or base drift "
+                  f"({drift} != {merged_hash}) — upstream get_peft_model reuse pattern", flush=True)
 
-    if args.add_profile:
-        profile = test_profile[i]['output']
+        if args.add_profile:
+            profile = test_profile[i]['output']
 
-    for idx, q in enumerate(test_data[i]['profile']):
-        for key, value in q.items():
-            q[key] = get_first_k_tokens(str(q[key]), 768)  # PATCH P14: int fields (citation/scholarly 'date') crash .split()
+        for idx, q in enumerate(test_data[i]['profile']):
+            for key, value in q.items():
+                q[key] = get_first_k_tokens(str(q[key]), 768)  # PATCH P14: int fields (citation/scholarly 'date') crash .split()
 
-        prompt = prompt_template[args.task_name]['OPPU_input'].format(**q)
-        full_prompt = prompt_template[args.task_name]['OPPU_full'].format(**q)
+            prompt = prompt_template[args.task_name]['OPPU_input'].format(**q)
+            full_prompt = prompt_template[args.task_name]['OPPU_full'].format(**q)
 
-        if k > 0 and idx != 0 and format_flag == True:
-            visible_history_list = test_data[i]['profile'][:idx]
+            if k > 0 and idx != 0 and format_flag == True:
+                visible_history_list = test_data[i]['profile'][:idx]
 
-            for p in visible_history_list:
-                for key, value in p.items():
-                    p[key] = get_first_k_tokens(str(p[key]), 768)  # PATCH P14: int fields (citation/scholarly 'date') crash .split()
+                for p in visible_history_list:
+                    for key, value in p.items():
+                        p[key] = get_first_k_tokens(str(p[key]), 768)  # PATCH P14: int fields (citation/scholarly 'date') crash .split()
 
-            history_list = [prompt_template[args.task_name]['retrieval_history'].format(**p) for p in visible_history_list]
-            tokenized_corpus = [doc.split(" ") for doc in history_list]
-            bm25 = BM25Okapi(tokenized_corpus)
+                history_list = [prompt_template[args.task_name]['retrieval_history'].format(**p) for p in visible_history_list]
+                tokenized_corpus = [doc.split(" ") for doc in history_list]
+                bm25 = BM25Okapi(tokenized_corpus)
 
-            tokenized_query = prompt_template[args.task_name]["retrieval_query"].format(**q).split(' ')
-            retrieved_history = bm25.get_top_n(tokenized_query, history_list, n=args.k)
+                tokenized_query = prompt_template[args.task_name]["retrieval_query"].format(**q).split(' ')
+                retrieved_history = bm25.get_top_n(tokenized_query, history_list, n=args.k)
 
-            history_string = "".join(retrieved_history)
-            prompt = history_string + "\n" + prompt
-            full_prompt = history_string + "\n" + full_prompt
+                history_string = "".join(retrieved_history)
+                prompt = history_string + "\n" + prompt
+                full_prompt = history_string + "\n" + full_prompt
 
-        if args.add_profile and format_flag == True:
-            prompt = profile + "\n" + prompt
-            full_prompt = profile + "\n" + full_prompt
+            if args.add_profile and format_flag == True:
+                prompt = profile + "\n" + prompt
+                full_prompt = profile + "\n" + full_prompt
 
-        train_data.append(
-            {
-                "prompt": prompt,
-                "full_prompt": full_prompt
-            }
+            train_data.append(
+                {
+                    "prompt": prompt,
+                    "full_prompt": full_prompt
+                }
+            )
+
+        train_dataset = Dataset.from_list(train_data)
+        train_dataset = train_dataset.map(generate_and_tokenize_prompt).shuffle()
+
+        trainer = transformers.Trainer(
+            model=model,
+            train_dataset=train_dataset,
+            args=training_arguments,
+            data_collator=transformers.DataCollatorForSeq2Seq(
+                    tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
+            ),
         )
 
-    train_dataset = Dataset.from_list(train_data)
-    train_dataset = train_dataset.map(generate_and_tokenize_prompt).shuffle()
+        for name, module in trainer.model.named_modules():
+            if "norm" in name:
+                module = module.to(torch.float32)
 
-    trainer = transformers.Trainer(
-        model=model,
-        train_dataset=train_dataset,
-        args=training_arguments,
-        data_collator=transformers.DataCollatorForSeq2Seq(
-                tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-        ),
-    )
+        model.config.use_cache = False
+        trainer.train()
 
-    for name, module in trainer.model.named_modules():
-        if "norm" in name:
-            module = module.to(torch.float32)
-
-    model.config.use_cache = False
-    trainer.train()
-
-    # PATCH P8/P9: per-user ckpt in our layout + weight-delta guard
-    delta = lora_delta_stats(model)
-    if delta["lora_B_abs_sum"] == 0.0:
-        print(f"FATAL user {i}: lora_B still all-zero after training")
-        sys.exit(2)
-    output_name = Path(args.ckpt_root) / task_name / f"oppu_k{k}{args.tag}_user{i:03d}"
-    output_name.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(str(output_name))
-    per_user_meta.append({"user_index": i, "user_id": str(test_data[i]['user_id']),
-                          "n_profile_examples": len(train_data), **delta})
+        # PATCH P8/P9: per-user ckpt in our layout + weight-delta guard
+        delta = lora_delta_stats(model)
+        if delta["lora_B_abs_sum"] == 0.0:
+            print(f"FATAL user {i}: lora_B still all-zero after training")
+            sys.exit(2)
+        output_name = Path(args.ckpt_root) / task_name / f"oppu_k{k}{args.tag}_user{i:03d}"
+        output_name.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(str(output_name))
+        per_user_meta.append({"user_index": i, "user_id": str(test_data[i]['user_id']),
+                              "n_profile_examples": len(train_data), **delta})
 
     model.eval()
     model.config.use_cache = True

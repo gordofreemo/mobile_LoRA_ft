@@ -1,0 +1,39 @@
+
+# oppu arm, 5 shards x 2 seeds
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = /home/ange00008/projects/mobileFT_distill/oppu_replication/run_oppu.py
+arguments             = --task_name movie_tagging --k 1 --eval-only --task_lora /home/ange00008/projects/mobileFT_distill/train/checkpoints/oppu_rep/movie_tagging/task_lora_k1 --seed $(seed) --tag _seed$(seed) --user-start $(ustart) --user-end $(uend)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/oppu_rep_redecode_oppu_s$(seed)_$(ustart).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/oppu_rep_redecode_oppu_s$(seed)_$(ustart).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/oppu_rep_redecode_oppu_s$(seed)_$(ustart).$(ClusterId).log
+
+should_transfer_files = YES
+stream_output           = true
+stream_error            = true
+when_to_transfer_output = ON_EXIT_OR_EVICT
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_GPUs          = 1
+request_CPUs          = 4
+request_memory        = 32G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "tyr2.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
++WantGPUHomeMounted   = true
+gpus_minimum_memory     = 40000
+gpus_minimum_capability = 8.0
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+max_job_retirement_time = 28800
+
+queue seed, ustart, uend from (
+    1 0 20
+    1 20 40
+    1 40 60
+    1 60 80
+    1 80 100
+    2 0 20
+    2 20 40
+    2 40 60
+    2 60 80
+    2 80 100
+)

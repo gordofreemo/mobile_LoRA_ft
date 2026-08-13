@@ -74,15 +74,16 @@ def provenance():
             "timestamp_utc": datetime.now(timezone.utc).isoformat()}
 
 
-def load_arm_preds(task, arm, smoke=False):
-    """Return {id: output}. For the oppu arm, merge non-smoke shards."""
+def load_arm_preds(task, arm, smoke=False, tag=""):
+    """Return {id: output}. For the oppu arm, merge non-smoke shards.
+    tag selects a re-decode/ablation namespace, e.g. "_seed1" or "_r5"."""
     d = OUT / task
     if arm in ("task", "base"):
-        files = [d / (f"{arm}_k1_limit1t30_preds.json" if smoke else f"{arm}_k1_preds.json")]
+        files = [d / (f"{arm}_k1_limit1t30_preds.json" if smoke else f"{arm}_k1{tag}_preds.json")]
     elif smoke:
         files = sorted(d.glob("oppu_k1_smoke_u*_preds.json"))
     else:
-        files = sorted(p for p in d.glob("oppu_k1_u*_preds.json")
+        files = sorted(p for p in d.glob(f"oppu_k1{tag}_u*_preds.json")
                        if "smoke" not in p.name)
     preds = {}
     for p in files:
@@ -195,9 +196,9 @@ def paired_stats(diffs):
             "losses": sum(1 for d in diffs if d < 0)}
 
 
-def score_task(task, overwrite, smoke=False):
+def score_task(task, overwrite, smoke=False, task_tag="", oppu_tag="", out_tag=""):
     lamp_id, test_fn = TASKS[task]
-    out_path = OUT / (f"score_{task}_smoke.json" if smoke else f"score_{task}.json")
+    out_path = OUT / (f"score_{task}_smoke.json" if smoke else f"score_{task}{out_tag}.json")
     if out_path.exists() and not overwrite:
         print(f"REFUSING to overwrite {out_path} (pass --overwrite)")
         sys.exit(1)
@@ -209,7 +210,8 @@ def score_task(task, overwrite, smoke=False):
 
     arms = {}
     for arm in ("task", "oppu"):
-        preds = load_arm_preds(task, arm, smoke=smoke)
+        preds = load_arm_preds(task, arm, smoke=smoke,
+                               tag=task_tag if arm == "task" else oppu_tag)
         if smoke:
             gold_by_id = {i: g for i, g in gold_by_id.items() if i in preds}
         missing = set(gold_by_id) - set(preds)
@@ -261,7 +263,7 @@ def score_task(task, overwrite, smoke=False):
     r["smoke"] = smoke
     with open(out_path, "w") as f:
         json.dump(r, f, indent=2)
-    pairs_path = OUT / (f"score_{task}_smoke.pairs.jsonl" if smoke else f"score_{task}.pairs.jsonl")
+    pairs_path = OUT / (f"score_{task}_smoke.pairs.jsonl" if smoke else f"score_{task}{out_tag}.pairs.jsonl")
     with open(pairs_path, "w") as f:
         for i, d in zip(ids, diffs):
             f.write(json.dumps({"id": i, "user_id": user_by_id[i], "diff": d,
@@ -288,7 +290,17 @@ def main():
     ap.add_argument("--results-root", default=None,
                     help="override the results root (e.g. results/oppu_rep_fixed "
                          "for the repaired-LaMP-1 arm); default results/oppu_rep")
+    ap.add_argument("--task-tag", default="",
+                    help="filename tag of the task arm to load, e.g. '_seed1'")
+    ap.add_argument("--oppu-tag", default="",
+                    help="filename tag of the oppu arm to load, e.g. '_r5' or '_seed1'")
+    ap.add_argument("--out-tag", default="",
+                    help="suffix for the score output files, e.g. '_r5'")
     args = ap.parse_args()
+    # "." = empty tag (Condor queue lists can't carry an empty value)
+    for _a in ("task_tag", "oppu_tag", "out_tag"):
+        if getattr(args, _a) == ".":
+            setattr(args, _a, "")
     if args.results_root:
         global OUT
         OUT = Path(args.results_root) if os.path.isabs(args.results_root) \
@@ -300,7 +312,8 @@ def main():
     print(f"[oppu_rep_score] tasks={tasks} smoke={args.smoke} commit={p['git_commit']} host={p['hostname']}")
     ensure_metric_cache()
     for t in tasks:
-        score_task(t, args.overwrite, smoke=args.smoke)
+        score_task(t, args.overwrite, smoke=args.smoke, task_tag=args.task_tag,
+                   oppu_tag=args.oppu_tag, out_tag=args.out_tag)
 
 
 if __name__ == "__main__":

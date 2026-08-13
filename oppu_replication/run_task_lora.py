@@ -56,6 +56,12 @@ parser.add_argument('--overwrite', action='store_true')
 parser.add_argument('--base-only', action='store_true',
                     help='PATCH P17: skip all training — evaluate the bare base model '
                          'under the identical retrieval prompts/decoding (chart baseline arm)')
+parser.add_argument('--eval-only', action='store_true',
+                    help='PATCH P20: skip training — load the already-trained task-LoRA '
+                         'checkpoint and only generate (seed re-decodes)')
+parser.add_argument('--tag', type=str, default='',
+                    help="PATCH P20: output namespace tag for re-decodes, e.g. '_seed1' "
+                         "(keeps them off the original run's prediction paths)")
 
 args = parser.parse_args()
 model_name = args.model_name
@@ -73,12 +79,18 @@ suffix = ""
 if args.limit > 0 or args.limit_train > 0:
     suffix = f"_limit{args.limit}t{args.limit_train}"
 stem = "base" if args.base_only else "task"
-ckpt_dir = Path(args.ckpt_root) / task_name / f"task_lora_k{k}{suffix}"
+# PATCH P20: --eval-only always loads the real (unsuffixed) adapter, so a
+# --limit smoke re-decode doesn't look for a task_lora_k1_limitN checkpoint
+ckpt_dir = Path(args.ckpt_root) / task_name / f"task_lora_k{k}{'' if args.eval_only else suffix}"
 out_dir = Path(args.out_root) / task_name
-pred_json = out_dir / f"{stem}_k{k}{suffix}_preds.json"
-pred_jsonl = out_dir / f"{stem}_k{k}{suffix}_preds.jsonl"
-meta_json = out_dir / f"{stem}_k{k}{suffix}_meta.json"
-refuse_overwrite(([pred_json, pred_jsonl] if args.base_only else [ckpt_dir, pred_json, pred_jsonl]), args.overwrite)
+pred_json = out_dir / f"{stem}_k{k}{suffix}{args.tag}_preds.json"
+pred_jsonl = out_dir / f"{stem}_k{k}{suffix}{args.tag}_preds.jsonl"
+meta_json = out_dir / f"{stem}_k{k}{suffix}{args.tag}_meta.json"
+_no_train = args.base_only or args.eval_only
+refuse_overwrite(([pred_json, pred_jsonl] if _no_train else [ckpt_dir, pred_json, pred_jsonl]), args.overwrite)
+if args.eval_only and not (ckpt_dir / "adapter_config.json").exists():
+    print(f"FATAL: --eval-only but no trained adapter at {ckpt_dir}")
+    sys.exit(1)
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left", token=args.access_token)
 # PATCH P4: their Llama-2-specific special-token surgery ("</s>", '[PAD]') only
@@ -160,8 +172,8 @@ if _dropped:
 training_arguments = transformers.TrainingArguments(
     **{k: v for k, v in _ta_kwargs.items() if k in _ta_sig})
 
-if args.base_only:
-    train = []   # PATCH P17: no training corpus needed
+if args.base_only or args.eval_only:
+    train = []   # PATCH P17/P20: no training corpus needed
 else:
     with open(f"{args.data_root}/{task_name}/user_others.json", 'r') as f:
         train = json.load(f)
@@ -245,6 +257,15 @@ def generate_and_tokenize_prompt(data_point):
 from datasets import Dataset
 if args.base_only:
     model = base_model   # PATCH P17
+elif args.eval_only:
+    from peft import PeftModel
+    model = PeftModel.from_pretrained(model=base_model, model_id=str(ckpt_dir),
+                                      is_trainable=False)   # PATCH P20
+    _loaded = lora_delta_stats(model)
+    if _loaded["lora_B_abs_sum"] == 0.0:
+        print(f"FATAL: loaded adapter {ckpt_dir} has all-zero lora_B")
+        sys.exit(2)
+    print(f"[run_task_lora] PATCH P20 eval-only: loaded {ckpt_dir} ({_loaded})", flush=True)
 else:
     model = get_peft_model(base_model, peft_config)
     print_trainable_parameters(model)
@@ -303,7 +324,7 @@ for i in tqdm(range(len(train))):
 # PATCH P7: upstream `print(train_data)` (dumps the whole corpus to stdout) removed
 print(f"[run_task_lora] built {len(train_data)} training examples", flush=True)
 
-if not args.base_only:   # PATCH P17: base arm skips training entirely
+if not (args.base_only or args.eval_only):   # PATCH P17/P20: these arms skip training
     train_dataset = Dataset.from_list(train_data)
     train_dataset = train_dataset.map(generate_and_tokenize_prompt).shuffle()
 
@@ -336,7 +357,8 @@ if not args.base_only:   # PATCH P17: base arm skips training entirely
     })
     print(f"[run_task_lora] saved adapter to {ckpt_dir} ({delta})", flush=True)
 else:
-    write_meta(meta_json, args, {"stage": "base_only", "n_test_users": len(test_data)})
+    write_meta(meta_json, args, {"stage": "base_only" if args.base_only else "eval_only",
+                                 "n_test_users": len(test_data)})
 
 model.eval()
 model.config.use_cache = True
