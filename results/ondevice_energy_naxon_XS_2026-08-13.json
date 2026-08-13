@@ -1,7 +1,41 @@
 {
- "generated_utc": "2026-08-13T17:08:45.219614+00:00",
+ "generated_utc": "2026-08-13T20:03:24.045669+00:00",
  "method": "h9 replication: gross = drained_frac x 55700.136 J; net = gross - 0.2612 W x duration",
  "point_nax_on": {
+  "user": "u00008075",
+  "profile_size": 405,
+  "condition": "C2",
+  "nax_arm": "on",
+  "completed": true,
+  "iterations_total": 1215,
+  "iterations_reached": 1210,
+  "duration_s": 6996.0,
+  "gross_j": 19495.0,
+  "net_j": 17667.0,
+  "avg_power_w": 2.787,
+  "clean_region_power_w": 3.06,
+  "pct_full_battery_gross": 35.0,
+  "pct_full_battery_net": 31.7,
+  "battery_start": 0.65,
+  "battery_end": 0.3,
+  "baseline_source": "matched",
+  "baseline_user": "u00008075",
+  "bench_session_id": "1B8127E5",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "note": "started from 65% deliberately (below the fuel-gauge plateau region); battery sampler recorded the full trajectory"
+ },
+ "reference_nax_off": {
+  "duration_s": 8390.4,
+  "net_j": 28443.4,
+  "pct_net": 51.1,
+  "avg_power_w": 3.651
+ },
+ "ratios": {
+  "time": 1.2,
+  "net_energy": 1.61,
+  "avg_power_on_over_off": 0.763
+ },
+ "voided_first_attempt": {
   "user": "u00008075",
   "profile_size": 405,
   "condition": "C2",
@@ -19,17 +53,7 @@
   "baseline_user": "u00008075",
   "bench_session_id": "1D241264-521E-4007-82C9-DDCD55C20ABC",
   "os_version": "Version 26.6 (Build 23G71)",
-  "note": "launched plugged at 100%, unplugged ~2min in; h9 arithmetic replicated"
- },
- "reference_nax_off": {
-  "duration_s": 8390.4,
-  "net_j": 28443.4,
-  "pct_net": 51.1,
-  "avg_power_w": 3.651
- },
- "ratios": {
-  "time": 1.131,
-  "net_energy": 1.926,
-  "avg_power_on_over_off": 0.617
+  "note": "launched plugged at 100%, unplugged ~2min in; h9 arithmetic replicated",
+  "verdict": "VOIDED \u2014 fuel-gauge plateau from 100% start under-read drain (2.25W vs 3.06W clean-region rate in the 65%-start rerun); kept as the plateau demonstration"
  }
 }
