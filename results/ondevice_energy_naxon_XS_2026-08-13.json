@@ -1,0 +1,35 @@
+{
+ "generated_utc": "2026-08-13T17:08:45.219614+00:00",
+ "method": "h9 replication: gross = drained_frac x 55700.136 J; net = gross - 0.2612 W x duration",
+ "point_nax_on": {
+  "user": "u00008075",
+  "profile_size": 405,
+  "condition": "C2",
+  "nax_arm": "on",
+  "completed": true,
+  "iterations_total": 1215,
+  "iterations_reached": 1210,
+  "duration_s": 7421.0,
+  "gross_j": 16710.0,
+  "net_j": 14771.6,
+  "avg_power_w": 2.2517,
+  "pct_full_battery_gross": 30.0,
+  "pct_full_battery_net": 26.5,
+  "baseline_source": "matched",
+  "baseline_user": "u00008075",
+  "bench_session_id": "1D241264-521E-4007-82C9-DDCD55C20ABC",
+  "os_version": "Version 26.6 (Build 23G71)",
+  "note": "launched plugged at 100%, unplugged ~2min in; h9 arithmetic replicated"
+ },
+ "reference_nax_off": {
+  "duration_s": 8390.4,
+  "net_j": 28443.4,
+  "pct_net": 51.1,
+  "avg_power_w": 3.651
+ },
+ "ratios": {
+  "time": 1.131,
+  "net_energy": 1.926,
+  "avg_power_on_over_off": 0.617
+ }
+}
