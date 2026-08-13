@@ -77,8 +77,8 @@ def provenance():
 def load_arm_preds(task, arm, smoke=False):
     """Return {id: output}. For the oppu arm, merge non-smoke shards."""
     d = OUT / task
-    if arm == "task":
-        files = [d / ("task_k1_limit1t30_preds.json" if smoke else "task_k1_preds.json")]
+    if arm in ("task", "base"):
+        files = [d / (f"{arm}_k1_limit1t30_preds.json" if smoke else f"{arm}_k1_preds.json")]
     elif smoke:
         files = sorted(d.glob("oppu_k1_smoke_u*_preds.json"))
     else:
@@ -284,7 +284,14 @@ def main():
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--smoke", action="store_true",
                     help="score the smoke artifacts (1 test user) — validates the pipeline")
+    ap.add_argument("--results-root", default=None,
+                    help="override the results root (e.g. results/oppu_rep_fixed "
+                         "for the repaired-LaMP-1 arm); default results/oppu_rep")
     args = ap.parse_args()
+    if args.results_root:
+        global OUT
+        OUT = Path(args.results_root) if os.path.isabs(args.results_root) \
+            else PROJECT_ROOT / args.results_root
     tasks = sorted(TASKS) if args.all else ([args.task] if args.task else None)
     if not tasks:
         ap.error("--task or --all required")
