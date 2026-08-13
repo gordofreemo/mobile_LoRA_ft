@@ -35,7 +35,7 @@ C_BASE, C_TASK, C_PERS = "#2a78d6", "#eb6834", "#1baf7a"
 INK, MUTED = "#0b0b0b", "#52514e"
 
 UP_TASKS = [  # (their name, display name, metric key in score json, pretty metric)
-    ("citation", "LaMP-1*\ncitations", "accuracy", "acc"),
+    ("citation", "LaMP-1\ncitations", "accuracy", "acc"),
     ("movie_tagging", "LaMP-2M\nmovie tags", "accuracy", "acc"),
     ("news_categorize", "LaMP-2N\nnews cat.", "accuracy", "acc"),
     ("news_headline", "LaMP-4\nheadlines", "rouge_1", "R-1"),
