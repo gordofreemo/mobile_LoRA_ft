@@ -2,11 +2,11 @@
 """Figure for the OPPU faithful-replication round: base model vs task adapter
 vs personalized (task + per-user) under OPPU's protocol, per task.
 
-Left panel: the five higher-is-better tasks (accuracy / ROUGE-1).
-Right panel: LaMP-3 MAE (lower is better) on its own axis — never share an
-axis between opposite-direction metrics. Citation is omitted from the figure
-(both arms score exactly 0 due to the release's prompt defect; the writeup
-table carries it).
+Left panel: the higher-is-better tasks (accuracy / ROUGE-1), including
+LaMP-1* = the P18 repaired-prompt reconstruction (as released, every arm
+scores exactly 0 due to the prompt defect). Right panel: LaMP-3 MAE (lower
+is better) on its own axis — never share an axis between opposite-direction
+metrics.
 
 Inputs: results/oppu_rep/score_<task>.json (task/oppu arms) and
 results/oppu_rep/<task>/base_k1_preds.json (base arm, scored via their
@@ -35,6 +35,7 @@ C_BASE, C_TASK, C_PERS = "#2a78d6", "#eb6834", "#1baf7a"
 INK, MUTED = "#0b0b0b", "#52514e"
 
 UP_TASKS = [  # (their name, display name, metric key in score json, pretty metric)
+    ("citation", "LaMP-1*\ncitations", "accuracy", "acc"),
     ("movie_tagging", "LaMP-2M\nmovie tags", "accuracy", "acc"),
     ("news_categorize", "LaMP-2N\nnews cat.", "accuracy", "acc"),
     ("news_headline", "LaMP-4\nheadlines", "rouge_1", "R-1"),
@@ -79,8 +80,26 @@ def render():
         sys.exit("base_headlines.json missing — run --score-only in a Condor job first")
     base = json.load(open(bh))
 
+    # citation = the P18 repaired-prompt reconstruction (their release scores
+    # 0.000 on every arm by construction). Arms from the oppu_rep_fixed root;
+    # base = their strict label parse over the 123-line preds file (tiny).
+    fixed = PROJECT_ROOT / "results" / "oppu_rep_fixed"
+    fx_score = fixed / "score_citation.json"
+    if fx_score.exists():
+        scores["citation"] = json.load(open(fx_score))
+        ok = n = 0
+        with open(fixed / "citation" / "base_k1_preds.jsonl") as f:
+            for line in f:
+                r = json.loads(line)
+                n += 1
+                ok += (str(r["pred"]).strip() == r["gold"].strip())
+        base["citation"] = {"accuracy": ok / n}
+    else:
+        global UP_TASKS
+        UP_TASKS = [t for t in UP_TASKS if t[0] != "citation"]
+
     fig, (ax, axm) = plt.subplots(
-        1, 2, figsize=(8.6, 3.4), gridspec_kw={"width_ratios": [5.2, 1.15]})
+        1, 2, figsize=(9.8, 3.4), gridspec_kw={"width_ratios": [6.2, 1.15]})
     fig.patch.set_facecolor("white")
 
     w = 0.26
