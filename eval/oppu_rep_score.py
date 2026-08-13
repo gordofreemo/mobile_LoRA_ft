@@ -128,6 +128,7 @@ def their_headline(task, lamp_id, preds, restrict_ids=None):
         return ev.evaluate_task(tmp, lamp_id)
     finally:
         os.unlink(tmp)
+        os.unlink(label_file)  # else Condor transfers the leak back to the submit dir
 
 
 def per_query_scores(lamp_id, preds, golds):
