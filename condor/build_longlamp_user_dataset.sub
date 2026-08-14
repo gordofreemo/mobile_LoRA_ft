@@ -1,0 +1,374 @@
+# Per-user LongLaMP training-corpus build for the LL4-LL6 User-LoRA round --
+# 300 parallel CPU procs (3 tasks x K=100 users).
+#
+# Each proc invokes train/build_longlamp_user_dataset.py for its assigned
+# (tag, user_id), emitting:
+#     data/longlamp_user_train_<tag>_<user_tag>_bm25k4.jsonl
+#     data/longlamp_user_train_<tag>_<user_tag>_bm25k4.meta.json
+#
+# Plan: experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md, Execution
+# Step 4. Per the REVISED pinned design #8 (profile-entry reframing, /grill_me
+# addendum 2026-07-28 -- the original "records" framing turned out non-viable,
+# every eligible user had exactly 1 temporal-train record): each user's
+# training snapshot (the temporal-TRAIN record with the largest profile,
+# `train_snapshot_idx` from data/longlamp_user_stats.py) has its profile
+# entries reframed as (input,output) pairs using that task's own template;
+# system slot = leave-one-out BM25 top-k over the snapshot's OTHER entries.
+#
+# REQUIRES, in order: condor/download_longlamp_temporal.sub (data on disk)
+# then condor/longlamp_user_stats.sub (<tag>_top100_users.json +
+# <tag>_user_records.json on disk, schema_version 2).
+#
+# Smoke already done locally 2026-07-28/29 for one user per task (review,
+# abstract, topic -- smallest-profile-size users, --limit 5/3/3), inspected
+# by eye: leave-one-out exclusion confirmed correct, input/output template
+# match confirmed exact for review/topic and accepted-gap-only for abstract
+# (missing keyword list, per design). Smoke artifacts were local-only and
+# deleted after inspection, not committed.
+#
+# Queue block generated 2026-07-30 via:
+#   for t in review abstract topic; do
+#     python data/longlamp_user_stats/gen_configs.py --tag $t --print-queue build
+#   done
+# from data/longlamp_user_stats/{review,abstract,topic}_top100_users.json
+# (schema_version 2, post-addendum). Re-generate and replace if those files
+# are ever rebuilt with --overwrite.
+#
+# QUEUE-SYNTAX GOTCHA (found + verified empirically 2026-07-29/30, real bug
+# caught before submitting, not guessed): Condor's `queue vars from (...)`
+# splits each line on BOTH commas AND whitespace by default -- neither
+# single- nor double-quoting a field preserves embedded spaces. Abstract's
+# user_ids are author names with spaces (e.g. "Lei Zhang"), which broke an
+# earlier 3-field version of this queue (tag, user_id, user_tag) -- "Lei
+# Zhang" silently truncated to "Lei". Fixed by (1) dropping the redundant
+# user_tag field and (2) making user_id the LAST variable, where Condor's
+# parser lets the final variable absorb the remainder of the line verbatim
+# (confirmed via a standalone Condor test job that printed real argv).
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/build_longlamp_user_dataset.py
+# Outer double-quotes = Condor's "new" arguments syntax; single-quotes group
+# a value that may contain spaces ($(user_id), see the queue-syntax gotcha
+# above) into one argument.
+arguments             = "--tag $(tag) --user '$(user_id)' --k 4 --overwrite"
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/build_longlamp_user_dataset.$(tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/build_longlamp_user_dataset.$(tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/build_longlamp_user_dataset.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only -- BM25 over a single record's profile + JSONL write.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+# Format: tag, user_id (user_id MUST be last -- see queue-syntax gotcha
+# above). 300 rows = 3 tasks x K=100 users.
+queue tag, user_id from (
+  review, A3HU0B9XUEVHIM
+  review, A1XT8AJB7S9JJG
+  review, A3KJ6JAZPH382D
+  review, A96K1ZGW56S2I
+  review, A1TPW86OHXTXFC
+  review, A3QWNQ2WA7QZYJ
+  review, A2R1HAXRNU0QX7
+  review, A2AF0NOCM71J0B
+  review, A2YEZ8Z3BW2SKG
+  review, A3DFH4CKPIT0N9
+  review, A3A90CELVLOUP6
+  review, A2RWGW6TGUX7E5
+  review, A321W4SSC0F6AP
+  review, A23NSKTMSPPBTR
+  review, A25UZ7MA72SMKM
+  review, A1VS1LL905P5L5
+  review, AB0Y33G717HOU
+  review, A3IMK08UX0I46A
+  review, A3V1A3C9DTLPME
+  review, A2V2URLB31HG59
+  review, ABLOQZIL42W7I
+  review, A2VE83MZF98ITY
+  review, A3GFK7F5IUF60X
+  review, A2GPJR489OIH42
+  review, A3EPHBMU07LZ50
+  review, A35HOUWHAYZZN6
+  review, A3J3OCM6PPWNRY
+  review, A6ZPLVAUQ6695
+  review, A4H4KYSM2KQ85
+  review, A2H1WNB30JNAWU
+  review, A9Q28YTLYREO7
+  review, A1ESUYMIG3TZT0
+  review, A1501C38OCSEMA
+  review, A19HKRB4LU5YR
+  review, A2V0YBZ3X61VRP
+  review, A3QC0PB3XGEFLH
+  review, A15NS9ERV7LT7A
+  review, A2WZ1B92F81LJJ
+  review, A3GTI1Z7YE49ZS
+  review, A2IACU8LJ1FCKE
+  review, ASZFKI9I3VZKF
+  review, A16Z2OECAUX8Z4
+  review, A1CA1A1MGW0I3J
+  review, AEGQWVR6KWBV
+  review, A2WLZD9BY669HY
+  review, AZA595ZPIG240
+  review, A18V2E6MMO8KLO
+  review, ARDRA2XJB29DY
+  review, A1KGWUYXUBEMB2
+  review, A2KP45DO3RY4RG
+  review, A126KX6FVI4T66
+  review, A1H88L8X6HM1BQ
+  review, A2BE3MTUT0YBF0
+  review, A31RULW0KNYJ5H
+  review, A3R71OOFIFSBLI
+  review, AURX0OA5H0NVX
+  review, A2ZFS1ETNMDUX1
+  review, A33GYL1LL646XK
+  review, A3OEECMCM2T4KQ
+  review, ARQPQ8LF5NTEZ
+  review, A2QCE7L6GRE3MT
+  review, A3PQJ6J7FOOWFG
+  review, A3NG7X4APIV649
+  review, A1RTSVWEXMKAR1
+  review, A2BQBLCKJHP65G
+  review, A14QQFIVO73XG9
+  review, AZ26CDSJ363AH
+  review, A18DON5KI1ERFX
+  review, A36RS7KTNOBROF
+  review, A3G2TMMFAZDHXT
+  review, A1345VRK5MYG7
+  review, A19X4BF861LQST
+  review, ACT2AA008KB31
+  review, ACWVXZ8VKJ19V
+  review, A1F7SX3GNVBNE3
+  review, A2THAHI1RUDK5X
+  review, A34BRSDS9MJXTZ
+  review, A3M5UGU0NGD38D
+  review, AQ06TB7GQ5AQS
+  review, A1EZMU02XNK3DA
+  review, A2VOIE123XM7T5
+  review, A3GA09FYFKL4EY
+  review, A1HOLJW15Q5S5V
+  review, A2Z1R98M2XOCEJ
+  review, AFEYHFH2GH0QZ
+  review, A26A64X86VL1R4
+  review, A30SZ5HVLKTN45
+  review, A3KROYMQ61M7A
+  review, ASPL0SF3VVEZH
+  review, A16YMNG420UF2F
+  review, A1F0ITW7KPUKQI
+  review, A3MEH37R79AD2S
+  review, A3LR8SZY00IW9Z
+  review, A3OH2RTIE4UMNX
+  review, A1POD4SH35DZ3X
+  review, A1X4L7AO1BXMHK
+  review, A2UR44HF5K9FE5
+  review, A3JRW716H3AX14
+  review, AUS5X6IMFLJBD
+  review, A1K0I7X8P4SIYJ
+  abstract, Lei Zhang
+  abstract, Jun Li
+  abstract, Bin Li
+  abstract, Xin Zhang
+  abstract, Bo Zhang
+  abstract, Xi Chen
+  abstract, Yong Zhang
+  abstract, Gang Wang
+  abstract, Xin Chen
+  abstract, Leonard Barolli
+  abstract, Dacheng Tao
+  abstract, Ming Liu
+  abstract, Elisa Bertino
+  abstract, Cheng Wang
+  abstract, Jiawei Han
+  abstract, Hao Wu
+  abstract, Xuelong Li
+  abstract, Qiang Zhang
+  abstract, Jing Chen
+  abstract, Yue Zhang
+  abstract, Liang Zhao
+  abstract, Bo Xu
+  abstract, Lu Zhang
+  abstract, Min Wu
+  abstract, Chao Chen
+  abstract, Ting Wang
+  abstract, Yuan Yuan
+  abstract, Ming Yang
+  abstract, Athanasios V Vasilakos
+  abstract, Anil K Jain
+  abstract, Wayne Luk
+  abstract, Ling Chen
+  abstract, Sungyoung Lee
+  abstract, Yan Huang
+  abstract, Yu Sun
+  abstract, Zeshui Xu
+  abstract, Hong Jiang
+  abstract, Hermann Ney
+  abstract, Li Yu
+  abstract, Zhe Chen
+  abstract, Mohammad S Obaidat
+  abstract, Rodrigo C de Lamare
+  abstract, Gerhard Fettweis
+  abstract, Zheng Chen
+  abstract, Moshe Y Vardi
+  abstract, Yun Yang
+  abstract, Lothar Thiele
+  abstract, Marc Moonen
+  abstract, Yu Cao
+  abstract, Han Zhang
+  abstract, Hao Xu
+  abstract, Bo Zhou
+  abstract, Jian Ma
+  abstract, Aoying Zhou
+  abstract, Vladik Kreinovich
+  abstract, Xiaobo Zhou
+  abstract, Lin Ma
+  abstract, Lei Yu
+  abstract, Jun Han
+  abstract, Oscar Castillo
+  abstract, Shui Yu
+  abstract, Zhi Hua Zhou
+  abstract, Jon Crowcroft
+  abstract, Andrew B Kahng
+  abstract, Jong Hyuk Park
+  abstract, Rongxing Lu
+  abstract, Yiran Chen
+  abstract, Giuseppe Caire
+  abstract, Qi Chen
+  abstract, Bin Guo
+  abstract, Xueqi Cheng
+  abstract, Hideharu Amano
+  abstract, Jiang Liu
+  abstract, Qiang Zhou
+  abstract, Jiming Chen
+  abstract, Marco Di Renzo
+  abstract, Xiaoming Chen
+  abstract, Feng Ding
+  abstract, Dimitris N Metaxas
+  abstract, Brian D O Anderson
+  abstract, Jing Zhou
+  abstract, David Eppstein
+  abstract, Enrique Alba
+  abstract, Erik G Larsson
+  abstract, Yi Huang
+  abstract, Siwei Ma
+  abstract, Ye Yuan
+  abstract, Yan Shi
+  abstract, Li Shen
+  abstract, Saharon Shelah
+  abstract, Shiguang Shan
+  abstract, Yi Bing Lin
+  abstract, Thomas Eiter
+  abstract, Ahmed E Hassan
+  abstract, Jiming Liu
+  abstract, Yi Guo
+  abstract, Divesh Srivastava
+  abstract, Patricia Melin
+  abstract, Nei Kato
+  abstract, Qionghai Dai
+  topic, IrrelevantTLDR
+  topic, dsprox
+  topic, ThrustVectoring
+  topic, ZeroNihilist
+  topic, Philo_T_Farnsworth
+  topic, yodatsracist
+  topic, guilty_of_innocence
+  topic, robeph
+  topic, ajsdklf9df
+  topic, cr42
+  topic, guysmiley00
+  topic, turkstyx
+  topic, JoseJimeniz
+  topic, ashsimmonds
+  topic, Spleeniator
+  topic, danceswithronin
+  topic, probablyhrenrai
+  topic, Gorbzel
+  topic, hardtoremember
+  topic, randomsnark
+  topic, Tyrien
+  topic, chaosmech
+  topic, pencilears
+  topic, aceshighsays
+  topic, Ruhtardedd
+  topic, rowd149
+  topic, YourFairyGodmother
+  topic, ananci
+  topic, eaturbrainz
+  topic, philosarapter
+  topic, cardfire
+  topic, mommyoffour
+  topic, Patius
+  topic, Teotwawki69
+  topic, Homeless-Bill
+  topic, funkyskunk
+  topic, fireburt
+  topic, EDPostRequests
+  topic, SenseiCAY
+  topic, Avien
+  topic, Cullly
+  topic, cmdrNacho
+  topic, iBeenie
+  topic, thrawnie
+  topic, e90Turbo
+  topic, elint
+  topic, leep420
+  topic, Gyrant
+  topic, Kalfira
+  topic, Pyryara
+  topic, ploki122
+  topic, GarethGore
+  topic, DeedTheInky
+  topic, DugongOfJustice
+  topic, Lereas
+  topic, LittleOni
+  topic, PapBear
+  topic, CrabCommander
+  topic, RelatedShortStory
+  topic, Mel_Melu
+  topic, Ajido
+  topic, RabidCoyote
+  topic, heatherlorali
+  topic, GoodShibe
+  topic, autowrecker
+  topic, Geroy21
+  topic, Second_Foundationeer
+  topic, TehRedBaron
+  topic, butyourenice
+  topic, jmarquiso
+  topic, mugen_is_here
+  topic, shy_dow90
+  topic, Dmax12
+  topic, Fierce_Fox
+  topic, Lord_Wrath
+  topic, Malumen
+  topic, Reoh
+  topic, Speciou5
+  topic, StickerBrush
+  topic, daniell61
+  topic, iaccidentlytheworld
+  topic, Alinosburns
+  topic, Inkmonkey1
+  topic, Trenks
+  topic, intoon
+  topic, smotazor
+  topic, x86_64Ubuntu
+  topic, NateThomas1979
+  topic, X-Heiko
+  topic, stabbyrum
+  topic, KH10304
+  topic, LansdowneStreet
+  topic, Stupid_question_bot
+  topic, avrus
+  topic, ipear
+  topic, justcallmetarzan
+  topic, reverendnathan
+  topic, videogamechamp
+  topic, AngryBeaverEU
+  topic, Faux29
+)

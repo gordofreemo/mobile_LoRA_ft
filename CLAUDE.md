@@ -1,13 +1,21 @@
-# Research Project — On-Device LLM Training (SmolLM3-3B + LoRA, iPhone 17 Pro)
+# Research Project — SmolLM3-3B + LoRA: on-device training and LaMP personalization
 
 Two-stage LoRA pipeline (Task-LoRA on LaMP + per-user User-LoRA, stacked at inference).
-Phases 1 & 2 ran on the cluster; **Phase 3 is the live work: deploying and characterizing
-training on a real iPhone.**
+Two tracks run in parallel on two machines:
 
-> Compacted 2026-08-14. The previous 152 KB narrative version is recoverable verbatim:
-> `git show c230c48:CLAUDE.md`. Per-round detail lives in `experiments/*.md` and in the
-> memory files listed in `MEMORY.md`; this file keeps the durable facts, numbers, commands
-> and traps. When a round's memory file and this file disagree, **memory is newer**.
+- **Device track (Phase 3)** — Mac + iPhone 17 Pro, `~/Documents/Research/mobile_LoRA_ft`.
+  Characterizing and fixing on-device training. This is the paper's spine.
+- **Cluster track** — Condor/HPC, conduit at `~/projects/mobileFT_distill`. LaMP/LongLaMP
+  personalization rounds, OPPU replication, eval methodology.
+
+Both clones push to `github.com:gordofreemo/mobile_LoRA_ft` (`main`) and merge periodically. Keep
+edits to this file on the side that owns the work, so merges stay conflict-light.
+
+> Compacted 2026-08-14. Two pre-compaction versions are recoverable verbatim:
+> device side `git show c230c48:CLAUDE.md`, cluster side `git show 018b0cb:CLAUDE.md`.
+> Per-round detail lives in `experiments/*.md` and in the memory files listed in `MEMORY.md`;
+> this file keeps the durable facts, numbers, commands and traps. When a round's memory file
+> and this file disagree, **memory is newer**.
 
 ---
 
@@ -65,6 +73,18 @@ every off/on comparison.
 - **R9 / PT-track** cluster rounds are designed and pinned but not run (and are off the paper's
   critical path after the pivot).
 - **MLX upstream:** audit the rest of the quantized `transpose=false` training path (see NAX section).
+
+**Cluster track, as of 2026-08-13** (details in the Cluster track section below):
+- **OPPU faithful replication is DONE and positive** — the project's first unambiguous per-user
+  personalization result (movie tagging +0.0912 query-level, survives grouped test and any
+  correction). The ablation and the power analysis that followed **explain away the project's 20+
+  per-user nulls as an eval-power artifact**, not a model or recipe failure.
+- The LongLaMP track is fully re-measured under fixed decoding: the task adapter helps on all three
+  tasks, the per-user adapter adds nothing.
+- **Pre-registration is retired** (user order 2026-08-13): no gates, thresholds, disposition rules
+  or tripwires when designing rounds. Run it, report descriptive stats, the user decides.
+- Open: the LongLaMP paper sections need a rewrite covering both re-measurements; a LaMP-3 K=500
+  confirmation is a **NO-GO as designed** (needs a multi-query-per-user eval, not more 1-query users).
 
 ---
 
@@ -526,16 +546,19 @@ xcrun devicectl device copy from --device 00008150-000674C60A3B401C \
 
 ---
 
-## Phases 1 & 2 — frozen state
+## Cluster track — LaMP / LongLaMP personalization
+
+Phases 1 & 2 in the old numbering. Phase 1 (Task-LoRA) is frozen; the per-user work reopened and is
+where the cluster's recent rounds live.
 
 ### Research questions
 
 | Q | Status |
 |---|---|
-| **Q1** — does fine-tuning on LaMP help a 3B model at all? | **YES** — A1-lamp ckpt-1000: +0.11 / +0.07 / +0.13 on LaMP-3/4/7 test over the BM25 baseline. |
+| **Q1** — does fine-tuning on LaMP help a 3B model at all? | **YES** — A1-lamp ckpt-1000: +0.11 / +0.07 / +0.13 on LaMP-3/4/7 test over the BM25 baseline. Now also YES on LongLaMP once decoding is fixed (+0.014 to +0.017). |
 | Q2 — synthetic preference-conditional data | DROPPED (2026-06-02 pivot). |
 | Q3 — general vs domain-specific Task-LoRA | DROPPED (2026-06-02 pivot). |
-| **Q4** — per-user LoRA beyond Task-LoRA? | **YES for LaMP-3** (R5: ΔMAE −0.050, acc 0.680→0.730, RMSE 0.616→0.575, at MDE p≈0.10). **Null on LaMP-4** (R6: ΔR-1 +0.007, p=0.20). **Does not survive a base-adapter swap** (R8). |
+| **Q4** — per-user LoRA beyond Task-LoRA? | **YES, but only visible under an adequately powered eval.** In our harness: LaMP-3 at MDE (R5 ΔMAE −0.050, p≈0.10), null everywhere else, 20+ nulls total. Under OPPU's own released protocol the same model gives **movie tagging +0.0912 query-level, surviving the grouped test and any correction**, and the subsampling analysis shows our eval shape could only detect that effect 24% of the time. **The nulls were an eval-power artifact, not a model or recipe failure.** |
 | **Q5** — does the 3B two-LoRA stack survive a scale comparator? | **YES** — beats Llama-3.1-70B-Instruct + BM25 on all 7 LaMP tasks. |
 
 ### Phase 1 headline numbers (LaMP test, seed 0, greedy, BM25 k=4)
@@ -566,14 +589,20 @@ Results: `results/LaMP_{3,4,7}_test_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_see
 - Training configs: `train/config/{a1_lamp,a1_lamp_1ep,a2_lamp_1ep,user_lora_*,pt_lamp7_1ep}.json`.
   R7 corpus `data/lamp_train_mixed7_bm25k4.jsonl`; R7 BFCL result
   `results/bfcl_ast_a2_lamp_1ep_seed0_final_seed0.json`.
+- **7 Per-Task-LoRAs:** `train/checkpoints/per_task_<tag>_1ep_seed0/final/` (weight-hashes verified
+  distinct from A1-lamp / One-LoRA FT). `pt_lamp7_1ep.json` is also the h12 device round's reference.
+- **User-LoRAs for the other 5 tasks (R10–R14 / PT3–PT7)** and the 1,254 warm-start / coldmatch
+  adapters live under `train/checkpoints/`; pools in `data/lamp_user_stats/<task>_top<K>_users.json`.
+- **OPPU replication artifacts:** `oppu_replication/` (wrapper + `PATCHES.md`), `third_party/OPPU/`
+  @ 87f8c69, `data/oppu_release/` (4 GB, sha256 pinned), scores under `results/oppu_rep/`.
 - **Fused 4-bit device model:** HF `ageyko/SmolLM3-3B-a1lamp-4bit` (base: `mlx-community/SmolLM3-3B-4bit`).
 
 ### Round history
 
-**Warning:** the `experiments/*.md` docs for R7, R8, R9, PT1, LL1, the Pareto sweep, the test-split
-correction and the per-user-count analysis are **not present in this working tree** (nor are the
-`project_user_lora_*` memories they cite). These lines, plus `results/*.json`, are the surviving
-record — do not compress them further without re-creating the docs.
+**Warning:** most cluster-round `experiments/*.md` docs are gitignored and exist only on the host
+that ran the round (conduit for everything from R7 onward). On the device-side clone they are
+missing entirely, as are the `project_user_lora_*` memories they cite. These lines plus
+`results/*.json` are the surviving record here — do not compress them further from the Mac.
 
 - **R1–R4** (single-user u00000011, LaMP-4): all failed pre-registered test gates, with a
   consistent dev/test asymmetry (dev Δ +0.030/+0.043/+0.047/+0.040 vs test +0.003/−0.004/+0.010/−0.018).
@@ -598,24 +627,257 @@ record — do not compress them further without re-creating the docs.
   stacking the User-LoRA gives **C3′ = C2′ exactly** (mean_diff 0.0000, p=1.0, 5/90/5): 10 users'
   predictions changed, split exactly 5 wins / 5 losses, an **exact cancellation**, verified by
   diffing raw predictions and by re-checking provenance at every layer.
-- **R9** (LaMP-4 on One-LoRA FT) is designed and pinned, not run. **PT-track** (Per-Task-LoRA, one
-  adapter per task, + PT1/PT2 User-LoRA rounds) is designed, not run.
-- **LL1** (LongLaMP Product Review Task-LoRA, 2026-07-25): floor 0.328 R-1 → BM25 0.343 → LongLaMP-LoRA
-  **0.182 (regression)**. Root cause: the adapter degenerates into verbatim-sentence greedy-decoding
-  repetition loops (~897 mean generated tokens vs ~375), present from checkpoint-100 onward; matches
-  a documented LoRA/greedy interaction (`huggingface/peft#1003`). `repetition_penalty=1.3` applied
-  identically to all arms made every arm worse and was rejected. BFCL 0.645. `max_seq_length` had to
-  go 2048→8192 (2048 truncated 75% of examples). Separate harness:
-  `data/download_longlamp.py`, `train/build_longlamp_dataset.py`, `eval/eval_longlamp.py`.
+- **R9** (LaMP-4 on One-LoRA FT, 2026-08-04): **the null holds in R6's shape**, mean ΔR-1 **+0.0026
+  ns** (t p=0.233, W p=0.076, CI [−0.0015,+0.0069], 19/72/9, n=100 users / 248 records). So R8's
+  LaMP-3 collapse reads as degrading an *existing* effect, not as One-LoRA FT suppressing
+  personalization everywhere. Three LaMP-4 rounds on the same pool: **R6 (A1-lamp) +0.0068 → R9
+  (One-LoRA FT) +0.0026 → PT2 (Per-Task) −0.0129.** The adapter genuinely moved the output (56/248 =
+  22.6% of predictions changed), so this is a real null, not the "barely perturbs anything" regime.
+  Deviation from the pinned plan, and the executed version is the correct one: 56 of 100 users hold
+  >1 test record, so it ran the **grouped** `paired_compare_per_user.py` over 200 eval jobs, not the
+  plan's flat n=248 route which would not have been comparable to R6's headline. `condor/gen_r9_subs.py`.
+- **Per-Task-LoRA batch + PT1/PT2** (2026-07-26): one Task-LoRA per task, single-task corpus, recipe
+  verbatim from A1-lamp (r=4 q/k/v/o+mlp, α8, 1 epoch), checkpoints
+  `train/checkpoints/per_task_<tag>_1ep_seed0/final/`. Full-split evals land close to One-LoRA FT:
+  LaMP-1 0.7328 vs 0.7068, 2-movies 0.5793/0.5736, 2-news 0.7622/0.7700, LaMP-3 0.8016/0.8104,
+  LaMP-4 0.2236/0.2232, LaMP-5 0.5056/0.5083, LaMP-7 0.5597/0.5654.
+  **BFCL headline: LaMP-5's Per-Task-LoRA scores 0.095 AST**, an order of magnitude below every other
+  adapter here (base 0.808, A1-lamp 0.770, One-LoRA FT 0.633, LongLaMP 0.645, other Per-Task 0.50–0.76).
+  Reading raw predictions: it answers BFCL prompts with title-like phrases ("Calculate the area of a
+  triangle") instead of attempting a call — **task-identity capture**, a third distinct failure mode
+  next to R7's format collapse and LongLaMP's repetition loop, and it complicates the "task-mixing
+  causes BFCL regression" story since LaMP-5 had nothing diluting it.
+  **PT1** (LaMP-3 User-LoRA on Per-Task-LoRA): acc 0.69→0.72, MAE 0.33→0.30, **ΔMAE −0.030 ns**
+  (p=0.368/0.366, CI [−0.10,+0.03]), 7/89/4 — between R5's −0.050 and R8's exact 0.000.
+- **R10–R14 + PT3–PT7** (the last 5 LaMP tasks on both bases, 2026-07-31): ten tracks, **9/10 null**.
+  **The per-user adapter changes the prediction on only 7.9% of 1,354 paired records** (1–6% on
+  classification, 14–28% on generation) — these are "the adapter barely perturbs the output" nulls.
+  R10 (2-news / One-LoRA FT) +0.0098 acc is the first to hit p<0.05 on both tests (t 0.033, W 0.043,
+  5/22/0) but **does not survive** the 10-track Bonferroni threshold of 0.005, and 22 of 27 users are
+  exact ties. Others: PT3 −0.0011, R11 +0.0100, PT4 **exactly 0.0000** (second exact cancellation
+  after R8), R12 +0.0013, PT5 −0.0001, R13 +0.0100, PT6 +0.0100, R14 +0.0026, PT7 −0.0037.
+  **Base-adapter swap has no single story** — six distinct shapes across seven tasks, so
+  "task-mixing costs personalization" is unsupported as a general rule.
+  Pools: 2-news K=27 (37–423 profile entries, 3–35 test records/user → grouped eval), LaMP-1 K=100
+  (158–533), 2-movies K=100 (150–774), LaMP-5 K=100 (177–521), LaMP-7 K=100 (**14**–137, thinnest
+  corpus in the program, so its null is confounded; LaMP-1 is the informative one).
+  Structural fix that made three of these tasks runnable: **zero users hold both a train and a test
+  record** on LaMP-1 / 2-movies / LaMP-5 (0/9,542, 0/8,040, 0/17,682, vs 2-news 102/102 and LaMP-7
+  331/331), so the profile snapshot is sourced from the user's own **test** record.
+- **Warm-start User-LoRA, all 7 tasks** (2026-08-03): give each user a private copy of the
+  Per-Task-LoRA and *continue* training it, instead of a zero-initialized adapter on a merged base.
+  **The manipulation worked and bought nothing.** Prediction-change rate 12.4% → 19.4% overall
+  (**1.57×**; LaMP-4 27%→44.4%, LaMP-5 20%→31%), and warm reached a lower final training loss than
+  coldmatch for **627/627 users, every task**. Yet 6 of 7 tasks are null and the 7th (LaMP-5 ΔR-1
+  +0.0137, CI [+0.0006,+0.0277], w_p=0.044) does not survive the 21-comparison threshold of 0.0024.
+  On 3 of 7 tasks neither per-user arm beats the Per-Task-LoRA alone. **Conclusion: the bottleneck is
+  the per-user signal, not the optimizer's starting point** — this closes off recipe-tweaking as a
+  direction. 1,254 trainings + 1,254 evals, zero held jobs.
+  **Device-track consequence: keep the single shared canonical Task-LoRA.** Warm-start would give
+  every user a full 30 MB private adapter instead of a 7.7 MB delta and dissolve the shared-adapter
+  property Phase 3 is built around, for no accuracy.
+  Measured, not assumed: r=4 × 7 modules is **7,557,120 params (30.3 MB)**, r=8 q+v is **1,916,928
+  (7.7 MB)**, ratio 3.94× (the design doc's 15.1M/3.8M were both 2× too high).
+  Per-task `max_seq_length` (each measured by its own sizing pass, never copied): LaMP-1 1792,
+  2-movies 768, 2-news 768, LaMP-3 7168, LaMP-4 1024, LaMP-5 2048, LaMP-7 256.
+  **Eval asymmetry that is easy to get wrong:** the warm arm evaluates with `--base-adapter none`
+  (its adapter already *is* the continued Task-LoRA; stacking would apply the task delta twice),
+  while coldmatch evaluates stacked as in every R5–PT7 round.
+  **Standing limitation:** there is no damage measurement for *continuing a trained adapter on one
+  user's slice*. Every BFCL number here (R7 −0.175, LaMP-5 0.095, LongLaMP 0.645) measures training a
+  Task-LoRA on a task corpus, which is a different thing, and drift that overfits toward a user's own
+  distribution reads as a win.
+- **LongLaMP track (LL1–LL6)** — separate benchmark (arXiv:2407.11016, long-form personalized
+  generation), separate round numbering, separate adapter family (LongLaMP-LoRA), separate harness
+  (`data/download_longlamp.py`, `train/build_longlamp_dataset.py`, `eval/eval_longlamp.py`). Email
+  completion excluded (private Avocado corpus, same as LaMP-6). The track's whole first half was
+  measured through a decoding bug and has been re-measured; **do not cite the original numbers.**
+  - **Original LL1–LL3 (2026-07-25/27) reported Task-LoRA regressions** (Review 0.343→0.182,
+    Abstract 0.431→0.413, Topic 0.281→0.131) — the lone counterexample to every LaMP Q1 result.
+  - **They were decoding artifacts (2026-08-06, eval-only, no retraining).** Under identical
+    `--no-repeat-ngram-size 3` on all arms, Task-LoRA minus BM25 baseline goes Review
+    **−0.1610 → +0.0171**, Abstract −0.0175 → +0.0141, Topic **−0.1497 → +0.0172**; the Task-LoRA
+    arms move hugely (Review 0.1818→0.3598) as generation length collapses ~900 → ~290 tokens.
+    **The control that licenses reading this as artifact removal:** `nrng3` is nearly a no-op on arms
+    that were not degenerating (Review floor +0.0002, its baseline −0.0001) and Abstract's baseline
+    got *worse* (−0.0198). Post-fix >600-word degeneration peaks at 5.7% across all nine arms (was
+    90%) and the worst arm is now the baseline, so the asymmetry that created the confound is gone.
+    Decoding was selected on **dev** by a pre-registered rule (admissible = >600w rate near zero,
+    then best dev R-1); `nrng3` won on both and keeps decoding deterministic.
+    Effects are small (~+0.015 R-1) and **not significance-tested**: the honest summary is
+    "fine-tuning no longer regresses and is slightly positive", not "clearly helps".
+    `nrng3` is an **intervention, not a neutral fix** — always describe re-measured numbers as
+    "under constrained decoding".
+  - Setup carried by the whole track: `max_seq_length` 8192 (2048 truncated 75–100% of examples),
+    BM25 built from the authors' own `prompts.py` (LL1's Review template had silently dropped the
+    paper's quote marks around each interpolated value), Topic's BM25 build needs 24G not the
+    inherited 8G, and the per-user rounds use the **`temporal`** split with profile-entry reframing,
+    K=100, stacked on each task's own Task-LoRA. BFCL by adapter: Abstract 0.672, Review 0.645, Topic
+    0.544 (the worst Task-LoRA score in the project, `simple_java` 0/100).
+  - **LL4–LL6 per-user rounds re-measured (2026-08-10): null on all three.** Mean per-user ΔR-1
+    Review **+0.0031** (52/2/46), Abstract **+0.0009** (37/13/50, *loses* more users than it wins),
+    Topic **+0.0083** (58/5/37). The retracted +0.0267 Abstract lift re-measures at +0.0009, almost
+    exactly the retraction's predicted +0.001. Artifact verifiably gone three ways: degeneration
+    ≤3/100 per arm and symmetric; all-users vs both-arms-clean estimates agree (worst gap 0.0011, vs
+    20× divergence before); corr(length change, diff) collapsed from −0.950/−0.830/−0.762 to ≈0.
+    Analysis convention for that round (user call, do not relitigate): **raw statistics only, no
+    p-values or CIs in prose**; the JSONs keep the fields.
+  - **The retraction itself (2026-08-04, reconfirmed in-container 2026-08-06).** LL5's Abstract
+    +0.0267 (Wilcoxon p=0.0137) was a decoding artifact: 30/100 baseline generations exceed 600 words
+    against a ~144-word median gold while the personalized arm degenerates on only 21/100, and that
+    asymmetry is the entire effect. Decomposed: all users +0.0267 (t=1.86); **both arms
+    non-degenerate n=63 → +0.0013 (t=0.20), null**; baseline-degenerate n=30 → +0.1516 (t=5.44).
+    Leakage was ruled out first (0/100 users). **The degeneration is LoRA-induced, proven by a
+    no-adapter arm**: base model median 167w, max 358w, 0/100 over 600w; Task-LoRA max 979w, 30/100.
+  - **Consequence: the task adapter helps (+0.014 to +0.017), the per-user adapter adds nothing** —
+    the same picture as the LaMP side. Remaining LongLaMP work is the paper rewrite, covering both
+    re-measurements as one narrative rather than patching the old sections.
+  - **Run `eval/longlamp_degeneration_audit.py` before reading any long-form mean.** Its >600-word
+    threshold is calibrated against the no-adapter arm (0 false positives, stable 400–600w), not
+    guessed; a gold-relative 2× ratio flags 35/100 base generations that plainly did not run away.
+    `eval/longlamp_length_check.py` is the stdlib-only version for any predictions JSONL, safe to run
+    on a login node.
 - **Llama scale comparison** (2026-06-30, extended to 7 tasks 2026-07-15): SmolLM3-3B + One-LoRA FT
   beats Llama-3.1-70B-Instruct + BM25 on all seven tasks (+0.01 to +0.13); Llama-8B trails 70B
   everywhere. The K=100 personalization-hard subset table is still LaMP-3-only.
-- **Per-user viability, corrected 2026-07-25:** the earlier record-count analysis wrongly called
-  LaMP-2-movies and LaMP-5 dead ends. Their profile entries match their task's input→output shape,
-  so the **profile-entry reframing** `build_user_dataset.py` already implements for LaMP-3/4 applies.
-  Revised: **LaMP-2-movies / 2-news / 5 are viable via supervised reframing; LaMP-1 and LaMP-7 are
-  viable only via OPPU's unsupervised right-shifted-history recipe** (new code path, not built).
-  LaMP-2-news has 321 users / 102 unseen / up to 211 records, natural K≈27.
+- **Per-user viability — settled 2026-07-31, all 7 tasks are viable and all have now been run.** The
+  original "dead ends" call counted time-split *records*, which is the wrong metric: LaMP-2-movies
+  and LaMP-5 work via **profile-entry reframing** (150–774 and 177–521 entries/user), LaMP-1 and
+  LaMP-7 via OPPU's **unsupervised right-shifted-history** objective (158–533 and 14–137). The record
+  counts still hold as record counts — 2-news is the only one of the four with real per-user record
+  volume (321 users, 102 unseen, up to 211 records, natural K≈27) — which is why the others need
+  reframing rather than the records framing.
+- **The LaMP nulls are eleven records.** Full LaMP-3 warm-arm accounting over 100 paired records:
+  baseline right 69 (66 untouched, 3 flipped wrong), baseline wrong 31 (23 untouched, 7 fixed, 1
+  worsened) → net −3 MAE units = −0.03. **Every LaMP-3 statistic this project has published (R5
+  −0.050, R8 0.000, PT1 −0.030, warm −0.030) is computed on 11 movers.** Mover rate by task (warm
+  arm): LaMP-1 1%, 2-movies 6%, LaMP-3 11%, LaMP-7 15%, 2-news 22%, LaMP-5 25%, LaMP-4 45%.
+- **Power was never adequate on any task in any round, and cost was never the reason.** Required n at
+  each task's own observed effect/variance vs the K=100 actually run: LaMP-3 471 (Bonferroni 1132,
+  pool 1817), LaMP-1 385/925 (1500), 2-movies 579/1391 (1557), LaMP-5 249/599 (1500), LaMP-7 106/254
+  (331), LaMP-4 289/695 (253). LaMP-3 K=100 across two arms cost **20.6 GPU-hours** (median 5.5
+  min/user) against rounds that have already run 1,254 trainings.
+- **Two attacks closed on evidence — do not re-propose without new data.** (1) **Profile-size
+  moderation does not exist**: LaMP-3's apparent top-25 effect (−0.12 vs −0.03) is 3 movers, and its
+  "replication across R5/PT1/warm/coldmatch" is one observation wearing four labels (shared
+  users/records/base). On the tasks whose pools actually span a wide history range there is no trend
+  — LaMP-4 (17→1100 entries) r=+0.028, 2-news (37→423) r=+0.009, 2-movies r=−0.048. (2)
+  **Confidence-routing tops out at 2×**: "benefit concentrates where the baseline is wrong" is
+  positive on 7/7 tasks but is largely regression to the mean (a change score is mechanically
+  anti-correlated with its own baseline). An **in-sample oracle** router on LaMP-3, using gold labels
+  to apply the adapter only to the 31 wrong records, gives MAE 0.330→**0.270** vs 0.300 for applying
+  it everywhere. A 2× multiplier on a 0.03 effect, in sample, with gold labels.
+
+### OPPU faithful replication (2026-08-12/13) — the round that reframes every null above
+
+Ran OPPU's (arXiv:2402.04401) complete released protocol — their splits, their prompts, their code
+minimally patched, **their code's hyperparameters** — on SmolLM3-3B instruct, all 7 tasks, k=1 arms
+(RAG vs OPPU+RAG), ~651 user LoRAs. Wrapper `oppu_replication/` (16-patch ledger in `PATCHES.md`),
+scorer `eval/oppu_rep_score.py` (their LaMP-official evaluator unmodified, plus a validated
+per-query layer and paired stats). Clusters 180650–180705, 74/74 real jobs exit 0, ~24.6 GPU-h.
+Writeup `experiments/2026-08-12-oppu-faithful-replication.md`, plan+audit
+`experiments/2026-08-11-oppu-faithful-replication-plan.md` (both gitignored, conduit only).
+
+- **Headline — movie tagging (LaMP-2M): acc 0.4933 → 0.5845, +0.0912 query-level (t_p=7e-44,
+  n=3,302), and it survives the per-user grouped test (+0.0336, t_p=2.1e-6, w_p=3.0e-7, 50/39/11)
+  and any correction.** That is 3× OPPU's own +0.028, and the personalized 3B arm nearly reaches
+  their 7B RAG baseline (0.598). Only 5/3,302 within-user near-duplicates, so it is genuine tag
+  preference, not leakage.
+- **LaMP-4 +0.0032 R-1** (q t_p=0.0017, grouped 0.0020, n=6,725) — OPPU's own +0.003 digit for digit,
+  significant at real n. **R6/R9 measured the same magnitude at n≈100–248 and correctly could not
+  detect it.** Their nulls reproduce as nulls (2N −0.0017 vs their −0.001); product/tweet
+  directionally positive ns; scholarly's star does not reproduce (+0.0019 vs their +0.016).
+- **Recipe is NOT the load-bearing difference** (ablation 2026-08-13, clusters 180973–180981,
+  movie-only). Their code trains at LR=1e-4, α=8, linear, batch 16, 2 epochs, roughly 10× hotter than
+  the LR=1e-5 / α=16 "OPPU recipe verbatim" every round here took from the paper's Table 5. Running
+  **our R5 recipe bundle inside their protocol still gives +0.0763** query-level (t_p=8e-38, grouped
+  +0.0231, t_p=1.6e-4), about 84% of the hot arm; the direct paired hot-vs-cold contrast is only
+  +0.0148 (t=4.50). Seed-robust: +0.084/+0.090 at decoding seeds 1/2. So "rerun R13 at the hot
+  recipe" is no longer motivated. Files `results/oppu_rep/score_movie_tagging{_r5,_seed1,_seed2}.*`,
+  patches P19/P20 (`--user-recipe`, `--eval-only`).
+- **Attribution closed the same night** (cluster 180989, `eval/oppu_power_subsample.py`, 10k
+  resamples): at our old eval shape (1 query/user × 100 users) the movie +0.091 effect — the largest
+  this project has ever produced — is **detected only 24.2% of the time** (17.2% at the R5 recipe
+  those rounds actually ran); LaMP-4's real +0.003 is undetectable (<7%); the null control sits at
+  4–5%, so the estimator is calibrated. **The 20+ per-user nulls were an eval-power artifact, full
+  stop.** Consequence: **LaMP-3 K=500 is a NO-GO as designed** (~50–80% power against an 11-mover
+  point estimate); any our-harness confirmation needs a **multi-query-per-user eval design**, not
+  more 1-query users. `results/oppu_rep/power_subsample.json`.
+- **Their released LaMP-1 pipeline is broken by construction, so the paper's biggest lift (+0.106) is
+  unreproducible from the release.** The citation prompt templates have no slots for the two
+  candidate options; `.format()` silently discards them and the gold, so the model trains to generate
+  reference titles, never sees the options, and their evaluator accepts only "[1]"/"[2]". Both arms
+  score exactly 0.000. A repaired-prompt reconstruction (P18, clusters 180944–180963,
+  `oppu_replication/prompt_fixed.json`, separate `oppu_rep_fixed` roots) produces plausible arms
+  (base 0.008 → task 0.634 → +user 0.642) but **the +0.106 does not appear**: Δ +0.008 ns (q t_p=0.74,
+  5/114/4; grouped +0.015, t_p=0.57). Label it our reconstruction, never their release.
+- **Base arm (P17 `--base-only`): the bare instruct model collapses under their raw-prompt protocol
+  on every task** — movie/2N acc 0.000, LaMP-4 R-1 0.037, LaMP-5 0.082, LaMP-7 0.138, LaMP-3 MAE
+  3.348 (no chat template + 200-token budget buries the answer in continuation text, and their
+  evaluator parses the whole output). **Under their protocol the task adapter's largest measured
+  contribution is format compliance.** Never compare these base numbers to our own harness's
+  chat-template baselines. ⚠ A glob bug briefly mislabeled the OPPU arm as "base" — the numbers
+  0.170/0.500/0.577 that circulated on 2026-08-12 are **wrong**, fixed in `b4f6726` before they
+  reached any writeup. Figure `results/oppu_rep/figures/oppu_rep_scores.{pdf,png}` via
+  `eval/plot_oppu_rep.py`; base headlines `results/oppu_rep/base_headlines.json`.
+- **Baseline fidelity check: our 3B RAG arms land in their 7B range** — 2N 0.810 vs 0.832, LaMP-3 MAE
+  0.205 vs 0.214 (ours better), LaMP-7 0.566 vs 0.577, LaMP-5 0.499 vs 0.510; movie 0.493 vs 0.598 is
+  the one real gap. 100% format compliance on classification and LaMP-3.
+- **Other findings about the release** (audited before anything trained, `eval/oppu_release_audit.py`,
+  `results/oppu_release_audit_*.json`): paper-vs-code recipe gap (Table 5 says LR=1e-5); **#Q is a
+  TOTAL, not per-user** — this kills R5's "OPPU had ~6,200 paired obs" claim (their LaMP-3 n≈112, and
+  their k=1 LaMP-3 lift is −0.009, not −0.071); two `NameError` typos making LaMP-3/7 unrunnable;
+  label files with task ids their own evaluator does not dispatch on; unseeded sampled decoding (we
+  seed it, P11, single seed 0); no significance-test code; 2N has 49 test users, not 100. **Their
+  split is temporally clean** (profile == each query's legal LaMP window exactly, task corpus
+  excludes test users).
+- Repro notes: `data/oppu_release/` (4 GB, sha256 pinned), `third_party/OPPU/` @ 87f8c69 (**no
+  LICENSE — local research use only**) and `.venv-audit/` are gitignored; container transformers is
+  5.9.0 (dropped `group_by_length`, P15 signature filter); LaMP-3/5 need per-device 4 × accum 4 to
+  fit 40 GB (P16, inside the paper's batch 3–16 envelope); subs come from `condor/gen_oppu_subs.py`.
+- Paper: `sections/experiments/2026-08-12-oppu-replication.tex` + figure, committed `2a5b19d`.
+
+### Cluster infra and traps
+
+- **Bad-host exclusion set is THREE hosts: `tyr1`, `tyr2`, `modi`.** tyr1 and tyr2 both fail with the
+  same CUDA-busy oversubscription error (tyr2 identified 2026-08-10 after it ate 85/300 jobs; tyr1
+  ate 83/100 on R8's first submit), modi with uncorrectable ECC. Generators written before
+  2026-08-10 carry only two. Blackwell (sm_120) guard on top: `Capability >= 8.0 && < 10.0`.
+- **Edit the generator, not the `.sub` files.** `condor/gen_{r9,warm,newtask,oppu,longlamp_*}_subs.py`
+  emit whole batches (78 subs for R10–R14/PT3–PT7, 77 for warm-start) with exclusions, the Blackwell
+  range and `LAMP_DIR=data/lamp_time` baked in.
+- **`LAMP_DIR=data/lamp_time` must be set on every user-round eval job.** Without it `eval_lamp.py`
+  falls back to the user-based split, matches **0 records, and still exits 0** — PT1's first smoke
+  "passed" that way. Check matched record counts, never exit codes.
+- **Never run scoring or json-heavy validation on a login node** (2 GB cgroup slice; it killed a
+  session 2026-08-13). Scoring runs as a Condor job via `oppu_replication/run_scoring_in_container.sh`
+  (the ver4 image needs evaluate/scipy pip-installed).
+- **`Path(__file__).parent.parent` does not resolve under Condor's sandbox** — use the
+  `PROJECT_ROOT`/`LAMP_DIR` env-var pattern. Bit `lamp_user_stats.py` and
+  `aggregate_user_predictions_warm.py`; also `download_longlamp.py`, whose `__file__`-relative output
+  dir silently wrote a whole download into an ephemeral scratch dir.
+- **`paired_t_test` returned p=0.0 for a perfectly null result** (the `+1e-30` offset turns an
+  all-zero diff vector into zero-variance input, t→5.7e16). Warm-start's LaMP-1 arm had all 100 users
+  tied and would have been published as p<0.001 on two byte-identical arms. Fixed in `a7caec4` to
+  return `(None, None)`, in **all three byte-duplicated copies** (`paired_compare.py`,
+  `paired_compare_per_user.py`, `paired_compare_longlamp_user.py` — the third was missed at first).
+  Bad result kept as `..._VOIDED-spurious-pvalue.*`.
+- **`wins_b_over_a`/`wins_a_over_b` are defined for higher-is-better metrics and read backwards for
+  MAE** — R5, R8 and PT1 each hand-corrected this. Direction-aware `wins_b_better`/`wins_a_better`
+  were added at schema 2; report those.
+- **`--metric accuracy` in the paired scripts is parse-then-match, not exact match** — `pred` in a
+  predictions JSONL is raw generated text that `eval_lamp.py` parses before scoring.
+- **LaMP-2-movies' tag list is a single fixed order** (verified across all 4,410 records), reproduced
+  verbatim as `LAMP2_MOVIES_PROMPT_ORDER`; and `trim()`/`.strip()` on synthesized question text broke
+  byte parity with real inputs (rewrote 18/400 movie questions, stripped whitespace on 56/400 LaMP-5
+  abstracts). Reconstruction is now 400/400 byte-identical.
+- **`base_adapter_mode: "merge"|"continue"`** exists on both trainers, defaults to `"merge"` so every
+  R5–PT7 config behaves identically, and carries three guards: shape-match refusal,
+  `train_meta.json` recording the shape read off disk, and a before/after weight hash that **aborts
+  the job** rather than saving a fake null.
+- Glob ambiguity is a recurring failure: result selectors die on "found 2" the moment a tagged run
+  lands next to a plain one (`--decode-tag`, explicit baseline selection, `--retry-missing` keyed on
+  result files rather than exit codes).
 
 ### Model & training (cluster side)
 
@@ -646,8 +908,12 @@ smallest-profile user.
   the 7-task `mixed7` (72,062). **`LEGACY_MIXED_TASKS` in `build_dataset.py` keeps the 3-task
   `mixed` file distinct from `mixed7`** so A1-lamp's training data is never silently touched;
   existing per-task files are reused read-only (`per_task_reused` sidecar).
-- Per-user volume varies sharply by task (`experiments/2026-06-12-lamp-time-split-per-user-counts.md`).
-  **LaMP-6 unsupported** (private Avocado corpus).
+- LongLaMP: `data/download_longlamp.py` (HF split key is **`val`**, not `validation`), `temporal`
+  configs for the per-user rounds. LongLaMP profile entries carry no per-entry timestamp, so the
+  split boundary is the only leakage guarantee.
+- OPPU release data at `data/oppu_release/` (gitignored, sha256 pinned) with `third_party/OPPU/`.
+- Per-user volume varies sharply by task; see the viability bullet above (the record-count framing is
+  superseded). **LaMP-6 unsupported** (private Avocado corpus); LongLaMP email completion likewise.
 
 ### Eval methodology (frozen)
 
@@ -668,6 +934,22 @@ smallest-profile user.
 ---
 
 ## Conventions
+
+### Experiment design policy
+
+- **Pre-registration is RETIRED (user order, 2026-08-13).** Do not propose pre-registered primary
+  comparisons, disposition rules, gates, thresholds or tripwires when designing a round. Run the
+  experiment, report the standard descriptive statistics (means, paired diffs, W/T/L, conventional
+  p-values), and the user decides what it means. Mentions of pre-registration in the round histories
+  above are records of past practice, not instructions.
+- Report every task on its own; **no pooled cross-task number** (the random-effects meta-analysis
+  proposed for warm-start was dropped, do not build it). State the number of uncorrected tests
+  plainly: a lone per-task p<0.05 out of ten or twenty-one tracks carries no weight, as R10 and
+  warm-start's LaMP-5 both showed.
+- Log a **manipulation check** on any per-user round: `n_changed_vs_baseline`, both raw (byte
+  comparison) and scored. Without it, "moved a lot and didn't help" is indistinguishable from "barely
+  moved", and both read as a null.
+- `condor_submit` stays user-run. Smoke every task before batching anything that shares a code path.
 
 ### Standard script patterns (all eval/train/data-prep scripts)
 
@@ -694,10 +976,20 @@ check `git ls-files experiments/` before assuming a doc is versioned.
 
 ### Paper writeup style
 
-LaTeX lives in a **separate git repo at `~/Documents/Research/overleaf/6a2b1ada3ba0566171e752a2/`**
-(sections in `sections/experiments/*.tex`, `sections/90-appendix.tex`; remote `git.overleaf.com`;
-pull before editing, push when done — credentials are not always configured, so some sections sit
-committed-but-unpushed). Match the plain, direct style of the existing sections: short declarative
+LaTeX lives in a **separate git repo, a sibling of this one, not inside it** (remote
+`git.overleaf.com`; pull before editing, push when done). Project `6a2b1ada3ba0566171e752a2` is the
+experiment log, checked out at **`~/Documents/Research/overleafs/experiment_logs/` on the Mac** and
+**`~/projects/overleaf/6a2b1ada3ba0566171e752a2/` on conduit**. Paths written elsewhere in this file
+as `overleaf/6a2b1ada.../…` are relative to `~/projects/` on conduit, not to the project root.
+Sections live in `sections/experiments/*.tex` with `\input` lines in `50-experiment-log.tex` (the
+file that conflicts on merges, since every round adds a line at the same insertion point);
+`sections/90-appendix.tex` holds the examples. A second Overleaf project
+`6a79c0e133f3040b49b3c4a6` (`~/Documents/Research/overleafs/mobile_FT_paper/`) holds the paper draft,
+Mac only, currently dirty. There is no LaTeX toolchain on the cluster host, so verification there is
+structural (brace balance, `$` parity, column counts, label existence), not a compile. **Regenerate
+every numeric cell from the result JSONs and diff it against the file** — that has already caught
+transcription errors on rounding boundaries and two wrong prose claims about effect direction.
+Match the plain, direct style of the existing sections: short declarative
 sentences, first person plural, minimal jargon, number-first. Per explicit feedback, avoid: inline
 research-question bookkeeping ("RQ1", "corroborates Q4"); introducing a shorthand as a parenthetical
 aside mid-sentence; justification asides for choices that don't change the takeaway; any line that
@@ -712,14 +1004,23 @@ public PR/issue prose; no dashes as punctuation).
 ```
 /
 ├── CLAUDE.md, Dockerfile, requirements.txt, pyrightconfig.json
-├── condor/          # submit files: build_dataset, download_model, download_llama, interactive,
+├── condor/          # submit files + the generators that emit them:
+│                    #   gen_{r9,warm,newtask,oppu,longlamp_*}_subs.py  <- edit these, not the .sub
 │                    #   eval_lamp{,_floor,_llama,_llama_k100}, eval_bfcl, train{,_1ep}, chat.py
 ├── data/            # download_lamp.py (--split-type user|time), download_longlamp.py,
-│                    #   lamp/, lamp_time/, lamp_user_stats{.py,/}, models/, lamp_train_*.jsonl
-├── train/           # build_dataset.py, build_user_dataset.py, build_longlamp_dataset.py,
-│                    #   train.py, config/, checkpoints/ (gitignored)
-├── eval/            # eval_lamp.py, eval_bfcl.py, eval_longlamp.py, paired_compare*.py,
+│                    #   select_top_users{,_newtasks}.py, lamp/, lamp_time/, oppu_release/,
+│                    #   lamp_user_stats/ (pools, per-task CSVs, T3 sizing, *_gen_configs.py)
+├── train/           # build_dataset.py, build_user_dataset.py (--framing profile|records|
+│                    #   unsupervised), build_longlamp_dataset.py, train.py,
+│                    #   train_unsupervised_clm.py (OPPU right-shifted-history CLM, LaMP-1/7),
+│                    #   train_task_mlx.py (h12 device arm), config/, checkpoints/ (gitignored)
+├── eval/            # eval_lamp.py, eval_bfcl.py, eval_longlamp.py, paired_compare{,_per_user,
+│                    #   _longlamp_user}.py, aggregate_user_predictions_{newtask,warm}.py,
+│                    #   longlamp_{degeneration_audit,length_check}.py, oppu_rep_score.py,
+│                    #   oppu_power_subsample.py, oppu_release_audit.py, plot_oppu_rep.py,
 │                    #   tables.py, summary.py + all on-device aggregators/plots (gitignored, -f)
+├── oppu_replication/  # wrapper around third_party/OPPU + PATCHES.md ledger + scoring container script
+├── third_party/OPPU/  # @87f8c69, no LICENSE, local research use only (gitignored, conduit only)
 ├── ios/             # mlx-swift-examples/ (subtree), mlx-swift-lm-local/, mlx-swift/ (NAX patch),
 │                    #   BGProbe/
 ├── scripts/         # device sequencers (nax_rerun_night*.sh, run_granularity_sweep.sh)

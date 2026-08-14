@@ -1,0 +1,27 @@
+# One-off diagnostic (not part of the pipeline): tokenizes all 300 LL4-LL6
+# per-user training corpora with the real tokenizer, reports token-length
+# distribution per task -- used to confirm/correct the OPPU templates'
+# placeholder max_seq_length=1024 before the real per-user training runs.
+# See train/check_longlamp_user_seqlen.py.
+#
+# CPU-only (tokenization doesn't need a GPU).
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = train/check_longlamp_user_seqlen.py
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/check_longlamp_user_seqlen.$(ClusterId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/check_longlamp_user_seqlen.$(ClusterId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/check_longlamp_user_seqlen.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 2
+request_memory        = 16G
+request_disk          = 4G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

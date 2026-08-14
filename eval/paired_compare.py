@@ -102,10 +102,69 @@ def rouge1_scorer() -> Callable[[str, str], float]:
     return lambda gold, pred: rs.score(str(gold), str(pred))["rouge1"].fmeasure
 
 
-def accuracy_scorer() -> Callable[[str, str], float]:
-    # LaMP-3 is rating prediction; per-record metric is 0/1 exact match on the
-    # normalized string. Mirrors eval_lamp.score_rating's per-example logic.
-    return lambda gold, pred: 1.0 if str(pred).strip() == str(gold).strip() else 0.0
+# --- Closed label vocabularies, duplicated from eval/eval_lamp.py -----------
+# Needed because `pred` in a predictions.jsonl is the model's RAW generated
+# text: eval_lamp.py runs it through a per-task parse function before
+# comparing to gold. Scoring accuracy here by strict string equality would
+# silently mark every prediction the model wrapped in prose ("The category is
+# politics.") as wrong, and this script's accuracy would not aggregate to the
+# accuracy eval_lamp.py reported for the same file.
+LAMP2_MOVIES_LABELS = [
+    "action", "based on a book", "classic", "comedy", "dark comedy",
+    "dystopia", "fantasy", "psychology", "romance", "sci-fi",
+    "social commentary", "thought-provoking", "true story", "twist ending",
+    "violence",
+]
+LAMP2_NEWS_LABELS = [
+    "business", "crime", "culture & arts", "education", "entertainment",
+    "food & drink", "healthy living", "parents", "politics", "religion",
+    "science & technology", "sports", "style & beauty", "travel", "women",
+]
+
+
+def parse_bracket_choice(text: str, label_universe: list):
+    """LaMP-1: first of "1"/"2", optionally bracketed. Mirrors eval_lamp.py."""
+    m = re.search(r"\[?\s*([12])\s*\]?", text)
+    return f"[{m.group(1)}]" if m else None
+
+
+def parse_closed_vocab_label(text: str, label_universe: list):
+    """LaMP-2 (both variants): exact match on the normalized string first,
+    else longest containing label. Mirrors eval_lamp.py."""
+    def norm(s: str) -> str:
+        return " ".join(str(s).lower().split())
+
+    norm_map = {norm(u): u for u in label_universe}
+    t = norm(text)
+    if t in norm_map:
+        return norm_map[t]
+    matches = [u for u_norm, u in norm_map.items() if u_norm in t]
+    return max(matches, key=len) if matches else None
+
+
+CLASSIFICATION_PARSERS = {
+    "LaMP_1": (["[1]", "[2]"], parse_bracket_choice),
+    "LaMP_2_movies": (LAMP2_MOVIES_LABELS, parse_closed_vocab_label),
+    "LaMP_2_news": (LAMP2_NEWS_LABELS, parse_closed_vocab_label),
+}
+
+
+def accuracy_scorer(task: str = "") -> Callable[[str, str], float]:
+    """Per-record 0/1 accuracy.
+
+    For the closed-vocabulary classification tasks, parse the raw prediction
+    exactly the way eval_lamp.py does, then compare. For everything else
+    (LaMP-3's ratings — the original caller, whose Round-5 audit confirmed a
+    0% parse-fail rate) fall back to strict exact match on the normalized
+    string, i.e. unchanged behavior.
+    """
+    entry = CLASSIFICATION_PARSERS.get(task)
+    if entry is None:
+        return lambda gold, pred: 1.0 if str(pred).strip() == str(gold).strip() else 0.0
+    label_universe, parse_fn = entry
+    return lambda gold, pred: (
+        1.0 if parse_fn(str(pred), label_universe) == str(gold).strip() else 0.0
+    )
 
 
 def mae_scorer() -> Callable[[str, str], float]:
@@ -125,6 +184,24 @@ def mae_scorer() -> Callable[[str, str], float]:
 
 
 def paired_t_test(diffs: list) -> tuple:
+    """Paired t-test of `diffs` against zero. Returns (statistic, pvalue), or
+    (None, None) in the degenerate all-zero case.
+
+    The all-zero guard is load-bearing, not defensive. Without it the `+ 1e-30`
+    offset below turns a perfectly null result into a maximally significant one:
+    ttest_rel([1e-30]*n, [0]*n) has zero variance, so t -> ~5.7e16 and p -> 0.0.
+    A comparison where every single user tied would be reported as p<0.001 —
+    the exact opposite of what happened. `wilcoxon_signed_rank` already returns
+    (None, None) here; the t-test must agree.
+
+    First triggered 2026-08-03 by the Warm-Start round's LaMP-1
+    coldmatch-vs-warm comparison (100/100 users tied). Earlier exact-zero
+    results (R8 5w/5l, PT4 1w/1l) had cancelling NON-zero diffs, so variance was
+    positive and the p-value came out correctly at 1.0 — which is why this sat
+    latent from R5 onward.
+    """
+    if all(d == 0 for d in diffs):
+        return None, None
     from scipy import stats
     res = stats.ttest_rel([d + 1e-30 for d in diffs], [0.0] * len(diffs))
     return float(res.statistic), float(res.pvalue)
@@ -219,7 +296,7 @@ def main():
     elif args.metric == "mae":
         score_fn = mae_scorer()
     else:
-        score_fn = accuracy_scorer()
+        score_fn = accuracy_scorer(args.task)
 
     pairs = []
     diffs = []
@@ -257,6 +334,16 @@ def main():
     ties = sum(1 for d in diffs if d == 0)
     wins_a = sum(1 for d in diffs if d < 0)
 
+    # Direction-aware win counts (schema v2). `wins_b_over_a`/`wins_a_over_b`
+    # above are RAW SIGN COUNTS and are defined for higher-is-better metrics, so
+    # they read BACKWARDS for MAE — R5, R8 and PT1 each had to swap them by hand
+    # when writing up. The two raw fields are deliberately left as they are so
+    # those rounds' on-disk results keep meaning what they meant under
+    # schema v1; these new fields are the ones to report.
+    lower_better = args.metric in LOWER_IS_BETTER
+    wins_b_better = wins_a if lower_better else wins_b
+    wins_a_better = wins_b if lower_better else wins_a
+
     # Pre-registered gate: improvement direction AND paired t-test p < args.alpha.
     # For higher-is-better metrics (rouge1, accuracy): improvement = mean_diff > 0.
     # For lower-is-better metrics (mae): improvement = mean_diff < 0.
@@ -268,7 +355,8 @@ def main():
         passes_gate = (mean_diff > 0) and (p_val is not None and p_val < args.alpha)
 
     record = {
-        "schema_version": 1,
+        # v2 adds wins_b_better / wins_a_better (direction-aware).
+        "schema_version": 2,
         "task": args.task,
         "split": args.split,
         "metric": args.metric,
@@ -293,9 +381,16 @@ def main():
         "ci_hi_95": ci_hi,
         "n_boot": args.n_boot,
         "boot_seed": args.seed,
+        # RAW SIGN COUNTS — b>a and a>b on the raw diff. Correct only for
+        # higher-is-better metrics; kept unchanged so schema-v1 files stay
+        # comparable. Prefer wins_*_better below.
         "wins_b_over_a": wins_b,
         "ties": ties,
         "wins_a_over_b": wins_a,
+        # DIRECTION-AWARE (schema v2) — "better" accounts for metric_direction,
+        # so these are correct for MAE too. Report these.
+        "wins_b_better": wins_b_better,
+        "wins_a_better": wins_a_better,
         "passes_registered_gate": passes_gate,
         **provenance,
     }
@@ -309,7 +404,8 @@ def main():
     print(
         f"[done] n={n} mean_a={mean_a:.4f} mean_b={mean_b:.4f} "
         f"mean_diff={mean_diff:+.4f} 95%CI=[{ci_lo:+.4f}, {ci_hi:+.4f}] "
-        f"t_p={p_val:.4f} wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
+        f"t_p={p_val if p_val is None else f'{p_val:.4f}'} "
+        f"wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
         f"gate={'PASS' if passes_gate else 'FAIL'}",
         flush=True,
     )

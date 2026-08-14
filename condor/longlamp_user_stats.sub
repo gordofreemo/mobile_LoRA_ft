@@ -1,0 +1,68 @@
+# LongLaMP per-user viability analysis + top-100 selection for the LL4-LL6
+# User-LoRA round -- single CPU job, all 3 tasks (review/abstract/topic).
+#
+# Runs data/longlamp_user_stats.py, which (per task) loads the `_user`-split
+# TRAIN partition's user-id set (the corpus each task's Task-LoRA -- LL1/LL2/
+# LL3 -- was fine-tuned on), loads the `_temporal`-split TRAIN/TEST
+# partitions, filters to users NOT seen by the Task-LoRA with >=1 temporal-
+# TEST record and >=1 temporal-TRAIN record, and writes per-task:
+#     data/longlamp_user_stats/<tag>_users.csv
+#     data/longlamp_user_stats/<tag>_user_records.json
+#     data/longlamp_user_stats/<tag>_top100_users.json
+#
+# REQUIRES condor/download_longlamp_temporal.sub to have completed first
+# (the `_temporal` split JSON files must exist on disk) -- and the `_user`
+# splits already exist from LL1/LL2/LL3.
+#
+# NOTE: these files are NOT small -- confirmed at run time 2026-07-27/28 that
+# `_temporal`/`_user` train.json files reach 1.2-3.1 GB per task. The script
+# streams (not plain json.loads()) for exactly this reason -- see
+# data/longlamp_user_stats.py's own docstring. topic_writing_user has an
+# unusually large per-user profile `content` field that overflowed the
+# parser's buffer-growth safety cap twice (64MB, then 256MB -- confirmed
+# real text via a bounded byte-range sample, not corrupted JSON); cap raised
+# to 3.5GB (safely above the largest known file, ~3.1GB) 2026-07-28.
+#
+# ALSO REVISED 2026-07-28: the eligibility/ranking criteria changed after a
+# /grill_me course-correction -- profile_size and the training snapshot are
+# now computed from TRAIN records (not TEST), and eligibility no longer
+# requires n_train>=1 (replaced by profile_size>=2) -- see
+# data/longlamp_user_stats.py's docstring and the addendum in
+# experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md. Schema version
+# bumped 1->2 in the top100_users.json output.
+#
+# Acceptance per plan Execution Step 2: per-task eligible-user counts each
+# >=100 (or an explicit, surfaced shortfall in the job's stdout -- not a
+# silent under-fill; data/longlamp_user_stats.py prints a WARNING to stderr
+# if a task's eligible pool is short of k).
+#
+# Plan: experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md (Execution
+# Step 2).
+#
+# --overwrite passed so all 3 tasks run fresh under the revised logic
+# (review/abstract's earlier outputs used the old schema/criteria and must
+# be replaced, not reused).
+#
+# Submit:
+#   condor_submit condor/longlamp_user_stats.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = data/longlamp_user_stats.py
+arguments             = --k 100 --overwrite
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/longlamp_user_stats.$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/longlamp_user_stats.$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/longlamp_user_stats.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 2
+request_memory        = 32G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue 1

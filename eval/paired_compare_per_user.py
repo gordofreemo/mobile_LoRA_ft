@@ -32,6 +32,24 @@ change scoring logic here, change it in paired_compare.py too.
 
 Plan reference: experiments/2026-06-19-user-lora-round6-lamp4-multi-plan.md §Step 11.
 
+Metrics (`--metric`, added 2026-07-30 for the LaMP-2-news round R10/PT3)
+------------------------------------------------------------------------
+  rouge1    (default, unchanged) — generation tasks: LaMP-4, LaMP-5, LaMP-7.
+  accuracy  — classification tasks. NOT a plain exact-match: `pred` in a
+              predictions.jsonl is the model's RAW generated text, and
+              `eval_lamp.py` runs it through a per-task parse function before
+              comparing to gold. This script mirrors that exactly
+              (`parse_closed_vocab_label` for the two LaMP-2 variants,
+              `parse_bracket_choice` for LaMP-1, strict string equality for
+              LaMP-3's ratings), so a per-user accuracy computed here
+              aggregates to the same number `eval_lamp.py` reports. A plain
+              exact-match scorer would silently under-count every prediction
+              the model wrapped in prose.
+
+The default stays `rouge1` so R6/R9/PT2's existing invocations are unchanged.
+`--round-tag` (default `round6`) likewise keeps existing output filenames
+byte-identical while letting new rounds write to their own.
+
 Output:
   results/paired_compare_c2_a1lamp_bm25_vs_c3_a1lamp_userlora_bm25_round6_LaMP_4_test.json
   results/paired_compare_c2_a1lamp_bm25_vs_c3_a1lamp_userlora_bm25_round6_LaMP_4_test.pairs.jsonl
@@ -87,6 +105,9 @@ def collect_provenance() -> dict:
     }
 
 
+METRICS = {"rouge1", "accuracy"}
+
+
 # --- duplicated from eval/paired_compare.py (see module docstring) ---------
 def rouge1_scorer() -> Callable[[str, str], float]:
     # Match eval_lamp.py exactly: rouge_score package, use_stemmer=True, F1
@@ -97,7 +118,82 @@ def rouge1_scorer() -> Callable[[str, str], float]:
     return lambda gold, pred: rs.score(str(gold), str(pred))["rouge1"].fmeasure
 
 
+# --- duplicated from eval/eval_lamp.py (see module docstring) --------------
+# The closed label vocabularies and their parse functions have to match
+# eval_lamp.py byte-for-byte, or the per-user accuracy computed here won't
+# aggregate to the accuracy eval_lamp.py reported for the same predictions.
+LAMP2_MOVIES_LABELS = [
+    "action", "based on a book", "classic", "comedy", "dark comedy",
+    "dystopia", "fantasy", "psychology", "romance", "sci-fi",
+    "social commentary", "thought-provoking", "true story", "twist ending",
+    "violence",
+]
+LAMP2_NEWS_LABELS = [
+    "business", "crime", "culture & arts", "education", "entertainment",
+    "food & drink", "healthy living", "parents", "politics", "religion",
+    "science & technology", "sports", "style & beauty", "travel", "women",
+]
+
+
+def parse_bracket_choice(text: str, label_universe: list):
+    """LaMP-1: first of "1"/"2", optionally bracketed. Mirrors eval_lamp.py."""
+    import re
+    m = re.search(r"\[?\s*([12])\s*\]?", text)
+    return f"[{m.group(1)}]" if m else None
+
+
+def parse_closed_vocab_label(text: str, label_universe: list):
+    """LaMP-2 (both variants): exact match on the normalized string first,
+    else longest containing label. Mirrors eval_lamp.py."""
+    def norm(s: str) -> str:
+        return " ".join(str(s).lower().split())
+
+    norm_map = {norm(u): u for u in label_universe}
+    t = norm(text)
+    if t in norm_map:
+        return norm_map[t]
+    matches = [u for u_norm, u in norm_map.items() if u_norm in t]
+    return max(matches, key=len) if matches else None
+
+
+# task -> (label_universe, parse_fn). Tasks absent here fall back to strict
+# string equality (LaMP-3's ratings, where eval_lamp's own audits confirmed a
+# 0% parse-fail rate).
+CLASSIFICATION_PARSERS = {
+    "LaMP_1": (["[1]", "[2]"], parse_bracket_choice),
+    "LaMP_2_movies": (LAMP2_MOVIES_LABELS, parse_closed_vocab_label),
+    "LaMP_2_news": (LAMP2_NEWS_LABELS, parse_closed_vocab_label),
+}
+
+
+def accuracy_scorer(task: str) -> Callable[[str, str], float]:
+    """Per-record 0/1 accuracy, parsed the same way eval_lamp.py parses it.
+
+    A parse failure never equals any gold label, so it scores 0 — the same
+    "unparseable = wrong" convention as eval_lamp.score_classification.
+    """
+    entry = CLASSIFICATION_PARSERS.get(task)
+    if entry is None:
+        return lambda gold, pred: 1.0 if str(pred).strip() == str(gold).strip() else 0.0
+    label_universe, parse_fn = entry
+    return lambda gold, pred: (
+        1.0 if parse_fn(str(pred), label_universe) == str(gold).strip() else 0.0
+    )
+
+
 def paired_t_test(diffs: list) -> tuple:
+    """Paired t-test of `diffs` against zero. Returns (statistic, pvalue), or
+    (None, None) in the degenerate all-zero case.
+
+    The all-zero guard is load-bearing: without it the `+ 1e-30` offset turns a
+    perfectly null result into a maximally significant one, because
+    ttest_rel([1e-30]*n, [0]*n) has zero variance (t -> ~5.7e16, p -> 0.0). A
+    comparison where every user tied would report p<0.001. `wilcoxon_signed_rank`
+    already returns (None, None) here; the t-test must agree. See the twin fix
+    in eval/paired_compare.py for the full history.
+    """
+    if all(d == 0 for d in diffs):
+        return None, None
     from scipy import stats
     res = stats.ttest_rel([d + 1e-30 for d in diffs], [0.0] * len(diffs))
     return float(res.statistic), float(res.pvalue)
@@ -165,6 +261,14 @@ def main():
     parser.add_argument("--label-b", default="c3_a1lamp_userlora_bm25")
     parser.add_argument("--task", default="LaMP_4")
     parser.add_argument("--split", default="test", choices=["dev", "test"])
+    parser.add_argument("--metric", default="rouge1", choices=sorted(METRICS),
+                        help="per-record scorer; 'accuracy' is parse-then-match "
+                             "for the closed-vocabulary tasks (see module "
+                             "docstring). Default rouge1 keeps R6/R9/PT2 "
+                             "invocations unchanged.")
+    parser.add_argument("--round-tag", default="round6",
+                        help="filename tag for the output stem; default "
+                             "'round6' preserves existing R6/PT2 output names")
     parser.add_argument("--n-boot", type=int, default=10_000)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=0)
@@ -179,7 +283,7 @@ def main():
     commit_short = (provenance.get("git_commit") or "unknown")[:8]
     print(
         f"[run] paired_compare_per_user task={args.task} split={args.split} "
-        f"metric=rouge1 a={args.label_a} b={args.label_b} "
+        f"metric={args.metric} a={args.label_a} b={args.label_b} "
         f"commit={commit_short} dirty={provenance.get('git_dirty')} "
         f"condor={provenance.get('condor_cluster_id') or '-'}."
         f"{provenance.get('condor_proc_id') or '-'} "
@@ -187,7 +291,8 @@ def main():
         flush=True,
     )
 
-    stem = f"paired_compare_{args.label_a}_vs_{args.label_b}_round6_{args.task}_{args.split}"
+    stem = (f"paired_compare_{args.label_a}_vs_{args.label_b}_"
+            f"{args.round_tag}_{args.task}_{args.split}")
     out_path = RESULTS_DIR / f"{stem}.json"
     pairs_path = RESULTS_DIR / f"{stem}.pairs.jsonl"
     if not args.overwrite and (out_path.exists() or pairs_path.exists()):
@@ -209,7 +314,17 @@ def main():
         sys.exit("ERROR: no shared ids between A and B")
 
     # --- Score per record, then group by user --------------------------------
-    score_fn = rouge1_scorer()
+    if args.metric == "rouge1":
+        score_fn = rouge1_scorer()
+    else:
+        score_fn = accuracy_scorer(args.task)
+        if args.task not in CLASSIFICATION_PARSERS:
+            print(
+                f"[warn] --metric accuracy on {args.task}, which has no closed "
+                f"label vocabulary — falling back to strict string equality. "
+                f"Verify that matches how eval_lamp.py scored this task.",
+                flush=True,
+            )
     per_user_scores_a = defaultdict(list)
     per_user_scores_b = defaultdict(list)
     for rid in shared_ids:
@@ -276,7 +391,7 @@ def main():
         "schema_version": 1,
         "task": args.task,
         "split": args.split,
-        "metric": "rouge1",
+        "metric": args.metric,
         "metric_direction": "higher_is_better",
         "label_a": args.label_a,
         "label_b": args.label_b,
@@ -315,7 +430,8 @@ def main():
         f"[done] n={n} (users) n_records_total={len(shared_ids)} "
         f"mean_a={mean_a:.4f} mean_b={mean_b:.4f} "
         f"mean_diff={mean_diff:+.4f} 95%CI=[{ci_lo:+.4f}, {ci_hi:+.4f}] "
-        f"t_p={p_val:.4f} wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
+        f"t_p={p_val if p_val is None else f'{p_val:.4f}'} "
+        f"wilcoxon_p={w_pval if w_pval is None else f'{w_pval:.4f}'} "
         f"wins_b={wins_b} ties={ties} wins_a={wins_a}",
         flush=True,
     )

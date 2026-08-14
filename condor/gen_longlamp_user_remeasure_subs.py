@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""
+Emit the submit files for the LongLaMP per-user re-measurement under fixed
+decoding (2026-08-10 round).
+
+WHY
+---
+The per-user round on the three LongLaMP tasks (2026-07-31) was measured under
+plain greedy decoding, where the model falls into verbatim repetition loops.
+That artifact already forced one retraction: the abstract-generation task's
+headline (+0.0267 ROUGE-1) came entirely from 30/100 BASELINE generations
+running away past 600 words while the personalized arm ran away on only 21/100.
+On records where both arms stayed sane the effect was +0.001 at n=63. The
+review and topic tasks are worse: their baselines degenerate on 83/100, leaving
+clean subsets of n=9 and n=10, so their nulls rest on almost nothing.
+
+The 2026-08-06 round showed the fix works without retraining: under
+--no-repeat-ngram-size 3, applied identically to every arm, degeneration falls
+from up to 90% to at most 5.7% and all three Task-LoRAs flip from "regresses"
+to slightly positive. This round applies the same fix to the per-user
+comparison: both arms re-measured, eval only, every adapter already on disk.
+
+PINNED DECISIONS (grilled 2026-08-10)
+-------------------------------------
+- Arms: BASELINE (task adapter alone, 1 job/task via --user-records-from-file)
+  and PERSONALIZED (task adapter + that user's adapter, 100 jobs/task). The
+  no-adapter base-model control is NOT re-run (it never degenerated; it is not
+  part of any comparison this round reports).
+- Decoding: --no-repeat-ngram-size 3, both arms, no per-arm tuning. Selected
+  on dev by the 2026-08-04 pre-registered rule; changing it means re-running
+  that sweep, not editing here.
+- Analysis: run eval/longlamp_degeneration_audit.py --decode-tag nrng3 on both
+  arms BEFORE reading any mean; report the effect on all users AND on the
+  both-arms-clean subset. Writeup quotes raw statistics only (means,
+  win/tie/loss, lengths, degeneration rates) -- no p-values, no confidence
+  intervals -- though the result JSONs keep their usual schema.
+- Execution: smoke first (3 jobs, one user per task, --limit 2), then the
+  full 303 in one submit. condor_submit stays user-run.
+
+No --overwrite anywhere: the nrng3 filename tag means every output lands
+alongside (never over) the plain-greedy originals, and smoke runs carry the
+_limitN suffix on top of that.
+
+Usage:
+    python condor/gen_longlamp_user_remeasure_subs.py
+    condor_submit condor/longlamp_user_remeasure_nrng3_smoke.sub      # step 1
+    condor_submit condor/longlamp_user_remeasure_nrng3_baseline.sub   # step 2a
+    condor_submit condor/longlamp_user_remeasure_nrng3.sub            # step 2b
+    condor_submit condor/longlamp_user_remeasure_nrng3_audit.sub      # step 3
+    condor_submit condor/longlamp_user_remeasure_nrng3_compare.sub    # step 4
+"""
+
+import argparse
+import json
+import re
+from pathlib import Path
+
+PROJECT_ROOT = Path("/home/ange00008/projects/mobileFT_distill")
+CKPT = PROJECT_ROOT / "train" / "checkpoints"
+STATS = PROJECT_ROOT / "data" / "longlamp_user_stats"
+
+# Selected on dev (2026-08-04 sweep). Changing this means re-running the
+# sweep, not editing here.
+DECODE_ARGS = "--no-repeat-ngram-size 3"
+DECODE_LABEL = "nrng3"
+
+# tag -> (temporal task name, task-adapter checkpoint dir, user-adapter prefix)
+TASKS = {
+    "review": ("product_review_temporal", "longlamp_lora_review_1ep_seed0",
+               "longlamp_user_lora_review"),
+    "abstract": ("abstract_generation_temporal", "longlamp_lora_abstract_1ep_seed0",
+                 "longlamp_user_lora_abstract"),
+    "topic": ("topic_writing_temporal", "longlamp_lora_topic_1ep_seed0",
+              "longlamp_user_lora_topic"),
+}
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def safe_user_tag(user_id: str) -> str:
+    """Byte-identical to eval/eval_longlamp.py's copy -- keep in sync."""
+    tag = _UNSAFE.sub("_", user_id).strip("_")
+    return tag or "user"
+
+
+# Shared GPU boilerplate. tyr1/modi exclusions + Blackwell guard baked in from
+# the first submit (the original per-user baseline sub predates the exclusion
+# convention and does not carry them -- do not copy from it).
+# tyr2 added 2026-08-10: cluster 180119 lost 85/300 jobs to it, every one
+# "CUDA-capable device(s) is/are busy or unavailable" -- the same
+# oversubscription failure mode that got tyr1 excluded.
+GPU_COMMON = f"""
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+stream_output           = true
+stream_error            = true
+environment             = "MODEL_OUT_DIR={PROJECT_ROOT}/data/models/SmolLM3-3B LONGLAMP_DIR={PROJECT_ROOT}/data/longlamp CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+gpus_minimum_memory     = 32000
+gpus_minimum_capability = 8.0
+# Blackwell (sm_120) guard -- ver4's torch 2.5.1+cu124 cannot target it.
+require_gpus            = Capability >= 8.0 && Capability < 10.0
+
+request_GPUs          = 1
+request_CPUs          = 2
+request_memory        = 16G
+requirements          = UidDomain == "cs.uni-saarland.de" && Machine != "tyr1.hpc.uni-saarland.de" && Machine != "tyr2.hpc.uni-saarland.de" && Machine != "modi.hpc.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+"""
+
+GENERATED_BY = ("# GENERATED by condor/gen_longlamp_user_remeasure_subs.py -- "
+                "edit the generator, not this file.")
+
+
+def load_pools() -> dict:
+    """Load the three top-100 pool JSONs and verify every referenced adapter
+    checkpoint exists on disk before emitting a single queue row."""
+    pools = {}
+    missing = []
+    for tag, (_, task_adapter, user_prefix) in TASKS.items():
+        if not (CKPT / task_adapter / "final").exists():
+            raise SystemExit(f"ERROR: task adapter missing: {CKPT / task_adapter / 'final'}")
+        pool_path = STATS / f"{tag}_top100_users.json"
+        if not pool_path.exists():
+            raise SystemExit(f"ERROR: pool file missing: {pool_path}")
+        users = json.loads(pool_path.read_text())["users"]
+        if len(users) != 100:
+            raise SystemExit(f"ERROR: {pool_path.name} has {len(users)} users, expected 100")
+        for u in users:
+            adapter_dir = CKPT / f"{user_prefix}_{safe_user_tag(u['user_id'])}_seed0" / "final"
+            if not adapter_dir.exists():
+                missing.append(str(adapter_dir))
+        pools[tag] = users
+    if missing:
+        raise SystemExit(
+            f"ERROR: {len(missing)} per-user adapter checkpoints missing, e.g.:\n  "
+            + "\n  ".join(missing[:5]))
+    return pools
+
+
+def personalized_result_exists(temporal_task: str, task_adapter: str,
+                               adapter_ckpt: str, utag: str) -> bool:
+    """Exact result path eval_longlamp.py's own stem construction produces for
+    a personalized-arm job of this round (verified against the smoke outputs,
+    modulo their _limit2 suffix)."""
+    name = (f"LongLaMP_{temporal_task}_test_{task_adapter}_final_"
+            f"{adapter_ckpt}_final_bm25k4_seed0_{DECODE_LABEL}_user{utag}"
+            f".predictions.jsonl")
+    return (PROJECT_ROOT / "results" / name).exists()
+
+
+def personalized_rows(pools: dict, first_user_only: bool = False,
+                      only_missing: bool = False) -> list:
+    """Queue rows for the personalized arm. user_id LAST: Condor's
+    `queue vars from (...)` splits on commas AND whitespace, and abstract's
+    user ids are author names with spaces -- the last variable absorbs the
+    remainder of the line verbatim (same gotcha note as
+    condor/eval_longlamp_user_lora.sub)."""
+    rows = []
+    for tag, (temporal_task, task_adapter, user_prefix) in TASKS.items():
+        users = pools[tag][:1] if first_user_only else pools[tag]
+        for u in users:
+            utag = safe_user_tag(u["user_id"])
+            adapter_ckpt = f"{user_prefix}_{utag}_seed0"
+            if only_missing and personalized_result_exists(
+                    temporal_task, task_adapter, adapter_ckpt, utag):
+                continue
+            rows.append(f"  {temporal_task}, {task_adapter}, {adapter_ckpt}, {u['user_id']}")
+    return rows
+
+
+def write_personalized_sub(name: str, rows: list, purpose: str,
+                           extra_args: str = "") -> None:
+    header = f"""# LongLaMP per-user re-measurement under fixed decoding -- {purpose}
+{GENERATED_BY}
+#
+# Personalized arm: task adapter (--base-adapter) + that user's own adapter
+# (--adapter), BM25 k=4, temporal test split, {DECODE_ARGS}.
+# Results land at ..._seed0_{DECODE_LABEL}_user<ID>[_limitN].json -- alongside,
+# never over, the plain-greedy originals (no --overwrite anywhere this round).
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_longlamp.py
+
+# Outer double-quotes = Condor's "new" arguments syntax; single-quotes group
+# $(user_id) (may contain spaces) into one argument.
+arguments    = "--task $(task) --split test --k 4 --seed 0 --adapter {CKPT}/$(adapter_ckpt)/final --base-adapter {CKPT}/$(base_adapter)/final --user-records '$(user_id)' {DECODE_ARGS}{extra_args}"
+
+output                = {PROJECT_ROOT}/runlogs/{name}.$(task).$(ClusterId).$(ProcId).out
+error                 = {PROJECT_ROOT}/runlogs/{name}.$(task).$(ClusterId).$(ProcId).err
+log                   = {PROJECT_ROOT}/runlogs/{name}.$(ClusterId).log
+
+max_job_retirement_time = 1800
+{GPU_COMMON}
+queue task, base_adapter, adapter_ckpt, user_id from (
+"""
+    out = PROJECT_ROOT / "condor" / f"{name}.sub"
+    out.write_text(header + "\n".join(rows) + "\n)\n")
+    print(f"[write] {out}  ({len(rows)} jobs)")
+
+
+def write_baseline_sub(name: str) -> None:
+    rows = [f"  {temporal_task}, {task_adapter}, {tag}_top100_users.json"
+            for tag, (temporal_task, task_adapter, _) in TASKS.items()]
+    header = f"""# LongLaMP per-user re-measurement under fixed decoding -- BASELINE arm.
+{GENERATED_BY}
+#
+# Task adapter alone (no per-user adapter), BM25 k=4, restricted to the 100
+# selected users' temporal-test records via --user-records-from-file; one job
+# per task, {DECODE_ARGS}. Results land at ..._seed0_{DECODE_LABEL}_topK100.json
+# alongside the plain-greedy originals. --resume: these are the only
+# multi-hour jobs in the round, so a preempted job continues from its own
+# predictions file rather than restarting.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/eval_longlamp.py
+
+arguments    = --task $(task) --split test --k 4 --seed 0 --adapter {CKPT}/$(adapter_ckpt)/final --base-adapter none --user-records-from-file {STATS}/$(top_users) --resume {DECODE_ARGS}
+
+output                = {PROJECT_ROOT}/runlogs/{name}.$(task).$(ClusterId).$(ProcId).out
+error                 = {PROJECT_ROOT}/runlogs/{name}.$(task).$(ClusterId).$(ProcId).err
+log                   = {PROJECT_ROOT}/runlogs/{name}.$(ClusterId).log
+
+max_job_retirement_time = 7200
+{GPU_COMMON}
+queue task, adapter_ckpt, top_users from (
+"""
+    out = PROJECT_ROOT / "condor" / f"{name}.sub"
+    out.write_text(header + "\n".join(rows) + "\n)\n")
+    print(f"[write] {out}  ({len(rows)} jobs)")
+
+
+def write_cpu_sub(name: str, executable: str, purpose: str, requires: str) -> None:
+    header = f"""# {purpose}
+{GENERATED_BY}
+#
+# CPU-only (scores already-generated predictions; rouge_score/scipy are
+# image-only, so this cannot run on the login host). {requires}
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = {executable}
+arguments             = "--tag $(tag) --decode-tag {DECODE_LABEL}"
+
+output                = {PROJECT_ROOT}/runlogs/{name}.$(tag).$(ClusterId).$(ProcId).out
+error                 = {PROJECT_ROOT}/runlogs/{name}.$(tag).$(ClusterId).$(ProcId).err
+log                   = {PROJECT_ROOT}/runlogs/{name}.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT={PROJECT_ROOT} CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue tag in (review abstract topic)
+"""
+    out = PROJECT_ROOT / "condor" / f"{name}.sub"
+    out.write_text(header)
+    print(f"[write] {out}  (3 jobs)")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--retry-missing", action="store_true",
+        help="emit ONLY a retry sub (longlamp_user_remeasure_nrng3_retry1.sub) "
+             "containing the personalized-arm rows whose result file is not on "
+             "disk yet, instead of regenerating the full set. Used after "
+             "cluster 180119 lost 85/300 jobs to tyr2.")
+    args = parser.parse_args()
+    pools = load_pools()
+
+    if args.retry_missing:
+        rows = personalized_rows(pools, only_missing=True)
+        if not rows:
+            raise SystemExit("[ok] nothing missing -- all personalized results on disk")
+        write_personalized_sub(
+            f"longlamp_user_remeasure_{DECODE_LABEL}_retry1", rows,
+            "RETRY of rows whose result file is missing")
+        return
+
+    # Step 1: smoke -- one user per task, --limit 2 (=> _limit2 filename
+    # suffix, cannot collide with the real run). Abstract's first user has a
+    # space in the id, so the smoke also exercises the queue-quoting gotcha.
+    write_personalized_sub(
+        f"longlamp_user_remeasure_{DECODE_LABEL}_smoke",
+        personalized_rows(pools, first_user_only=True),
+        "SMOKE (run and check before batching)", extra_args=" --limit 2")
+
+    # Step 2: the real round -- 3 baseline + 300 personalized jobs.
+    write_baseline_sub(f"longlamp_user_remeasure_{DECODE_LABEL}_baseline")
+    write_personalized_sub(
+        f"longlamp_user_remeasure_{DECODE_LABEL}",
+        personalized_rows(pools),
+        "PERSONALIZED arm (full batch)")
+
+    # Steps 3-4: degeneration audit (run BEFORE reading any mean), then the
+    # paired comparison.
+    write_cpu_sub(
+        f"longlamp_user_remeasure_{DECODE_LABEL}_audit",
+        "eval/longlamp_degeneration_audit.py",
+        f"Degeneration audit of the {DECODE_LABEL} re-measurement -- run this "
+        f"BEFORE reading any re-measured mean.",
+        "REQUIRES the baseline + personalized evals above to have finished.")
+    write_cpu_sub(
+        f"longlamp_user_remeasure_{DECODE_LABEL}_compare",
+        "eval/paired_compare_longlamp_user.py",
+        f"Paired comparison of the {DECODE_LABEL} re-measurement (baseline vs "
+        f"personalized, per task).",
+        "REQUIRES the baseline + personalized evals above to have finished.")
+
+    n_users = sum(len(v) for v in pools.values())
+    print(f"[ok] {n_users} per-user adapters verified on disk; "
+          f"3 smoke + 3 baseline + {n_users} personalized GPU jobs, "
+          f"3+3 CPU analysis jobs, decoding = {DECODE_ARGS}")
+
+
+if __name__ == "__main__":
+    main()

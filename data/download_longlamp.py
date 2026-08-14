@@ -18,6 +18,17 @@ name differs by task:
     abstract_generation_user: name,       input, output, profile[{abstract,id,title,year}]
     topic_writing_user:       author,     input, output, profile[{author,content,id,summary}]
 
+Three more `_temporal` configs added for the LL4-LL6 User-LoRA round
+(experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md, decision #3):
+product_review_temporal, abstract_generation_temporal, topic_writing_temporal.
+Same per-task user-id field + profile shape as the `_user` configs above
+(confirmed via the HF datasets-server API before writing this) — no
+per-entry date field either (decision #4), unlike LaMP's time split. The
+`_temporal` split shares its underlying user pool with the corresponding
+`_user` split (confirmed ~80% overlap for product_review — see the plan's
+"Confirmed data facts" section), which is exactly why LL4-LL6 needs an
+explicit not-seen-by-Task-LoRA eligibility filter (data/longlamp_user_stats.py).
+
 Output structure (mirrors data/lamp/'s per-task-dir shape, one JSON array per
 split, no separate questions/outputs files since LongLaMP already bundles
 input+output+profile per record):
@@ -46,6 +57,9 @@ TASKS = {
     "product_review_user": "reviewerId",
     "abstract_generation_user": "name",
     "topic_writing_user": "author",
+    "product_review_temporal": "reviewerId",
+    "abstract_generation_temporal": "name",
+    "topic_writing_temporal": "author",
 }
 
 # HF dataset split name -> local filename. Confirmed against a real error

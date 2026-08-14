@@ -1,0 +1,48 @@
+# LongLaMP `_temporal` split download for the LL4-LL6 User-LoRA round --
+# one-time CPU job, one proc per task.
+#
+# Pulls product_review_temporal / abstract_generation_temporal /
+# topic_writing_temporal via the HF `datasets` library and writes local JSON
+# files under data/longlamp/<task>_temporal/. See data/download_longlamp.py
+# (TASKS dict extended for these 3 configs) and
+# experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md (Execution Step 3).
+#
+# Schema/size already confirmed via the HF datasets-server API before this
+# sub was written (no download needed for that check): all 3 configs share
+# the `_user` split's exact schema (same id field per task, no per-entry date
+# field), sizes are product_review 16197/1831/1784,
+# abstract_generation 22822/4565/4564, topic_writing 16347/2452/2452
+# (train/val/test).
+#
+# Smoke first if you want:
+#   condor_submit -i condor/interactive.sub
+#   cd /home/ange00008/projects/mobileFT_distill
+#   python data/download_longlamp.py --task product_review_temporal --limit 20
+# Then submit for the real downloads:
+#   condor_submit condor/download_longlamp_temporal.sub
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = data/download_longlamp.py
+# --out-dir passed explicitly (absolute path), NOT the script's own
+# Path(__file__)-relative default -- see data/download_longlamp.py's
+# docstring / condor/download_longlamp.sub for why (Condor sandbox path bug,
+# caught during LL2/LL3 execution, cluster 177628).
+arguments             = --task $(task) --out-dir /home/ange00008/projects/mobileFT_distill/data/longlamp/$(task)
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp_temporal.$(task).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp_temporal.$(task).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/download_longlamp_temporal.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+# CPU-only -- no GPU needed for an HF dataset download.
+request_CPUs          = 2
+request_memory        = 8G
+request_disk           = 4G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue task in (product_review_temporal abstract_generation_temporal topic_writing_temporal)

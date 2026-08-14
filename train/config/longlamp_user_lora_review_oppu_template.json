@@ -1,0 +1,53 @@
+{
+  "_doc": "LL4 -- Review User-LoRA, stacked on the LL1 Task-LoRA (train/checkpoints/longlamp_lora_review_1ep_seed0/final). Recipe = LaMP's settled OPPU recipe verbatim (r=8 q+v, alpha=16, dropout=0.05, LR=1e-5, weight_decay=1e-2, cosine+3% warmup, 3 epochs, save_strategy=epoch, save_total_limit=1) per plan decision #5 (experiments/2026-07-27-longlamp-user-lora-ll4-ll6-plan.md) -- NOT the Task-LoRA's own r=4/all-modules/1-epoch recipe. max_seq_length REVISED 2026-07-31: a real token-length check (train/check_longlamp_user_seqlen.py, cluster 178375) found the original placeholder 1024 truncated 100% of Review / 92% of Topic / 68% of Abstract training examples. Set to 8192 uniformly (matching the Task-LoRA's own budget) -- covers ~99% Review, 100% Abstract, ~99% Topic examples untruncated. per_device_train_batch_size dropped 2->1 and gradient_accumulation_steps raised 4->8 (holds the same effective batch=8) to accommodate the 8x longer sequences -- mirrors how LL1-LL3's own Task-LoRA training compensated for the same seq-length jump. Per-user JSON instantiations: train/config/longlamp_user_lora_review_oppu_<user_tag>.json, generated from this template (gitignored, not yet built).",
+  "condition": "<<CONDITION>>",
+  "seed": 0,
+  "model_name_or_path": "data/models/SmolLM3-3B",
+  "base_adapter": "train/checkpoints/longlamp_lora_review_1ep_seed0/final",
+  "dataset_path": "<<DATASET_PATH>>",
+  "output_dir": "<<OUTPUT_DIR>>",
+  "lora": {
+    "r": 8,
+    "lora_alpha": 16,
+    "lora_dropout": 0.05,
+    "target_modules": [
+      "q_proj",
+      "v_proj"
+    ],
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+  "data": {
+    "max_seq_length": 8192
+  },
+  "trainer": {
+    "num_train_epochs": 3,
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 1e-05,
+    "weight_decay": 0.01,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_epsilon": 1e-08,
+    "max_grad_norm": 1.0,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.03,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "gradient_checkpointing_kwargs": {
+      "use_reentrant": false
+    },
+    "save_strategy": "epoch",
+    "save_total_limit": 1,
+    "logging_steps": 1,
+    "optim": "adamw_torch",
+    "report_to": "none",
+    "remove_unused_columns": false,
+    "dataloader_num_workers": 2
+  },
+  "wandb": {
+    "_doc": "Disabled -- report_to above is 'none'.",
+    "project": "mobileFT_distill",
+    "run_name": "<<CONDITION>>"
+  }
+}

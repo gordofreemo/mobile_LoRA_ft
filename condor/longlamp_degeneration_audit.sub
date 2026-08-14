@@ -1,0 +1,34 @@
+# Degeneration audit for LL4-LL6 -- per-record generation-length accounting,
+# recomputing each task's paired effect on the subset where NEITHER arm fell
+# into a repetition loop. One job per task.
+#
+# Run this BEFORE reading any long-form paired mean. It is what showed LL5's
+# headline Abstract lift (+0.0267 R-1, Wilcoxon p=0.0137) to be a decoding
+# artifact: with both arms non-degenerate the effect is +0.0013 at n=63.
+# See eval/longlamp_degeneration_audit.py and
+# experiments/2026-08-04-longlamp-degeneration-confound.md.
+#
+# CPU-only (scores already-generated predictions, no model inference), and
+# modelled on condor/paired_compare_longlamp_user.sub -- same resources, same
+# environment, same runlog shape.
+
+universe              = docker
+docker_image          = ghcr.io/gordofreemo/smollm3-train:ver4
+executable            = eval/longlamp_degeneration_audit.py
+arguments             = "--tag $(tag)"
+
+output                = /home/ange00008/projects/mobileFT_distill/runlogs/longlamp_degeneration_audit.$(tag).$(ClusterId).$(ProcId).out
+error                 = /home/ange00008/projects/mobileFT_distill/runlogs/longlamp_degeneration_audit.$(tag).$(ClusterId).$(ProcId).err
+log                   = /home/ange00008/projects/mobileFT_distill/runlogs/longlamp_degeneration_audit.$(ClusterId).log
+
+should_transfer_files = YES
+environment           = "PROJECT_ROOT=/home/ange00008/projects/mobileFT_distill CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)"
+
+request_CPUs          = 2
+request_memory        = 8G
+request_disk          = 2G
+requirements          = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted   = true
++WantScratchMounted   = true
+
+queue tag in (review abstract topic)
