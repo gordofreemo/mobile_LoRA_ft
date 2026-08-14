@@ -50,3 +50,8 @@ ios/mlx-swift-lm-local/.build/
 data/oppu_release/
 third_party/OPPU/
 __pycache__/
+
+# Build output and tool scratch, never worth tracking
+ios/BGProbe/build/
+train/checkpoints_mlx/
+.playwright-mcp/
