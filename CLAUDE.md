@@ -1,106 +1,389 @@
-# Research Project — On-Device LLM Personalization via PEFT
+# Research Project — On-Device LLM Training (SmolLM3-3B + LoRA, iPhone 17 Pro)
 
-Fine-tuning **SmolLM3-3B** for personalized instruction following via a two-stage
-LoRA pipeline: a **Task-LoRA** (LaMP-{3,4,7}, BM25 profile in `system`) plus a
-per-user **User-LoRA** on time-ordered history, stacked at inference. Phases 1 & 2
-ran on the cluster; Phase 3 deploys to a real iPhone.
+Two-stage LoRA pipeline (Task-LoRA on LaMP + per-user User-LoRA, stacked at inference).
+Phases 1 & 2 ran on the cluster; **Phase 3 is the live work: deploying and characterizing
+training on a real iPhone.**
 
-## Active work (as of 2026-08-04)
-
-- **STORY PIVOT + h12 on-device Task-LoRA (LaMP-7) — PINNED 2026-08-10 via `/grill_me`, PRE-EXECUTION, NEXT UP.** The paper shifts to a **systems characterization of on-device LLM training** (per-user personalization DROPPED from this track: R5 at-MDE / R6 null / R8 exact cancellation demote to motivation at most). Three acts: characterization (h4–h11) → NAX kernel fix 1.93x (PR #4051, **already filed 2026-08-07** — the "NOT STARTED" note in the NAX bullet below is stale) → demonstration = **h12: train the Per-Task-LoRA (LaMP-7) entirely on-device with NAX ON and show benchmark parity with cluster training** (a genuine first per the 2026-08-10 landscape survey: no "MELT for training" exists; no ≥1B real-task adapter has been phone-trained with benchmark-verified quality; details in memory `project_systems_pivot_landscape_2026-08.md`). **Full self-contained h12 spec: `experiments/2026-08-10-ondevice-task-adapter-lamp7-h12-plan.md` — implement from it alone; the Decisions table is settled** (our A1-lamp recipe verbatim NOT OPPU's; masked loss via Mac-side pre-tokenized ids + assistant-mask span — prompt-prefix masking is documented-broken for SmolLM3 in `train.py`; effective batch 32 by accumulation, wd 0.0, clip 1.0; no gates, bare single-shot, smoke first). Three descriptive arms: cluster ref `pt_lamp7_1ep.json` (submit first, independent), Mac control on the exact MLX 4-bit model, device overnight run (~7.3 h, 326 optimizer steps; corpus measured 10,437 examples, mean ~212 est. tok, 0% over the 1024 cap). **Deadlines: ODI (NeurIPS) 2026-08-29 AoE (5p, non-archival; existing draft `workshop_odi2026/` needs restructure + NeurIPS-2026 template swap), HotMobile Oct 9.** Rerun queue implied by the pivot (NAX-ON re-measurement): h11 Tier-1 (~36 min, before/after shares = mechanism figure), h9 L/XXL energy points, pinned-arm per-op check for the 1.93x-vs-1.56x discrepancy + forward residual; h8/h6/h4 conclusions survive unchanged (memory/scheduling-bound, kernel-agnostic). — DONE 2026-08-06. POSITIVE RESULT: a COMPLETE on-device User-LoRA trains 1.93x faster (2.906h -> 1.503h, 84 min saved on one adapter) and reaches the SAME loss (0.8829 vs 0.8813, -0.18%; loss-trace correlation 0.9999).** Writeup `experiments/2026-08-06-mlx-nax-qmm-n-backward.md`, plan `...-plan.md` (settled via `/grill_me`). Descriptive round, no pre-registered gates. **Premise confirmed:** MLX gates NAX on `transpose == true` (`quantized.cpp:694`), so backward's `dX` falls to a generic **32x32-tiled** kernel (NOT "untiled" — earlier note corrected) while `affine_qmm_n_nax` sits compiled and unreachable. Dispatch chain closed: the generic path at `:722-735` builds `affine_qmm_n_float_gs_64_b_4_batch_0`, literally the kernel h11 measured at 75.44% of backward. **But relaxing the guard alone gives GARBAGE — the kernel behind it is broken, TWO independent upstream defects.** (1) **Weight addressing uses the TRANSPOSED layout**: `qmm_n_nax_tgp_impl` uses the same `QuantizedBlockLoader<T,BK,BN,BN_padded,0,...>` as the known-correct generic `qmm_n_impl` (`kernels/quantized.h:1266`) but sets `wl += y_col*K_w`, `scales += y_col*K_g`, leading dim `K` — i.e. w as `[N,K]` grouped along K, when `transpose=false` means `[K,N]` grouped along N. Copy-adapted from `qmm_t_nax`, never converted. **Fixing 3 offsets + the leading dim makes it BIT-EXACT** (rel. error 1.5-7826 -> 0.0). Also repairs the MoE path — `affine_gather_qmm_n_nax` calls the same impl. (2) **No partial-M-tile handling**: `(void)M`, `num_els = min(BM, M-y_row)` commented out, no `load_safe`/`store_safe` (which `qmm_t_nax` has via `kAlignedM`/`kAlignedN`) — so unaligned M **writes y out of bounds** (~49 KB at M=250). It still returned correct values in the valid region, which was LUCK (overflow landed in allocator slack). **BOTH DEFECTS NOW FIXED** — partial-tile handling ported from `qmm_t_nax_tgp_impl` (`sgp_sm` + `dispatch_bool` + `load_safe`/`store_safe`; compile-time split, so the aligned path pays nothing), verified across M in {1,2,31,32,33,63,65,96,97,100,127,129,191,193,255,257,511,513,999,1000,1023,1025} + unaligned batched, incl. the 33-63 range where a whole simdgroup is past the end and `sgp_sm` goes negative. **M is unconstrained**; guard retains only `N % 64 == 0` (structural for affine group_size >= 64). Two unrelated defects in one function = code that was never run. **SPEEDUP (paired A/B, `--benchmark-nax-ab`, 12 cells, arm alternated PER ITERATION so each cell pairs ON/OFF seconds apart at the same die temp — h11's ~25% thermal swing is the same order as the effect, so a two-run design would not have been trustworthy). Run at h11's EXACT grid {50,100,250,500,750,1000}, so all 12 cells are UNALIGNED M and exercise the ported partial-tile path: backward 1.65-2.13x (39-53% removed, mean 45%), whole iteration 1.45-1.68x (mean 1.55x); fused cool 250tok 2.844->1.808s, 1000tok 16.071->10.864s.** Effect SHRINKS with sequence length (~2.1x @M=99 -> 1.69x @M=999), thermally invariant. **CROSS-ROUND VALIDATION: the OFF arm independently reproduces h11's 2026-08-04 backward within +1.6%/-1.0% at 250/500 tok** (-12%/-8% at 750/1000, consistent with h11's own caveat that its ungated "cool" pass is only genuinely cool for early cells) — confirms the control arm is stock, not an artefact. Earlier aligned-grid run {65..1025} gave 1.66-1.99x / 1.46-1.61x, retained as a cross-check. Data `results/ondevice/train_bench_metrics_naxab_h11grid_2026-08-06.jsonl` (+ `_naxab_2026-08-06.jsonl`), aggregates `results/ondevice_naxab_h11grid_2026-08-06.json`, analysis `eval/naxab_aggregate.py` (its M-alignment gate is now informational — validity is instead "do the arms differ", min ratio 1.65x vs the ~1.00x you would see if the guard had rejected the shapes). **Unexplained residual, bounded not hand-waved:** forward (a built-in control — already NAX, cannot see the flag) reads ~3% faster in the ON arm (max 11%). NOT warm-up drift (dropping the first kept iteration changes 1.831x->1.836x; per-iteration trace tracks the arm cleanly). Conservatively dividing the whole forward bias out of backward still gives **1.59-1.97x (mean 1.77x)**, so it cannot account for the effect. Chase before publication — likeliest candidates are cross-phase queue-drain at the eval barriers or allocator state. **FOUR build/measurement traps, all of which silently produce a FALSE NULL.** (1) **These NAX kernels are JIT-compiled at runtime from `Source/Cmlx/mlx-generated/quantized_nax.cpp`** — editing `mlx/backend/metal/kernels/quantized_nax.h` does NOTHING. `default.metallib` does not even contain `affine_qmm_n_nax` and `quantized_nax.metal` is not among the 9 Metal sources compiled. Symptom: results reproduce to the last digit and it reads like a real negative. Caught via a stale metallib mtime. (2) **SPM local-override identity**: the vendored dir MUST be named exactly `mlx-swift` (SPM matches local packages by DIRECTORY BASENAME against the remote URL tail) — otherwise SPM fetches unpatched MLX for `mlx-swift-lm` (which contains SmolLM3) and training runs entirely unpatched, no error. Also point BOTH `mlx-swift-lm-local/Package.swift` and `mlx-swift-examples/Package.swift` at `.package(path:)` or SPM warns "conflicting identity ... will be escalated to an error". (3) **M = tokens - 1** (`LoRABatchIterator` slices inputs `[:, :-1]`), so the A/B grid is `{65,129,257,513,769,1025}`; an unshifted grid fails `M % 64 == 0` in BOTH arms and measures nothing. Every iteration records `seq_len`/`seq_len_aligned_64` so this is verified, never assumed. (4) **Vendor BEFORE building** — patch-in-place-then-vendor pays the long `Cmlx` rebuild twice. Also: **test-data conditioning nearly produced a false positive** — the first verify harness used `sin(row*a + col*b)`, every row a smooth sinusoid, so products cancelled systematically, collapsed the reference norm and inflated EVERY relative error (the known-good generic kernel scored 0.99). A two-stage fractional hash fixed it; reference norms are now logged with every row. **Device left SAFE: `enable_nax_n()` defaults to 0**, so dispatch is identical to stock upstream. Patch documented in `ios/mlx-swift/{VENDORED,LOCAL_PATCHES}.md`. **Reading for the paper:** does NOT overturn h11 — the adapter is still ~4% of an iteration, base model still dominates, PEFT still saves memory/storage NOT compute. What changed is the PRICE of the frozen-base tax, by ~1.5x. But this is **the first Phase 3 round to MOVE a wall rather than document one** (h6 background impossible, h9 energy ceiling, h10 no schedule pays, h11 base-model-bound). Feeds h9 directly: h10 pinned training at the ~3.05W sustained envelope, so with power capped, time savings convert to energy savings — ESTIMATED (not measured): L profile 87% -> ~58% of a battery, one-charge ceiling moves up from the measured 550-987 band. **Positionality argument worth making explicit:** `QuantizedLinear` always computes `x·Wᵀ`, so `transpose=false` is reachable essentially ONLY from a backward pass — a training-only path. Every NAX quantized bug filed to date is an inference path (#3925 MoE prefill, #3887 gather sorted-rhs, #3797 split-K GEMM), Apple's M5 NAX article is inference-only, and a tracker search for `qmm_n` returns NO results. **NEXT / HANDOFF READY — upstream issue + PR. Self-contained doc: `experiments/2026-08-07-mlx-upstream-pr-handoff.md` (implement from it alone). NOT STARTED.** Fresh clone at `~/Documents/Research/mlx-nax-pr`, branch `fix-nax-non-transposed-qmm`, upstream HEAD `8056817bd`, **tree clean — no changes applied**; both defects confirmed still present there. Key traps the doc encodes: **upstream's source of truth is `kernels/quantized_nax.h`, NOT `mlx-generated/` (the reverse of the mlx-swift build, where editing the header silently does nothing)**; **strip all `MLX_ENABLE_NAX_N` scaffolding from the PR**; patch `qmm()` only, leave `gather_qmm()` gated (its dispatch was never tested here); **NAX cannot be validated on this M3 — all validation was on the A19 Pro phone, so do not claim the Python tests were exercised on NAX hardware**. Other open items — TIME-SENSITIVE, #3925 and #3953 both closed within a week of this work; **(3) audit the rest of the quantized training path** (if `transpose=false` is systematically untested, two defects in one kernel predicts more — check `gather_qmm_n_nax`, `fp_quantized_nax`, K-tail handling) — this could turn one bug into a finding about the CLASS; (4) re-run h9's energy ceiling to test the estimate; (5) chase the forward residual. **E2E ARM DONE 2026-08-07 — the decisive test, since everything else measured fixed synthetic shapes.** One full User-LoRA per arm (`u00008075`, 405 examples, 3 epochs = 1215 iters, faithful R5 recipe, plugged/C0), new launch arg `--nax-arm on|off` (separate JSONL `train_bench_metrics_naxab_e2e.jsonl`, arm-specific adapter paths, records tagged). **`LoRABatchIterator` SEEDED** (`LoRATrain.shuffleSeed`, local opt-in in `mlx-swift-lm-local/LoraTrain.swift`, default nil so no existing round changes) — it otherwise uses Swift's UNSEEDED system RNG, so the two arms would have consumed different batch orders and the loss curves would have differed by data order rather than by kernel, making the comparison unfalsifiable. Validated: both arms saw an IDENTICAL token distribution (mean 531, median 526, p10 490, p90 579, matching to the digit). **Correctness (the important half): loss correlation 0.9999, mean |diff| 0.0057, max divergence 0.0201 over 1210 reported steps** — the patched kernel doesn't just produce correct values on synthetic shapes, it trains the same model over 1215 real optimizer steps. Data `results/ondevice/train_bench_metrics_naxab_e2e_2026-08-07.jsonl`, figure `results/ondevice/figures/naxab_e2e_2026-08-07.{pdf,png}`, plot `eval/plot_naxab_e2e.py`. **SYMMETRIC THERMAL PROTOCOL was necessary, not padding:** a first attempt had the baseline starting at `serious` (hot from the day's benchmarking) while the patched arm would have started cool after its gap — BOTH halves of that asymmetry inflate the measured speedup. Fixed by 60 min idle before EACH arm; both then started `nominal` and ended `serious`, baseline first so residual heat works against the patched arm. **OPEN DISCREPANCY: E2E 1.93x vs the per-op benchmark's ~1.56x at the same ~531 tokens.** Ruled out: thermal compounding (ratio is FLAT across the run — 1.89/2.02/1.95/1.82/1.80/2.15 by step band, not growing), different work (identical tokens + loss trajectory), `loraLayers` 28 (E2E) vs 36 (per-op) (right direction, <1pp). **Leading hypothesis: the per-op benchmark's own PER-ITERATION ARM ALTERNATION** — it switches kernel every iteration where E2E uses one throughout, so if switching costs anything the paired design UNDERSTATED the speedup; the same mechanism would explain the unexplained ~3% forward artifact, which also tracks the alternation. Testable by pinning arms per cell. **Quote 1.93x (realistic sustained config); report the per-op figures as the mechanism decomposition, not a competing estimate.** **THREE on-device orchestration traps, all of which silently destroyed runs before the protocol was right:** (1) `devicectl ... --console` PROPAGATES SIGTERM to the app — killing the monitor killed the training (`signal 15`); launch DETACHED and poll the device JSONL instead. (2) Harness-tracked background tasks were killed twice mid-experiment; run the sequencing script under `nohup`, fully detached. (3) A RESIDENT app silently absorbs new launch args (an idle instance made one launch a no-op) — kill any resident PID before EVERY launch. Master script `scratchpad/master.sh` encodes all three plus the symmetric cooldown; `bash -n` it before launching (an earlier version died on a heredoc escaping bug and never ran at all).
-
-- **Phase 3 — per-op/per-phase training-iteration time breakdown (h11) — PINNED 2026-08-04 via `/grill_me`; HARNESS + MAC-SIDE ANALYSIS BUILT 2026-08-04, NOT YET RUN. Runs BEFORE the h9 L run (explicit user call).** Full handoff spec: `experiments/2026-08-04-ondevice-perop-h11-plan.md` — implemented from that doc. The training analog of MELT's per-op inference benchmarks (MobiCom '24 §5.3.1/Fig. 8, TVM `vm_profiler` per-kernel stage breakdowns): where does time inside one LoRA training iteration go, vs. tokens and heat. **NOTHING pre-registered — explicitly descriptive round (user overruled the falsifiable-headline convention).** **Two tiers:** Tier 1 (primary, automated) = 6-phase eval-barrier decomposition (`data_prep`/`graph_build`/`forward`/`backward`/`optimizer`/`readback`; MLX fuses the whole iteration into one lazy `eval`, so a custom harness loop — NOT a `LoraTrain.swift` fork — inserts per-phase barriers), grid {50,100,250,500,750,1000} tok × two passes (cool, then immediately hot; no cooldown gates, no `thermalState` gating), 22 iters/cell = 1+10 fused (stock `LoRATrain.train`, h7's measurement mode, the validity control — aggregator reports Σphases/fused overhead) then 1+10 barriered; cold-ref probe (2 iters @500, h10 design) + new `--idle-minutes` honest-input arg (h10 Run-B lesson). Tier 2 (semi-manual) = `GPU.startCapture` → three per-phase `.gputrace` captures @500 tok, 1 iteration, separate launch; needs `MetalCaptureEnabled` in the merged Info-Additions.plist (unverified under devicectl launch — test first); **user reads per-kernel times in Xcode GUI** (outside agent toolset), transcribed to JSON for the MELT-Fig-8-style figure; fallback ladder 250 tok → `xctrace` Metal System Trace. **GC on ONLY — a GC-off/recompute-isolation arm was proposed and REJECTED** (user: only realistic regime). `peropLoraLayers=36` (h7's cell code still uses the buggy shared `loraLayers=28` — don't copy it), fused A1-lamp 4-bit model kept deliberately (h8's reasoning, now a stated choice), r=8 q+v α16, AdamW lr=1e-5, batch=1, K=1. Harness **h11** (`peropAppBuild="smollm3-ondevice-train-perop-h11"`, per-mode build string so the later h9 L run keeps clean e2e provenance), schema v1, **separate JSONL `train_bench_metrics_perop.jsonl`** (e2e JSONL stays untouched while h9 L pending), launch args `--benchmark-train-perop` / `--benchmark-train-perop-capture [--capture-tokens]`, records `run_start`/`cold_ref`/`cell_start`/`iter`/`cell_end`/`run_end` + 30s sampler; rebuild = **install-over, NEVER uninstall**. Mac side: `eval/perop_aggregate.py` + `eval/plot_perop.py`; cross-check fused times against h7's fits (pass 2 ≈ HOT). ~45–70 min device time (Tier 1) + a small capture session. Implementation risks to verify (plan §risks): `eval(lvalue)`→`eval(grad)` must not defeat the GC `CustomFunction` (check barriered-vs-fused peak mem + loss/weight match vs stock path); nested-structure `eval(grad)`; capture permission. **BUILT 2026-08-04 (`xcodebuild` clean, app signed, `MetalCaptureEnabled` confirmed present in the built Info.plist via `plutil -p` alongside the h6 keys).** On disk: h11 constants block in `TrainBenchConstants.swift`; `runPerOpBenchmark`/`runPerOpColdRef`/`runPerOpCell`/`perOpBarrieredIteration`/`runPerOpCaptureBenchmark` + record builders in `LLMEvaluator+TrainBenchmark.swift`; `MetalCaptureEnabled` in `LLMEval-Info-Additions.plist`; `eval/perop_aggregate.py` + `eval/plot_perop.py` (both smoke-tested against a synthetic fixture, figures render). **Risk #1 is checked automatically in every cell, not once in a debug run** — but NOT the way it was first built. The original design snapshotted the fresh adapter (`model.trainableParameters()`) before the fused sub-block and restored it before the barriered one so both modes would train identical weights from an identical start. **That restore was a NO-OP, caught on the first real cell of the 2026-08-04 run** (fused ran 0.5878→0.4371 and barriered then started at 0.4239, i.e. continuing rather than restarting): `Module.update`'s leaf case calls `p._updateInternal(newArray)`, which swaps the handle INSIDE the existing MLXArray rather than replacing the dict's reference, so `trainableParameters()` returns ALIASES of the live arrays and the "snapshot" tracked the weights through training — the same aliasing the h6 v7 changelog already documents for the model-load path. A genuine reset would need a deep copy of every adapter array. The no-op snapshot/restore was REMOVED afterwards (behaviour-preserving, so a re-run matches the 2026-08-04 data); the barriered sub-block now continues from the fused block's weights by design. **Fidelity is instead read as loss CONTINUITY across the mode boundary** (`loss_continuity` in the aggregator): the barriered block picks the trajectory up where the fused block left it, so a faithful replica continues the same per-step decay while a broken one would show a step change at the seam. The peak-memory half of the check was unaffected and passed outright. **None of this touches the phase TIMINGS** — MLX's dense/quantized kernels are value-independent, so per-iteration cost doesn't depend on which weights are resident. **Risk #2 resolved by reading mlx-swift:** `eval`'s `collect()` has an explicit `NestedDictionary<String, MLXArray>` case, but the harness passes `grad.flattened().map { $0.1 }` (an `[MLXArray]`) so it never depends on `Any`-overload resolution. **Risk #4 handled defensively, still unverified on device:** `mlx_metal_start_capture` failures go through mlx-c's error path, whose default handler is `exit(-1)` and which Swift cannot catch, so `runPerOpCaptureBenchmark` checks `MTLCaptureManager.shared().supportsDestination(.gpuTraceDocument)` FIRST and degrades to a logged `capture_run` marker (`capture_supported: false`) instead of dying; it also records each bundle's on-disk existence + byte size, since a silent no-op capture is the failure mode the fallback ladder exists for. Also verified by reading source: `GPU+Metal.swift`'s doc comment claiming `MLX_METAL_DEBUG` is required is STALE for this mlx version (`metal.cpp`'s `start_capture` is unguarded, straight `MTLCaptureManager`) — the real prerequisite is only the Info.plist key / `MTL_CAPTURE_ENABLED`. Repeated per-cell `LoRAContainer.from` confirmed non-stacking (`LoRALinear.from` reads the target's base `weight`/`bias`, so each call yields a fresh adapter). **TIER-1 RUN DONE 2026-08-04** (session `76017A93`, 2177 s = 36.3 min, `--idle-minutes 60`, plugged/airplane/min-brightness, git `b87e61c` clean): 363 records, 264 iterations = all 12 cells × 22, zero errors or dropped cells. Telemetry `results/ondevice/train_bench_metrics_perop_2026-08-04.jsonl`, aggregate `results/ondevice_perop_smollm3_4bit_2026-08-04.json`, figure `results/ondevice/figures/perop_2026-08-04.{pdf,png}`. **Headline: backward dominates — ~78% of the iteration at ≥250 tok, forward ~21%, and everything else together <1%.** `backward/forward = 3.5–3.9×`, ABOVE the textbook ~3× (2× grad FLOPs + 1× GC recompute) — the recompute is costing more than a clean second forward pass. **Shares are essentially thermal-invariant**: cool vs hot at matched token count differ by ≲1 percentage point at ≥250 tok (500 tok: 20.3/78.3 cool vs 21.2/77.7 hot), i.e. throttling scales the whole iteration roughly uniformly rather than hitting one phase — while absolute cost rises ~25% (7.24→8.96 s at 500 tok). **`readback` is 0.000 s in all 12 cells — proven ≈0, not assumed.** `graph_build` is FLAT in absolute terms (~0.031–0.038 s, pure CPU graph construction independent of sequence length), so it fades from 5.3% at 50 tok to 0.2% at 1000. `data_prep` scales linearly with tokens (0.001→0.014 s, tokenizer) but never exceeds 0.1%. `optimizer` is roughly flat as expected (AdamW touches only LoRA params) at 0.062–0.097 s, though the 50/100-tok cells read systematically ~1.4–1.6× the ≥250-tok cells — unexplained, NOT thermal (those cells run coolest), worth a look if it matters. **Decomposition overhead Σphases/fused = 1.02–1.08**, so the barriers cost only 2–8% and the shares are trustworthy. **Barriered peak memory is consistently LOWER than fused** (0.985 at 50 tok → 0.870 at 1000), the opposite of the risk-#1 failure mode: barriers force materialization and release where fused keeps more of the iteration's graph live. **Cold-ref 4.702 s/iter @500 tok lands inside h10's range (4.609/4.652/4.655/4.710) — an independent cross-round reproducibility check on the rig.** h7 cross-check: hot pass sits at 1.02–1.24× the h7 HOT fit at ≥250 tok despite 36 vs 28 LoRA layers, so the extra 8 blocks of backward cost far less than the naive 1.29× estimate. Caveat for the writeup: with no cooldown gates the "cool" pass is only genuinely cool for its first cells (cold-ref 4.70 vs the cool pass's own 500-tok cell at 7.24). **TIER-2 CAPTURE DONE 2026-08-04** (3 launches; the third is the good one, session `3A8414F7`). **Risk #4 RESOLVED: `MetalCaptureEnabled` IS honoured under a `devicectl` launch** — `MTLCaptureManager.supportsDestination(.gpuTraceDocument)` returned true and all three phases captured at 500 tok on the first attempt, so neither fallback rung (250 tok, then `xctrace` Metal System Trace) was needed. **But a capture that succeeds on device is NOT retrievable as-built, and this cost two extra launches to sort out.** Metal stores most buffer contents as SYMLINKS (1247 of 1629 entries in the optimizer bundle; `devicectl device info files` labels them `SymbolicLink`), and `devicectl device copy from` cannot read a symlink at all — it aborts the whole transfer with `openat(2) POSIX 62` (ELOOP) on the first one, with no flag to follow or skip. Fix is in the harness: flatten the links before pulling. **First attempt used copies and was wrong** — the links point at other buffers INSIDE the same bundle (Metal deduping identical buffers), so copying re-expands every duplicate; it hit a 3 GB/bundle cap with 273 (forward) and 1816 (backward) links unresolved. **Hard links are the right primitive** (indistinguishable from regular files to `openat`, dedup preserved on device, expansion happens only in the Mac-side copy): 2526/1026/71 links resolved, 0 copied, 0 failed, no added device storage. All three then pulled clean — `results/ondevice/captures/{backward,forward,optimizer}_1785849427.gputrace`, **13 GB / 6.0 GB / 1.9 GB (21 GB total), 3867/2267/1629 regular files, 0 symlinks remaining**. Capture runs now also wipe the capture dir on start (no `devicectl` delete subcommand exists, and uninstall is off-limits — wipes model cache + side-loaded data); that reclaimed 18.8 GB of debris from the copy attempt. Also corrected: `directorySizeBytes` follows symlinks, so the first `capture_run` record's 1.9–2.4 GB per-bundle figures counted link targets and overstated the bundle. **TIER-2 KERNEL TABLES OBTAINED for `forward` (@250 tok) and `optimizer` (@500 tok); `backward` is BLOCKED by a measured tooling ceiling.** Kernel data `results/ondevice/perop_kernels_2026-08-04.json` (Cost % from Xcode's shader profiler, not ms — shares are what Fig B needs and Tier 1 owns the absolute phase totals), figure `results/ondevice/figures/perop_2026-08-04_kernels.{pdf,png}`. **HEADLINE — the number only Tier 2 can see: in forward, the frozen 4-bit base weights take 86.3% (`affine_qmm_t_*`) while the LoRA adapters take 3.2% (`steel_gemm_*`, incl. split-k — rank-8 updates are exactly that shape). The adapter is ~1/27th of forward compute.** Rest of forward: elementwise+copies 7.6%, SiLU 1.8%, attention+norm+RoPE 0.9%, loss 0.25%. Comparable to MELT's inference finding (fused dequant+matmul 97% of prefill); training forward is lower because it also carries adapter gemms, activation and the loss reduction. Two details worth keeping: (1) **SIMD-group count and cost rank disagree sharply** — `vvn_Multiply` runs 2,998,380 groups (11× the dominant `affine_qmm_t`'s 272,632) for 4.79% of cost, so optimizing by op COUNT would target exactly the wrong thing; (2) **attention is negligible at 0.34%** — at these lengths the model is weight-bound, not attention-bound. Optimizer phase is pure elementwise (no matmul at all): elementwise 75.7%, sqrt/square for Adam v̂ 18.8%, scalar bias-correction 5.5% — and `ss_Power` costs 4.62% on 576 SIMD groups vs `sv_Multiply`'s 29.87% on 302,775, i.e. the scalar β^t path wastes the GPU, though at ~0.05% of a whole iteration it is a curiosity not a lever. **BACKWARD IS UNOBTAINABLE VIA REPLAY ON THIS DEVICE — quantified, not a workflow failure.** Xcode's replay guest is Apple-signed and does NOT inherit this app's `increased-memory-limit`, and replay must RE-ALLOCATE ALL CAPTURED GPU HEAP STATE. Measured ceiling, bracketed to 1.5%: **1.96 GB replays (forward @250), 1.99 GB does not (backward @100)**; also failed were forward @500 (2.13 GB), backward @250 (2.20 GB), backward @500 (2.56 GB). Backward's trace floor is ~1.9 GB set by the 4-bit weights plus a gradient buffer per parameter, NEITHER of which shrinks with sequence length (2.56→2.20→1.99 GB across 500→250→100 tok is visibly asymptotic), so no token count rescues it. The one documented lever — shrink the allocator before capturing, as vLLM's Metal backend does for a 22 GB KV cache — was tried and **measured empty here: `cacheMemory` reads 0 at capture time** (recorded as `cache_bytes_before_capture`), because the barriered per-phase evals already release everything. **Backward's phase-level cost is pinned at 78% by Tier 1 regardless**; only its kernel breakdown is out of reach, and would need a smaller model or a device with more headroom. **THREE OPERATIONAL GOTCHAS worth citing in the writeup, all non-obvious:** (1) `devicectl` cannot read symlinks (ELOOP) and Metal fills captures with them — hard-link on device, pull, re-collapse on the Mac (`eval/dedupe_gputrace.py`); (2) **a crashed replay leaves Xcode's GPU tools agent holding the device's capture session, silently blocking all further programmatic `MTLCaptureManager` captures with a fatal "Already capturing" — and it SURVIVES A DEVICE REBOOT because Xcode simply re-attaches; quitting Xcode released it in ~20 s**; (3) deduping a bundle whose transfer is still running silently corrupts it (two truncated files hash equal and get collapsed) with no visible symptom — it reported 1.32 GB where the true size was 1.99 GB, which is why `dedupe_gputrace.py` now refuses to run on an unsettled directory. **BACKWARD KERNEL TABLE — ONE COMMAND AWAY, blocked on a wedged device capture daemon (2026-08-04 evening).** The earlier "no token count can rescue it" conclusion was WRONG on its stated reason and is superseded: the discriminator is **RESOURCE COUNT, not bytes** — optimizer (1629 files) and forward (1921 files) both replay at 1.96 GB, while backward fails at 2792 files/1.92 GB and 3045/1.99 GB, i.e. **a SMALLER backward trace fails where a LARGER forward one succeeds**. Backward's file count barely moves with tokens (2792 @50 vs 3045 @100), so shrinking tokens could never reach the ~1900-file ceiling. Fix implemented and installed: **`--capture-backward-layers K`** evaluates only the top K blocks' gradients (a gradient in block N needs backprop from the loss to block N only, not through the blocks beneath), giving a small subgraph whose kernels ARE the per-block backward kernels — valid because SmolLM3's 36 blocks are architecturally identical. Stated deviation: samples K of 36 blocks plus the lm_head/loss backward, so it is a representative sample of the phase, not a capture of all of it. **NOT YET RUN — the device's capture daemon is wedged**: every `GPU.startCapture` dies on `[metal::start_capture] Failed to start: Already capturing` (an mlx-c fatal, so it kills the process). **Diagnosed, not guessed: `MTLCaptureManager.isCapturing` reads FALSE in a fresh process while start still fails, so the session is held OUTSIDE the app and cannot be cancelled from it.** It survived a device reboot, quitting Xcode, killing the Mac's `gputoolsserviced`, a 2-minute quiet period, and an app reinstall. **Cause: SIGKILLing a capture-mode process between start and stop** (done to clear a resident-app hang). **NEXT SESSION: cold-boot the Mac AND the phone, then ONE launch — no retry loops, and never SIGKILL a capture-mode process:** `xcrun devicectl device process launch --console --device 00008150-000674C60A3B401C mlx.LLMEvalJGW9U9Y36Y --benchmark-train-perop-capture --capture-tokens 250 --capture-backward-layers 4`, then pull with a file-count check against the device, `eval/dedupe_gputrace.py`, open in Xcode, transcribe into the existing kernels JSON with `"phase": "backward"`. If 4 blocks still exceeds ~1900 files, use 1. **TWO OPERATIONAL RULES learned the hard way, both now costly if forgotten:** (1) a resident app SILENTLY ABSORBS new launch args (`--console` then blocks forever on a process doing nothing) — but (2) SIGKILLing it mid-capture wedges the capture daemon persistently, so let a capture-mode process exit on its own. **TIER-2 COMPLETE 2026-08-06 — all three phases have kernel tables.** Root cause of the long capture struggle, finally: **`MTLCaptureManager.stopCapture()` FINALISES ASYNCHRONOUSLY**, so starting the next phase's capture too soon fails with `[metal::start_capture] Failed to start: Already capturing` — an mlx-c fatal that kills the process. It only appeared once `--capture-backward-layers` made `eval(grad)` fast enough to close the gap between backward's stop and optimizer's start; the full-backward path was slow enough to hide it. The symptom points the WRONG WAY (the run dies on the THIRD startCapture while forward and backward have already written bundles, so the console shows the fatal right after the last log line and reads like a wedged device) — hours were lost to reboots, Xcode quits and daemon kills chasing a non-existent external wedge. The tell was `cleared previous captures (~1822 MB)` reappearing every run. Fixed by `awaitCaptureIdle()` polling `isCapturing` after each stop — do NOT replace with a fixed sleep. **Replay ceiling is on RESOURCE COUNT, not bytes** (final bracket: 2239 files/2.16 GB replays, 2792 files/1.92 GB does not; 1526 and 1921 also fine) — which is why every token-shrinking attempt failed, since backward's file count barely moves with sequence length. **BACKWARD RESULTS (partial capture, top-K blocks + lm_head/loss):** category totals are STABLE across K — quantized-matmul 90.59% at K=4 vs 89.95% at K=12 — so the sampling is validated and "backward is ~90% quantized dequant-matmul" is a measured result, not an estimate. The INTERNAL split does move with K, and a two-point fit separates the fixed lm_head term: `qmm_n/qmm_t = 25.9/K + 4.95`, i.e. per-block gradient work is **4.95x** per-block GC recompute and the lm_head gradient is **25.9x** one block's recompute; extrapolating to K=36 gives **qmm_n ~76.5% / qmm_t ~13.5%**, so **GC recompute is ~13-14% of the full backward pass, NOT the 7.2% the K=4 sample naively reads** (the partial capture understates it ~2x). **UNPLANNED FINDING worth following up:** forward and backward use DIFFERENT quantized matmul kernels — forward the TILED `affine_qmm_t_nax_..._bm64_bn64_bk64_wm2_wn2`, backward the UNTILED `affine_qmm_n_*` with no tiling parameters — and at K=12 the untiled variant costs **2.3x more per SIMD group** (3.27 vs 1.44 x10^-4 %/group). Plausible mechanism for Tier 1's backward/forward ratio exceeding the textbook ~3x: not just more work, but a slower kernel path. Hedge it — SIMD-group count is not a clean work proxy and untiled kernels launch more, smaller dispatches. **ADAPTER COST, the number Tier 2 exists for — now MEASURED, all three phases ~100% transcribed** (forward 99.99%, backward 99.97%, optimizer 100.00%; the backward table's full list is under Xcode's **Shaders** tab, not the default view — an earlier reading off the truncated list wrongly concluded backward had NO dense gemm and that a ~5% residual was blit encoders; both were wrong). Backward's LoRA dense gemm is **2.21%** (nine `steel_gemm_*` rows) against forward's 3.16% (five rows). **Adapter-attributable compute per iteration @250 tok: forward gemms 0.0209s + backward gemms 0.0617s + the ENTIRE optimizer phase 0.0662s (AdamW touches only LoRA params) = 0.1488s of a 3.5523s iteration = 4.19%. So ~95.8% of an on-device LoRA training iteration is spent on the FROZEN BASE MODEL.** Backward full split: quantized matmul 89.95%, elementwise 6.46%, LoRA gemm 2.21%, attention+norm+RoPE 0.80%, SiLU 0.38%, reductions 0.17%. Kernel-level detail worth using: backward carries `steel_gemm_fused_nax_tn` variants (0.57%+0.40%) that forward does NOT — `tn` is X^T·dY, the adapter's WEIGHT-GRADIENT matmul — so propagating through the adapter and computing its gradients are separable at kernel level. **WRITEUP DONE 2026-08-06: `experiments/2026-08-06-ondevice-perop-h11.md`** (untracked, per this repo's experiments/ convention). **ROUND CONCLUSION: on-device LoRA training is backward-dominated and BASE-MODEL-BOUND.** Backward ~78% of the iteration and ~90% quantized dequant-matmul; forward ~21% and 86% quantized; everything else <1% combined. The adapter — forward gemms + gradient gemms + the entire AdamW step — is **4.19% of an iteration**, so **95.8% goes to the frozen base model**. **Practical reading for the paper: PEFT saves memory and storage, NOT compute.** Freezing 99% of parameters removes almost none of the work, because the cost is streaming and multiplying frozen 4-bit weights, paid in full every iteration and twice in backward (gradients + GC recompute). Optimising the adapter is pointless; the levers are the base-weight matmul path and the recompute. `.gputrace` bundles (~20 GB) DELETED after transcription — every cited number is reproducible from the JSONL/aggregate/kernels JSON; re-capture is ~90 s. **Open follow-ups:** (1) `optimizer` phase reads 1.4–1.6× higher at 50/100 tok than ≥250 tok, not thermal, unexplained; (2) is `affine_qmm_n` (untiled, 2.3× cost/SIMD-group vs forward's tiled `affine_qmm_t`) a missing MLX optimisation? It would move ~76% of backward — worth an upstream look; (3) Tier 2 is n=1 per config and backward is a top-K sample (K-stability checked at K=4 vs 12).
-- **Phase 3 — thermal cooldown trajectory + sustainable duty cycle (h10) — PINNED + BUILT 2026-07-28, NOT yet run. Runs BEFORE the h9 L run (explicit user call).** Design doc: `experiments/2026-07-28-ondevice-thermal-cooldown-h10-plan.md`, pinned 2026-07-28 via `/grill_me`. Direct follow-on to h7, which left this exact hole open (its cold-regime cells ≥700 tok never reached `nominal` even after a 300s gate — "true recovery time up there is still unknown"). **Falsifiable headline: no burst-and-cool schedule beats running training continuously — thermal throttling is a fixed tax, not a schedulable cost.** Decided by the pre-registered rule `B/(B+T) > 1/R` (burst length B, cooling time T, cold/hot speedup R); at R≈1.7 and B=60min, duty-cycling *wins* if recovery takes under ~42 min, so the round can genuinely go against its own hypothesis. Duty-cycling is evaluated under an **optimistic upper bound** (assume the burst runs at fully-recovered cold rate throughout) — if it loses even then, the conclusion is airtight. **Two facts established from EXISTING data during planning, no device time:** (1) heat-up needed no new run — h5's per-iteration E2E data already is the heat-up curve, throughput decays from t=0 and flattens at **~40-50 min** then holds for 5-11 h (S 0.173→0.107, M 0.135→0.078, L 0.113→0.072 iter/s), which is what justifies the 60-min soak; (2) **`ProcessInfo.thermalState` reads `serious` in the FIRST 10-min bucket of all 9 real E2E training sessions and never changes for up to 11 hours** — the enum carries zero information across a training run, stronger than the already-known "it lied during inference" finding, and the reason recovery is measured by a performance probe instead. Quantifying the enum-says-`nominal` vs. throughput-actually-recovered gap is a free sub-finding, and a direct check on the cooldown gates in h3/h4/h7/h8 (all poll `thermalState == .nominal`). **Design:** cold-reference probe → 60-min training soak @500 tok → fixed **90-min observation window, no early stop**, probed every 120s; probe = **2 iterations @500 tok** (~13s, ~11% duty at 36 layers — kept at 2 not 3 specifically because probe self-heating is the main validity risk); milestones t50/t80/t90/t95 extracted post hoc by the aggregator (log-raw-decide-later, every probe iteration logged including index 0). **3 runs, ~6.7 h:** A (60min/120s, primary), B (60min/240s, **self-heating control** — if A and B's recovery curves overlay, probe heat isn't driving the shape), C (10min/120s, **soak-scaling arm** — answers "just use shorter bursts"; if T is roughly soak-duration-independent, no burst granularity works, the strongest version of the claim). **Plugged at ~100%**, chosen over unplugged to break a circularity (a run costs ~25% battery, and recharging between runs injects charging heat needing an unknown dissipation period — the very quantity being measured); honest caveat, trickle charging adds a small constant heat floor that *inflates* measured cooldown time, i.e. biases *toward* the hypothesis. Airplane mode, min brightness, flat hard surface same spot, same case state. **Ambient temp deliberately NOT recorded** (user decision) → the cold-reference probe is the sole cross-run comparability check, which makes it load-bearing. **h10 FIXES the `loraLayers=28`-should-be-36 bug** (`thermalLoraLayers=36`, unlike h1-h7, like h8) — safe because h10's arithmetic is **self-referential**: cold-ref probe and soak plateau are both 500-tok/36-layer measurements ~60 min apart in the same session, so their ratio *is* the cold/hot speedup measured in-session; h7's 1.7× demotes from load-bearing input to corroborating cross-check. Costs ~1.29× more compute/iteration than h1-h7. Harness **h10** (`smollm3-ondevice-thermal-cooldown-h10`), schema v1, **separate JSONL `train_bench_metrics_thermal.jsonl`** (must not touch `train_bench_metrics_e2e.jsonl` while the h9 L run is pending), launch args `--benchmark-thermal-cooldown --soak-minutes <M> --probe-interval-s <S>`, record types `run_start`/`cold_ref`/`soak`/`soak_end`/`probe`/`sample`/`run_end`, **10s passive sampler** (finer than h5/h9's 30s, since resolving the enum's transitions is a deliverable; CPU util on the idle gaps doubles as proof nothing else woke up). Implemented in `TrainBenchConstants.swift` (h10 block) + `LLMEvaluator+TrainBenchmark.swift` (`runThermalCooldownBenchmark`/`runThermalSoak`/`runThermalProbe`/`applyThermalLoRA` + record builders); aggregator `eval/thermal_aggregate.py`, figure `eval/plot_thermal.py`. **RESULTS 2026-07-28 — HYPOTHESIS WRONG in its strong form, conclusion survives with a replaced mechanism.** Run A (60min/120s, complete, 9075s): cold ref 4.655 -> plateau 9.988 s/iter (**R=2.146x**); **recovery is FAST — t50=180s, t90=327s, t95=346s, fully recovered ~363s** (six minutes, not hours). **But duty-cycling only nets 1.028x** at T=363s: the cold-start bonus is structurally small (**+13.2%** over a 60-min burst) and **evaporates in ~2min** (soak 4.709->6.335 s/iter in 74s). So thermal cost is a fixed tax NOT because cooling is slow, but because being cool is worth little over a long burst. **The pre-registered probe-bound estimator (1.94x) was WRONG and got replaced** by a soak-anchored one (the soak IS the measurement of cold-start burst work), interpolated on r(T) so ratio(0)=1 exactly; both reported, the gap between them is itself the finding; verified against synthetic fixtures in BOTH verdict directions. **Cold-start bonus grows for shorter bursts: +50.0% at 5min, +43.1% at 10min, +26.5% at 30min, +13.2% at 60min** -> break-even cooling for a 10-min burst is **256s**, making **Run C the decisive arm, not optional**. **Sub-finding: `thermalState` lags true recovery by ~59 MINUTES** (nominal at obs+3883s vs t90 327s) — direction is OPPOSITE to expectation, the enum releases far too LATE; gating on `nominal` (h3/h4/h7/h8) burns ~1h per cooldown for nothing, and it sharpens rather than contradicts h7 (its 300s cap missed by only ~60s vs the measured 363s). **Run B (240s probe, self-heating control) SIGKILLed at 6420s/12 probes** when the device had to leave the desk — **control PASSES anyway and does NOT need re-running**: cold ref 4.710, plateau 9.891, R=2.100x, 412 iters, bonus +12.9%, t50=184s, all within ~2% of Run A at HALF the probe duty; its longer t80/t90/t95 is a sampling-grid artifact (decimating Run A to a 240s grid reproduces 340/418/457s vs B's 341/410/445s). **Run B RE-RUN IN FULL 2026-07-28 at user request** (`run_end` 9148s, 23 probes, cold ref 4.609): recovery reproduces (t50=171s vs 180/184) **but the cold-start bonus does NOT — 432 iters / +20.6% / best 1.073x**, vs A's 409/+13.2%/1.028x and trunc-B's 412/+12.9%/1.017x. Cause: it started DEEPER-COLD (had sat ~1h35m idle + off-charger), heating up ~2x slower over the first 10 min (s/iter at 60/120/300s = 5.13/5.54/6.47 vs A's 6.04/7.03/7.20), banking 95 vs ~85 iters by 600s; all three converge by ~40min. **Two consequences.** (1) METHODOLOGICAL: the cold-reference probe is NECESSARY BUT NOT SUFFICIENT as a cross-run check — it measures die temperature, so all three cold refs agreed within 2% while the bursts they preceded differed 5.4% in total work. The design made it the SOLE comparability check after ambient logging was dropped; that was not enough. Report idle-history alongside it in future rounds on this rig. (2) It TIGHTENS the conclusion: the +20.6% needed 95min of idle to set up, which a ~6-min cooldown cannot reach, so 1.073x is NOT achievable by any real schedule — exactly the overestimate the soak-anchored estimator's docstring warns about, now demonstrated. **Honest headline: best schedule scores 1.017x / 1.028x / 1.073x across three runs — between nothing and a few percent, depending on how deeply cold the device happens to start; the single 1.028x figure was over-precise.** **The >=95%-charge precondition proved UNNECESSARY** and was retired empirically (Run A started at 70%, battery sat at a charge limit through the whole recovery region, probes spanning the later 80->100% ramp show no shift). Telemetry `results/ondevice/train_bench_metrics_thermal_2026-07-28.jsonl` (3818 records, all 3 sessions), aggregate `results/ondevice_thermal_smollm3_4bit_2026-07-28.json`, figure `results/ondevice/figures/thermal_cooldown_2026-07-28.{pdf,png}`. Paper section written + committed to the Overleaf repo (`sections/experiments/2026-07-28-ondevice-thermal-cooldown.tex`) but **NOT pushed** (credentials not configured). **Run C (10-min soak) DONE 2026-07-28 — SHORT-BURST DUTY-CYCLING WINS, flipping the round's headline.** cold ref 4.652, end-of-soak 7.561 (never reaches the 60-min plateau ~9.98), **t50=82s / t90=114s / t95=118s** — recovery from a 10-min burst is ~2 MINUTES vs the 256s break-even; the first post-zero probe (obs+120s, 4.695) is already at the cold reference. Burst work 91 iters in 603s vs 60.4 at the continuous rate = **+50.6% cold-start bonus** → **a 10-min-on/2-min-off schedule delivers ~1.25x the throughput of continuous training** (best=1.246x at T=120s). **AGGREGATOR FIX REQUIRED TO SEE THIS:** a 10-min soak never reaches continuous training's throttled steady state, so scored against its OWN plateau (the self-referential method that is correct for the 60-min runs) Run C reports a meaningless -0.1% bonus / 1.000x — i.e. the headline would have been reported as a NULL. Fixed via `apply_reference_plateau()`: long-soak sessions contribute a reference plateau (mean 9.979 s/iter, n=3) and short-soak sessions are re-scored against it, borrowing ONLY the continuous baseline while keeping their own burst work + recovery curve (`reference_plateau_source` records which). **Two caveats:** (1) T<=120s is BOUNDED by the probe grid, not resolved — t95=118s is interpolated across a single 120s gap, so 1.246x is CONSERVATIVE in T (at T=60s it would be ~1.37x); a 30s-cadence follow-up would resolve it. (2) NOT validated as a SUSTAINED schedule — one burst from a shallow-cold device; Run B's finding (burst work depends on chassis heat, which 2 min won't clear) cuts against assuming repeated cycles keep yielding 91 iters, so 1.246x is an upper bound on the sustained rate. **Cheap follow-up not run: an actual duty-cycled arm (10-on/2-off x ~72min) vs the 60-min continuous runs' 409-432 iters.** Device came off the charger at obs+3630s — an hour after every milestone was measured, flagged by the aggregator, affects nothing. **ROUND CONCLUSION: the original hypothesis is FALSE and the opposite is true.** Cooling is fast (346s after a 60-min burst, 118s after a 10-min one); hour-long bursts are a wash (1.017/1.028/1.073x); 10-min bursts win (~1.25x). `thermalState` always releases LATE (~59min lag long-burst, ~28min short-burst) and should not gate cooldowns anywhere. **Practical recommendation: don't gate on `thermalState`, and don't train in one long continuous session — short bursts with short gaps are worth ~25% more throughput, pending the sustained-cycling confirmation.** **SUSTAINED-CYCLING ARM (h10c) DONE 2026-07-28 — REFUTES Run C's extrapolation; the round's ORIGINAL hypothesis is CORRECT after all.** New harness mode `--benchmark-thermal-cycle --burst-minutes 10 --rest-seconds 120 --cycles 6` (`cycle_run_start`/`cycle_burst`/`cycle_burst_end`/`cycle_rest_probe`/`cycle_run_end` records; a rest-gap probe records what throughput recovered to BEFORE each next burst). Launched 22:06:56, `cycle_run_end` 4250s, cold ref 4.650 (A 4.655, C 4.652 — directly comparable). **iters/burst = 81, 56, 56, 55, 54, 54 — the first burst is NOT repeatable**, output drops 31% after one cycle then holds flat (converged equilibrium, not a decay trend). **Sustained rate (cycles 2-6) 0.0757 iter/s vs continuous steady state 0.1002 = 0.76x — burst scheduling is ~25% WORSE than training continuously**, and still 0.91x even discounting ALL restart cost. **Restart overhead ruled out as the explanation — MEASURED at 1-2s/burst**, not the tens of seconds needed to account for the gap. Striking detail: settled bursts run **10.7-11.1 s/iter, SLOWER than continuous training's own 9.98 plateau** — the device reaches a HOTTER equilibrium under cycling than under sustained throttled operation (plausible mechanism, NOT verified: each restart ramps the SoC back to high clocks and the repeated boost dumps more heat than steady throttled running). **Why Run C misled: it measured the ONE burst that starts from a genuinely cool chassis, which is unrepresentative of every burst after it** — Run B's chassis-heat finding recurring in its most consequential form. Caveat: n=1 for this arm, started ~3min after Run C so burst 1 began with elevated chassis heat (81 vs C's 91); cycles 2-6 converge regardless, and that is what the verdict rests on. **ROUND CONCLUSION (revised): thermal cost IS a fixed tax — but NOT because cooling is slow (it's fast: 346s/118s). Because the cold-start advantage belongs to the first burst only, and cycling settles at a hotter equilibrium than sustained operation. PRACTICAL RECOMMENDATION: train continuously, and don't gate on `thermalState`. No burst schedule is worth adopting at 10- or 60-min granularity.** Paper section corrected accordingly (4 Overleaf commits, `f47b541` reverses `3876ee3`'s headline), all still UNPUSHED. **SELF-LIMITING ARM (h10d) DONE 2026-07-30 — pacing loses too; the scheduling axis is now CLOSED at both granularity extremes.** New mode `--benchmark-thermal-selflimit [--selflimit-delay D --selflimit-minutes M]`, build `smollm3-ondevice-thermal-selflimit-h10d`, separate JSONL `train_bench_metrics_selflimit.jsonl`. Inserts a delay after EVERY iteration inside ONE continuous `LoRATrain.train` call — model/LoRA/graph/AdamW state all stay resident, so unlike h10c there are no restarts or boost transients. **Measurement validity verified in `LoraTrain.swift`:** `iterationsPerSecond` is computed BEFORE the progress callback and `start` resets AFTER, so a sleep in the callback is excluded from the reported rate — compute and imposed delay never contaminate each other. **PILOT (ascending D=0/2/4/6/0, 20min each) ABORTED — 20-min phases are RAMPS, not equilibria:** its D=0 phase (literally continuous training) read 8.05 s/iter instead of 9.98, because the device needs 40-50min to plateau. Any phase-mean ratio from short phases is junk, and the bias FLATTERS pacing. **COLD-START re-test (user's critique, correct — ascending-from-hot only tests whether pacing COOLS an already-throttled device, not whether it PREVENTS throttling): D=2, 60min, from a 45min-cooled device.** Converged to **compute 9.373 s/iter, effective 11.373 vs continuous 9.979 = throughput 0.877x, a 12.3% LOSS** (per-iteration time is 14.0% higher; 0.877x is the throughput figure, comparable to the cycling arm's 0.755x; duty 0.824, 359 iters, `converged` flag set) (crossed the 7.98 win threshold at ~27min). **No hysteresis — equilibrium is PATH-INDEPENDENT:** the cold-start curve is a scaled version of the unpaced one, ratio vs Run A at matched time rising 0.82→0.855→0.883→0.893→0.918, i.e. pacing lowers the asymptote ~8% but its advantage erodes toward equilibrium. **THE DECIDING NUMBER — measured exchange rate dc/dD = -0.303** s of compute bought per s of delay, against the **-1** pacing needs; the linear-frequency model predicted -1.149, so its convexity assumption is ~4x optimistic. Exchange rate got SHALLOWER as the run converged (-0.61@30min → -0.45@40min → -0.29@50min) — transient measurements systematically flatter pacing. **STEP-STRUCTURE ruled out too** (the last route to a win — sitting below a governor trip point buys a whole frequency step for a tiny delay): histogram of all 257 per-iteration compute values across the full 4.65→9.33 sweep has EVERY interior 0.25s bin occupied bar one (and that gap is where heating was fastest, simply traversed quickly); consecutive-iteration deltas median 0.072s / max 0.187s, no jumps. **Throttle response is CONTINUOUS**, ruling out steps >~3%; smaller steps can't beat the 2.7% smooth-curve loss predicted at D=0.5 anyway. **ANALYTIC FRAMING (worked through with a second session, corrected my own circular argument):** effective = c/u, and if c is affine in duty then effective = t1/u + (t2-t1) — the thermal penalty is duty-INDEPENDENT, only the irreducible cold cost is amplified by idling, so pacing always loses. That model is circular though: it concludes 'never pause' for ANY throttle severity, insensitive to the one parameter that must matter. The better model uses c=W/f (round time is the RECIPROCAL of what the governor controls, hence convex): with f linear in temperature, u* = ρ/(2(ρ-1)) and pacing wins iff **ρ = t2/t1 > 2**. Our ρ = 2.15 formally qualifies, predicting a window D ∈ (0,1.3s), optimum ~0.65s, **peak gain only +0.5%** — below the 0.84% run-to-run reproducibility, so unmeasurable in principle. Measurement then showed the real curve is ~4x less convex than linear-f implies, so the window is empty. **Aggregator extended** (`summarize_selflimit_session`/`print_selflimit_summary`): per-phase compute/effective/duty/ratio, the exchange rate against -1, and a **`converged` flag that refuses a verdict for phases <2400s** — encoding the pilot's lesson so it can't recur. **ROUND CONCLUSION now FINAL: no workload-scheduling strategy pays at any granularity — coarse bursts 0.755x, per-iteration pacing 0.877x. Same root cause: training already sits at the device's sustained dissipation envelope (~3.05W measured vs a published ~3-5W), so there is no thermal headroom to reclaim. This is a PLATFORM finding: the levers that work in the edge-LLM literature are DVFS/config selection (EnerInfer arXiv:2606.23001, PELM ACM 2026), and iOS exposes no frequency API — the only lever an app has is WHEN its work runs, and that lever doesn't pay.** Remaining open axis: heat per unit work, and separately ENERGY (pacing RAISES dynamic energy per unit work — a cooler device gets a higher clock at higher voltage — while reducing leakage, so the energy-optimal duty need not be 1). **Next action:** the h9 L run (user runs training themselves).
-- **Phase 3 — on-device energy characterization (h9) — DONE, closed 2026-07-29.** Design doc: `experiments/2026-07-26-ondevice-energy-h9-plan.md` (pinned 2026-07-26 via `/grill_me`; full run-by-run narrative incl. two voided/superseded sub-runs). Writeup: `experiments/2026-07-29-ondevice-energy-h9.md`. Purpose: a real joules-per-adapter number extending h5's already-computed-but-unconverted `battery_drain_pct_unplugged` metric. **Method:** unplugged (C2) `%drain × 3,998 mAh × 3.87V` (capacity confirmed via test-device model number `MG8N4ZD/A`'s `ZD/A` = Germany/Austria/Switzerland/Benelux/France region code, the physical-SIM-tray variant; full battery ≈ 55,700 J), minus a paired idle-baseline's average power × training duration. New harness **h9** (`TrainBenchConstants` schema v2→v3, `appBuild` intentionally unchanged — h6-style schema-only bump; adds `cpu_util_pct` via `host_statistics`/`HOST_CPU_LOAD_INFO` + new `idle_baseline` mode, both in `LLMEvaluator+TrainBenchmark.swift`). BGProbe uninstalled as part of this round (no longer needed post-h6). **Results, 3 profile sizes attempted:** XS (`u00008075`/405 examples) completed, 28,443 J net ≈ 51% of a full battery. L (`u00005020`/550) completed, 48,398 J net ≈ 87% of a battery. XXL (`u00012502`/987) **DIED at 1,460/2,961 iterations (49.3%)** — silent kill (no `run_end`/`error`, OS force-shutdown at critical battery, no adapter saved), 50,398 J net ≈ 90.5% of a battery consumed for less than half the work. **Confirmed, decisive finding: the one-charge on-device-training ceiling sits between L (550, completes) and XXL (987, dies having done half the work)** — cost scales markedly faster than iteration count (thermal accumulation over longer sessions, same `f(tokens,thermal_history)` pattern as h7/h8). Real problems found + handled during the round: 100%-charge start caused a total ~3h zero-drain fuel-gauge plateau on the first idle-baseline attempt (redone from 84-85%, still a milder version); no dedicated L/XXL idle baselines exist (XS's reused as a documented proxy); `devicectl`'s wireless connection needs a fresh USB reconnect once fully dropped. Extended (not replaced) `eval/e2e_aggregate.py` with `compute_energy()`/`energy_h9` block (schema-v3-only filtered, to avoid mispairing pre-h9 backlog runs); new `eval/plot_energy.py` → `results/ondevice/figures/energy_h9_2026-07-29.{pdf,png}`. Telemetry `results/ondevice/train_bench_metrics_e2e_smollm3_a1lamp_2026-07-29.jsonl`, aggregate `results/ondevice_e2e_smollm3_a1lamp_2026-07-29.json`. **Next steps:** the E2E (h5) backlog remains open independently (L's C1×2/C4×2, user 653 C0×1 — h9's C2 runs incidentally satisfy two of the backlog's C2 slots as a side effect, not its non-C2 conditions); whether a resumable multi-session foreground design could get XXL-sized profiles to completion is an open follow-on question, not attempted this round.
-
-- **LaMP coverage expansion (R7) — harness + training + eval + BFCL DONE 2026-07-15; BFCL regression investigated and knowingly accepted 2026-07-16.** Design doc: `experiments/2026-07-10-lamp-coverage-expansion-r7-a2lamp-plan.md`, pinned 2026-07-10 via `/grill_me`. Extended the LaMP suite from {3,4,7} to all six publicly-downloadable LaMP tasks — LaMP-1 (citation ID), LaMP-2 **both** variants (movie-tagging at `LaMP_2/new/`, news-categorization at `LaMP_2/`), LaMP-5 (scholarly title gen). LaMP-6 stays excluded (private Avocado corpus). **One shared Task-LoRA, not per-task adapters** (the design doc's own reversed-mid-grill decision). The adapter is called **One-LoRA FT** in all prose and paper text going forward — never "A2-lamp" (explicit user dislike of that wording, replaced everywhere 2026-07-14). **One-LoRA FT is now the canonical Task-LoRA, replacing A1-lamp** — A1-lamp stays on disk untouched at its old path, marked historical, not deleted.
-  - **Harness:** `eval_lamp.py` gained a `"classification"` metric path (`score_classification`: accuracy + macro-F1; `parse_bracket_choice` for LaMP-1, `parse_closed_vocab_label` for the LaMP-2 variants) plus TASKS entries for the 4 new tasks. `build_dataset.py` got matching TASKS entries and a **mixed-corpus filename collision fix** (`LEGACY_MIXED_TASKS` distinguishes the original 3-task `mixed` file from the new 7-task `mixed7`, so A1-lamp's canonical training data is never silently touched). The first `build_dataset_r7` submission failed outright on refuse-to-overwrite because LaMP-3/4/7's per-task files already existed — fixed by adding skip-and-reuse logic (`per_task_reused` sidecar) so existing per-task files are read-only reused, not rebuilt, while the mixed7/meta outputs keep strict refuse-to-overwrite.
-  - **Training:** `train/config/a2_lamp_1ep.json` (byte-identical to `a1_lamp_1ep.json` except paths), trained from the frozen base (not continued from A1-lamp) on the concatenated 7-task corpus — 72,062 examples (up from 42,964). 1 epoch, 2,250 steps, ~4h23m on 1 GPU, loss 1.86→0.89. Checkpoint: `train/checkpoints/a2_lamp_1ep_seed0/final/` (11 intermediate ckpts + `final`).
-  - **Eval:** 7-task test-split sweep (BM25 k=4, greedy, seed 0) — One-LoRA FT beats BM25-only on every task, biggest lifts on citation ID, title generation, and tweets (+0.12–0.14), smaller but positive on movie tagging, news categorization, ratings, and headlines (+0.01–0.02 over BM25). On the original 3 tasks the numbers are essentially unchanged from A1-lamp (ratings 0.81 vs 0.81, headlines 0.22 vs 0.23, tweets 0.57 vs 0.56) — the bigger, more varied corpus cost nothing on the tasks it already covered. Full table + provenance: `overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/2026-07-13-a2-lamp-training-r7.tex`. Appendix examples for the 4 new tasks (real dev-split, BM25-retrieved) added to `sections/90-appendix.tex` (split across 3 `figure*` blocks to avoid page overflow — LaMP-5's example needed its own figure with a truncated prompt).
-  - **Llama-3.1-8B/70B scale comparison extended to all 7 tasks** (2026-07-15, see the dedicated bullet below) — One-LoRA FT beats Llama-70B+BM25 on every task.
-  - **BFCL (DONE 2026-07-15, cluster 173870):** One-LoRA FT (`train/checkpoints/a2_lamp_1ep_seed0/final/`) scores **0.633 AST overall**, vs base 0.808 and A1-lamp 0.767 — a **−0.175 regression (−0.134 vs A1-lamp)**, far past A1-lamp's own −0.038. Per-category, the drop is concentrated in multi-call scenarios: `multiple` 0.86→0.50, `parallel_multiple` 0.785→0.58, while single-call categories (simple_python/java/js) are roughly flat or slightly better than A1-lamp. `multiple_function_checker:wrong_count` errors jumped 3→89. Result: `results/bfcl_ast_a2_lamp_1ep_seed0_final_seed0.json`.
-  - **Checkpoint sweep (DONE 2026-07-16, clusters 173912/173913/173914, checkpoints 200/1000/1800):** ruled out both simple overfitting and a data-ordering artifact. `build_dataset.py`'s mix pass does one global `rng.shuffle` across all 7 tasks (not per-task blocks), and `train.py` hands the result to a stock HF `Trainer` with its own seeded per-epoch `RandomSampler` — training-order exposure to all 7 tasks is already uniform well before step 200. The regression is not gradual/monotonic (that would say overfitting) — it collapses sharply between step 200 (0.777) and step 1000 (0.629), then plateaus through 1800 (0.649) and final (0.633). Two distinct, separable effects: (1) `mean_generated_tokens` declines steadily across the whole run (64.2→59.6), tracking the corpus's terse targets (single class words, rating digits, bracketed indices, one-line generations) — real but gradual; (2) the dominant, sharper effect is a **format-fidelity collapse on multi-call outputs** — rate of completely unparseable output (bare Python-dict-repr instead of the trained `<tool_call>{...}</tool_call>` JSON) jumps 0.7%→15.3% between step 200 and 1000, continuing to 21.7% by final. None of the 7 LaMP tasks' targets resemble this dict-repr format (checked directly against `data/lamp_train_mixed7_bm25k4.jsonl`), so this reads as SmolLM3's own pretrained formatting habit resurfacing as the adapter's grip on the tagged convention erodes, not the model copying a new task's output shape. Training loss/grad-norm across the collapse window (steps 150–1050) is flat and unremarkable — no spike, so this isn't visible as a training-stability issue. Full writeup: `overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/2026-07-15-bfcl-r7-regression.tex`.
-  - **Decision (2026-07-16): One-LoRA FT stays canonical despite this regression** — a knowing trade-off (broader LaMP coverage + strict per-task gains, accepted against materially worse multi-call tool-calling), not an oversight. This regression (Δ −0.137 vs A1-lamp) is larger than the one that triggered reverting 2-epoch A1-lamp back to 1-epoch (Δ −0.07, see `exp:bfcl-epochs`) — flagged to the user before the decision was made, not glossed over. **Follow-up still open:** Phase 3's E2E on-device plan (`experiments/2026-07-03-ondevice-e2e-training-plan.md`) names "fused A1-lamp Task-LoRA" specifically in its recipe and provisioning steps — that plan has not been updated to point at One-LoRA FT. Needs an explicit decision (re-point the pinned plan at One-LoRA FT, or deliberately keep Phase 3 on A1-lamp) before Phase 3 provisioning starts, not a silent default either way.
-  - The formal round writeup (`experiments/2026-07-10-lamp-coverage-expansion-r7-a2lamp.md`, distinct from the plan doc) still hasn't been written. R8's design is now pinned (see the dedicated bullet below); R9-R13 (LaMP-4 re-run + the four new-task first-time User-LoRA rounds) remain undesigned, per the same "design once real numbers are in hand" convention.
-  - **Uncommitted as of 2026-07-15:** `condor/eval_lamp_llama_r7_newtasks.sub` + `_smoke.sub` (already used for the Llama sweep below, user explicitly said to skip committing at submit time — still worth committing for provenance before this work is considered closed).
-- **User-LoRA Round 8 (LaMP-3 re-run on One-LoRA FT) — DONE 2026-07-17, writeup 2026-07-20. Personalization lift did NOT survive the base-adapter swap.** Design doc: `experiments/2026-07-16-user-lora-round8-lamp3-onelora-plan.md`. Writeup: `experiments/2026-07-20-user-lora-round8-lamp3-onelora.md` (both gitignored/uncommitted, matching this repo's actual convention for `experiments/*` — only a minority of round docs are force-added to git; check `git ls-files experiments/` before assuming a doc is versioned). **Purpose:** robustness check on Q4 (not a re-litigation — Phase 2 stays closed either way) — does LaMP-3's per-user personalization lift (R5: ΔMAE −0.050 at MDE, 7/91/2 win/tie/loss) survive when User-LoRA is stacked on One-LoRA FT instead of A1-lamp? **Result: no.** R8's C2′ (One-LoRA FT + BM25, no personalization) is fine on its own — acc 0.71 / MAE 0.310, actually slightly better than R5's C2 (0.68 / 0.340). But stacking the User-LoRA on top produces **C3′ = C2′ exactly** (acc 0.71 / MAE 0.310, mean_diff=0.0000, paired-t p=1.0, Wilcoxon p=1.0, 5/90/5 win/tie/loss vs R5's 7/91/2). This isn't "the adapter had no effect" — it changed 10/100 users' predictions, split exactly 5 wins / 5 losses, an exact cancellation, confirmed by diffing raw predictions directly. Recipe, K=100 pool, and per-user training data were all reused byte-identical from R5 (only `base_adapter` changed); provenance was independently re-verified at every layer (checkpoint weight-hash distinct from A1-lamp, training corpus confirmed 7-task via `train_meta.json`, all 100 configs/checkpoints/eval-results checked programmatically) — this is a real finding, not a mislabeled-checkpoint artifact. **Infra:** first K=100 training submit (cluster 174464) hit 83/100 failures — 75 on `tyr1` (known CUDA-busy oversubscription, unguarded because the exclusion was only added to the smoke subs, not backported to the main sub before submitting), 7 on `modi` (uncorrectable ECC error — flag to cluster admins if relevant), 1 benign refuse-to-overwrite collision with the smoke checkpoint. Retry excluding both hosts cleared all 82 genuine failures. **Bears on the open Phase 3 decision** (see the R7 bullet below) — Phase 3's on-device plan targets exactly the kind of per-user lift R5 demonstrated on LaMP-3, and this round is evidence that a fused One-LoRA FT base may cost that lift, not just BFCL tool-calling. **Next queued:** R9 (LaMP-4 re-run on One-LoRA FT, reusing R6's pool/data — same mechanical base-swap as R8) is planned, not yet built: `experiments/2026-07-20-user-lora-round9-lamp4-onelora-plan.md`. **R10-R13 viability analysis DONE 2026-07-20** (`condor/lamp_user_stats_newtasks.sub`, extending `data/lamp_user_stats.py` to all 7 tasks — first Condor submit failed on a path-resolution bug, `Path(__file__).parent.parent` doesn't resolve under Condor's sandboxed execution, fixed with the same `PROJECT_ROOT`/`LAMP_DIR` env-var pattern `build_dataset.py` already uses) — **result changes the scope**: only **LaMP-2-news** is viable (321 users, 102 unseen, real per-user volume up to 211 records, natural K~27 not 100). **LaMP-1, LaMP-2-movies, and LaMP-5 are dead ends** — essentially every user has exactly 1 record total across train/dev/test, same failure mode as LaMP-7. So "R10-R13" was the wrong framing; it's one new-task round (LaMP-2-news, number/design TBD) plus three tasks to drop from the User-LoRA program, not four rounds to design. Full numbers: `project_user_lora_per_task_viability.md` memory (also `data/lamp_user_stats/{LaMP_1,LaMP_2_movies,LaMP_2_news,LaMP_5}_users.csv`). **CORRECTED 2026-07-25 (see the PT1 bullet below): this record-level count was the wrong metric for LaMP-2-movies and LaMP-5.** Their profile entries (`{tag, description}` and `{title, abstract}` respectively) match their task's own input→output shape exactly the way LaMP-3/4's do — the same profile-entry-reframing trick `build_user_dataset.py` already implements for LaMP-3/4 was simply never tried on them. Cross-checked against the OPPU paper (arXiv:2402.04401): OPPU's own worked examples of genuinely history-*misaligned* tasks are LaMP-1 (citation ID — profile is lone papers, task needs a binary choice) and LaMP-7 (tweet paraphrase — profile is raw tweets, no paired original/paraphrase), for which OPPU substitutes unsupervised next-token prediction on right-shifted history instead of exclusion. **Revised viability: LaMP-2-movies, LaMP-2-news, LaMP-5 are viable via supervised profile-reframing (2-movies/5 not yet built); LaMP-1/LaMP-7 are viable via OPPU's unsupervised right-shifted-history recipe (new code path, not yet built); none of the 7 tasks are true dead ends.**
-- **Per-Task-LoRA: 7-task batch build + PT1 (LaMP-3) — PRE-EXECUTION as of 2026-07-25, design pinned, not yet implemented. Revised 2026-07-26: Task-LoRA training is now a single 7-task parallel batch, not a LaMP-3-only pilot.** Design doc: `experiments/2026-07-25-per-task-lora-pt1-lamp3-pilot-plan.md`, pinned 2026-07-25 via `/grill_me`, scope revised 2026-07-26. Opens a new **Per-Task-LoRA** adapter family — train one Task-LoRA per LaMP task (single-task corpus, not mixed), as opposed to A1-lamp (3-task mixed) and One-LoRA FT (7-task mixed) — and a parallel **PT-numbering** track for User-LoRA rounds stacked on it (PT1, PT2, ...), separate from the R-number User-LoRA sequence and separate from LongLaMP's LL-track. **Two stages with different readiness, per the user's explicit direction to parallelize rather than pilot-then-expand:** (1) train, BFCL-check, and full-test-split-eval **all 7** Per-Task-LoRAs as one parallel Condor batch — zero blockers, every per-task corpus already exists on disk; (2) User-LoRA stacking still rolls out **per task, as each becomes ready** — only LaMP-3 (**PT1**, this doc) and LaMP-4 (**PT2**, next — reuses R6's pool, no new code) are ready today. **This doc builds the 7-task Task-LoRA batch AND PT1's LaMP-3 User-LoRA round.** Task-LoRA recipe reused verbatim from A1-lamp/One-LoRA FT (r=4 q/k/v/o+mlp, α8, 1 epoch) for all 7. PT1 stacks User-LoRA on Per-Task-LoRA(LaMP-3) via R5's exact K=100 pool/per-user data (unchanged) and R5's OPPU recipe (unchanged), no pre-registered gate, descriptive reporting alongside R5's ΔMAE −0.050 and R8's exact 0.000. **This work is what surfaced the viability correction in the R8 bullet above** — while scoping which tasks would eventually get a Per-Task-LoRA + User-LoRA round, reading LaMP-2-movies/LaMP-5's actual profile schema (and cross-checking the OPPU paper) showed the earlier "dead end" conclusion was based on the wrong per-user counting method. **Follow-ups queued, not built in this doc:** a corrected viability re-analysis (profile-entry counts for LaMP-2-movies/5, history-text volume for LaMP-1/7) extending `build_user_dataset.py` with a stats-only mode, running in parallel with this work; PT2 (LaMP-4, mechanical, next); PT3+ (LaMP-2-news/2-movies/5, gated on the viability re-check and, for 2-movies/5, a `build_user_dataset.py` reframing extension); PT-rounds for LaMP-1/7, gated on a new unsupervised right-shifted-history CLM training path that doesn't exist yet. **R9** (LaMP-4 re-run on One-LoRA FT, already pinned, no new code needed) runs independently in parallel, unaffected by this new track.
-- **LongLaMP LL1 (Product Review Task-LoRA) — DONE 2026-07-25. Task-LoRA regresses well below BM25-only, driven by a greedy-decoding repetition loop.** Design doc: `experiments/2026-07-17-longlamp-review-ll1-plan.md`, pinned 2026-07-17 via `/grill_me`. Writeup: `experiments/2026-07-25-longlamp-review-ll1.md`. First round of a new benchmark track — [LongLaMP](https://longlamp-benchmark.github.io) (arXiv:2407.11016), a second, harder benchmark for **long-form** personalized generation (target outputs 93–305 tok avg, vs LaMP's short ratings/titles/tweets). LL1 = Personalized Review Writing, user (cold-start) setting. Runs on a **separate round-numbering track (`LL1`, `LL2`, ...)** and a **separate adapter family (`LongLaMP-LoRA`, this round `LongLaMP-LoRA (Review)`)** — not mixed into One-LoRA FT, not touching LaMP's `R1-R8` sequence. New parallel harness: `data/download_longlamp.py`, `train/build_longlamp_dataset.py`, `eval/eval_longlamp.py` — LaMP's harness stays untouched.
-  - **Result (test split, n=1822): floor 0.328 R-1 → BM25 baseline 0.343 (+0.015, small real personalization lift, tracks the paper's own modest Review-task gains) → LongLaMP-LoRA (Review) 0.182 (regression, well below both).** This is the opposite of every LaMP round's Q1 result. Root cause: the Task-LoRA degenerates into verbatim-sentence greedy-decoding repetition loops (generations run to ~897 mean tokens, near the 1024 cap, vs ~375–378 for floor/baseline). A diagnostic checkpoint sweep (100/200/300/400/final) showed the loop present from checkpoint-100 onward — not a late-training artifact like R7's BFCL collapse, so no earlier checkpoint dodges it. Matches a documented LoRA/greedy-decoding interaction (`huggingface/peft#1003`, `tloen/alpaca-lora#467`). One principled decoding mitigation was tried once (`repetition_penalty=1.3`, applied identically to all three arms, not swept against the metric) and made every arm *worse* (floor 0.339→0.197, baseline 0.331→0.073 hitting the 1024 cap) — rejected; the reported numbers use plain greedy (`repetition_penalty=1.0`, the new flag's no-op default).
-  - **BFCL: 0.645 AST overall** (base 0.808, A1-lamp 0.770, One-LoRA FT 0.633) — comparable magnitude to One-LoRA FT's regression, but LongLaMP's training corpus is long-form/prose-heavy (the opposite of R7's terse LaMP mix), so this complicates rather than confirms R7's "terse corpus" hypothesis for *why* SmolLM3 LoRA fine-tuning costs BFCL — open question for whoever designs LL2/LL3, not resolved here.
-  - **Two real bugs caught and fixed during execution, both worth knowing about if extending this harness:** (1) `data/download_longlamp.py` assumed HF split key `"validation"`; actual key is `"val"` — fixed after a real crash. (2) `train/build_longlamp_dataset.py` didn't add the standard `_limitN` suffix to smoke-run output paths (unlike every other build/eval script here) — a `--limit 20` smoke silently landed on the full-run's output path; fixed before it could collide with the real corpus.
-  - **max_seq_length raised 2048→8192** (`per_device_train_batch_size` 4→2, `gradient_accumulation_steps` 8→16 to hold effective batch 32) — the plan's verbatim-reused 2048 dropped 75% of training examples to truncation; LongLaMP's PPEP profile context + long `input` field routinely exceed LaMP-scale lengths.
-  - **Not yet decided:** whether to attempt a recipe/decoding revision (more epochs, higher rank, `no_repeat_ngram_size`, nucleus sampling) before scoping LL2 (Abstract Generation) / LL3 (Topic Writing), or proceed to those tasks first for a second data point on whether the regression is Review-specific. User-LoRA-on-LongLaMP remains undesigned and is now additionally gated on this decision.
-- **Phase 3 — per-iteration token-time characterization (h7) — DONE, closed 2026-07-25.** Design doc: `experiments/2026-07-24-ondevice-tokentime-plan.md`, pinned 2026-07-24 via `/grill_me`, 4 sub-runs (schema v1-v4) across two days. Purpose: cost model for the E2E (h5) round — turned into a bigger finding than planned. **Headline: per-iteration cost is NOT just `f(tokens)` — it's `f(tokens, thermal_history)`.** Two regimes, both on the canonical 50-token-step grid (50...1000, 20 cells), same exact h5 recipe (AdamW lr=1e-5 wd=0.01, r=8 q+v, GC on, batch=1): **HOT** (warm-up burst + no cooldown, representing a real sustained E2E session) → `seconds/iter ≈ -1.957 + 0.02154 × tokens` (r=0.992); **COLD** (cooldown-to-nominal gate between every cell, isolated measurement) → `seconds/iter ≈ -0.678 + 0.01158 × tokens` (r=0.993, but only genuinely clean ≲300-650 tokens — see below). At 500 tokens HOT costs ~1.7× COLD's per-iteration time, purely from accumulated thermal throttle. **Recommendation:** use the HOT fit for E2E cost predictions (matches real E2E's sustained-session conditions); COLD is a secondary best-case reference only. **A real secondary finding surfaced along the way:** the shared h3/h4 `cooldownCapSeconds=120s` is insufficient for isolating cells once training time (and therefore heat output) scales with token count — verified against raw per-iteration `thermal_state`, not guessed. Raising a *dedicated* `tokentimeColdCooldownCapSeconds` to 300s (h3/h4's own cap left untouched) genuinely helped (clean-nominal range 200→300 tokens, fit r 0.983→0.993) but didn't fully solve it — cells ≥700 tokens still never reach `nominal` even after 300s; true recovery time up there is still unknown. All 4 runs' telemetry/aggregates/design rationale are in the design doc's Result section (superseded runs kept for provenance, not deleted). Harness **h7** (`smollm3-ondevice-train-tokentime-h7`), two launch args `--benchmark-train-tokentime` (hot) / `--benchmark-train-tokentime-cold` (cold), aggregator `eval/train_tokentime_aggregate.py`. Figures are being produced in a separate concurrent session — not duplicated here.
-
-- **Phase 3 — gradient-checkpointing granularity sweep (h8) — DONE 2026-07-26.** Writeup: `experiments/2026-07-26-ondevice-gc-granularity-h8.md`. Design doc: `experiments/2026-07-25-ondevice-gc-granularity-plan.md`, pinned via `/grill_me` 2026-07-25. Direct follow-on to h4 (GC round, 2026-06-30, `experiments/2026-06-30-ondevice-training-gc.md`). Swept K (consecutive transformer blocks per checkpoint boundary) over all 9 divisors of 36 at fixed cap=1024, SmolLM3-3B-4bit, OPPU LoRA r=8/α16 q_proj+v_proj **all 36 layers**, AdamW lr=1e-5, 100 steps/cell. **Headline: K=1 (h4's original per-block default) is Pareto-best.** K=1→6 all trained cleanly. Peak memory rose monotonically and cleanly (4126→5238 MB, +27%, confirmed at matched thermal states too) — coarser checkpointing buys no compute benefit here (recomputed FLOPs during backward are invariant to grouping) while costing real memory. **Raw run-mean throughput looked like a clean ~14% decline (0.098→0.084 iter/s) but that's mostly a within-run thermal-drift confound** (each cell runs nominal→serious over its own 100 steps) — user pushed back on this, and grouping by matched `thermal_state` instead shows no trend at `nominal`/`fair` and only a smaller ~12% drop from K=1→3 that plateaus K=3→6 at `serious` (largest sample). So: memory cost is the robust, clean finding; the throughput cost is real but modest and plateauing, not a large monotonic effect — until **K≥9 jetsams outright** (hard OOM wall between K=6 and K=9, all 4 higher K's died identically on the first training chunk). Practical implication: no reason to checkpoint coarser than per-block for this recipe — this round confirms h4's existing default rather than motivating a change. **Two things found + fixed during implementation:** (1) a real, previously-unnoticed bug — the shared `TrainBenchConstants.loraLayers` (28, used unmodified by h1-h7 since 2026-06-29) is wrong; SmolLM3-3B actually has 36 hidden layers and `LoRAContainer.from` takes a *suffix* of `numLayers` blocks, so every on-device round through h7 trained LoRA on only the last 28 of 36 blocks, not "all layers" as documented (the cluster R5/R6 recipe it was meant to match has no such restriction). Fixed for h8 only (`granularityLoraLayers=36`); h1-h7 left untouched/not retroactively invalidated — **still open for the E2E (h5) backlog**, worth fixing there before it resumes. (2) the run used the A1-lamp-fused model instead of the plain base the design doc specifies (stale `modelConfiguration` from prior h5/h7 sessions, not reset before launch) — judged not to matter for compute/memory/thermal measurement (LoRA fusion only rewrites weight values in place, same shapes/architecture/4-bit packing; MLX's dense kernels are value-independent), recorded rather than silently ignored, not re-run. Implementation: `SmolLM3ModelInner.useGradientCheckpoint: Bool` → `checkpointGroupSize: Int?` (SmolLM3.swift, K=1 a degenerate case of the same grouped `CustomFunction` construction); harness h8 (`--benchmark-train-granularity --granularity-k <K>`, `train_bench_metrics_granularity.jsonl`); Mac-driven `scripts/run_granularity_sweep.sh` (one `devicectl --console` launch per K, continues past any jetsam); `eval/train_granularity_aggregate.py` + `eval/plot_granularity.py` → `results/ondevice/figures/granularity_2026-07-26.{pdf,png}`. Ran 12:00→16:26 CEST (~4h26m) on iPhone 17 Pro. **Next:** resume the E2E (h5) backlog (7 runs pending, block lifted 2026-07-16) — fix the loraLayers bug there first.
-
-- **Phase 3 — background-scheduled on-device training — h6 HARNESS BUILT + VALIDATED 2026-07-13, REAL 7-DAY RUN LIVE (restarted 2026-07-14, now on schema v7 + a parallel BGProbe control app) as of 2026-07-15, cap 2026-07-21T16:09:08Z, checkpoint still 0/1215 — see the HANDOFF block near the end of this bullet for exactly where things stand and what to do next.** Design doc: `experiments/2026-07-13-ondevice-bg-training-plan.md`, pinned 2026-07-13 via `/grill_me`. Follow-on to the E2E plan below, NOT a replacement — the E2E plan's foreground/screen-on 14-run matrix still runs as designed and stays primary. This round asks a deployability question instead of a cost question: does per-user training survive real Apple `BGProcessingTask` OS scheduling (no `isIdleTimerDisabled` foreground hack)? **Two co-equal headlines:** (1) calendar-time-to-complete vs device-compute-time-to-complete for one full adapter trained under real (non-forced) scheduling; (2) wake-scheduling characterization (wake count, gap distribution, per-wake time budget, charging correlation). **Subject:** single user S=`u00008075`/405 (smallest sample user, to maximize odds of finishing within the cap). **`requiresExternalPower=true`** (realistic "charging overnight" scenario; property is `requiresExternalPower` on `BGProcessingTaskRequest`, NOT `requiresExternalPowerConnected` as the design doc assumed — corrected against the actual SDK header during implementation). **Checkpoint/resume covers LoRA weights + iteration counter ONLY, persisted every 10 iterations** via chunked `LoRATrain.train()` calls (single blocking call — can't checkpoint mid-call). **Adam's optimizer moments reset to zero every wake** — `MLXOptimizers.AdamW`'s internal m/v state is `internal`-access with no public getter/setter (verified against `mlx-swift`'s `Source/MLXOptimizers/Optimizers.swift`); hand-rolling a replacement optimizer to work around this was considered and explicitly rejected (user call) rather than vendoring mlx-swift a second time. The plan doc's original "training stays mathematically continuous across wakes" goal is **dropped, not silently missed** — doesn't threaten the two headlines, but the loss-curve-continuity secondary deliverable will show real small restart bumps at wake boundaries (expected, annotated in `bg_progress.py`, not a bug). **Registration mechanism corrected during implementation:** SwiftUI's `.backgroundTask` scene modifier only has `.appRefresh`/`.urlSession` cases — no `.processing`, so `BGProcessingTaskRequest` uses the traditional `BGTaskScheduler.register(forTaskWithIdentifier:using:launchHandler:)` API from `LLMEvalApp.init()`, with `expirationHandler`/`setTaskCompleted` driving a cancellable child `Task` (see `LLMEvaluator+BGTrain.swift`'s `handleBGTrainTask`). **Info.plist:** `GENERATE_INFOPLIST_FILE`'s `INFOPLIST_KEY_*` synthesis does NOT support the two array-valued keys needed here (confirmed empty post-build) — fixed via a small merged `Applications/LLMEval/LLMEval-Info-Additions.plist` (`INFOPLIST_FILE` alongside `GENERATE_INFOPLIST_FILE=YES`, which Xcode merges) carrying `UIBackgroundModes=[processing]` + `BGTaskSchedulerPermittedIdentifiers=[mlx.LLMEval.bgtrain]`; confirmed present as real arrays in the built app's Info.plist via `plutil -p`. **Hard cap: 7 calendar days** — if incomplete, report as a headline finding, no foreground fallback. **Monitoring:** daily `devicectl` pull + ad hoc pulls, regenerates a static matplotlib progress figure (`eval/bg_progress.py`, built + smoke-tested against synthetic data) each time. Harness → **h6** (`smollm3-ondevice-train-bg-h6`), new JSONL `train_bench_metrics_e2e_bg.jsonl` + `bg_run_meta.json`. Build verified clean (`xcodebuild` succeeded, device destination). Force-quit-disables-next-wake behavior still unverified — no reason to have hit it during short debug cycles; watch for it during the real run. **Xcode debug-forced validation DONE 2026-07-13** (3 cycles via `_simulateLaunchForTaskWithIdentifier:` on user S=`u00008075`): checkpoint/resume confirmed correct across 3 consecutive wakes (10→20→30 iterations, always resuming from the last checkpoint, never restarting at 0). One real gap was found and fixed mid-validation: `bg_run_meta.json` was only written at a wake's graceful end, so a hard kill mid-wake (Xcode Stop, or a real SIGKILL) left that wake completely absent from the wake-timeline data even though `checkpoint_meta.json`/weights survived fine — fixed by upserting a lightweight partial wake-summary entry after every chunk checkpoint (not just at wake end), keyed by `wakeNumber` so re-triggers can't duplicate entries either. Also observed, unexplained, low-priority: a duplicate `wake_start` on every wake regardless of how many times the LLDB command was actually issued — didn't affect correctness, worth watching during the real run. **Validation data was NOT tagged `validation:true`** (the `--bg-train-validation` launch arg was added to the wrong Xcode scheme — `embedder-tool` instead of `LLMEval`) — remediated by wiping `train_bench_metrics_e2e_bg.jsonl`/`bg_run_meta.json` on-device (zero-byte overwrite) rather than relying on the flag; confirmed self-reset on submission — `bg_checkpoints/u00008075/` was verified empty right after. **Real run submitted 2026-07-13T11:32:10Z** (`--bg-train-submit --user u00008075 --condition bg_overnight`), confirmed via a fresh `bg_train_config.json` pull (`nUser=405`, `iterationsTotal=1215`) and an empty checkpoint dir. One extra gotcha hit at submission time, unrelated to the code: a stale provisioning-profile build error resolved on retry, then the device required a manual "Trust This Developer" tap in Settings ▸ VPN & Device Management before the app would launch at all — both are normal after a fresh install/build-hiccup cycle, not h6-specific. **RESTARTED 2026-07-13.** The first attempt (11:32:10Z) produced ZERO progress across 3 wakes over ~1 hour (11:39:57Z, 11:48:12Z, 12:18:36Z) — no wake ever completed a single 10-iteration chunk (`iterations_completed_total: 0` throughout, no `train`/`checkpoint` records, `bg_run_meta.json` stayed empty), and no further wake fired for 22+ minutes after the third, an unexplained stall on top of the non-progress. Root cause undiagnosed — the original schema had no visibility into whether wakes were dying during model load, LoRA/GC setup, or mid-training-chunk. **Added 3 new persistent JSONL markers** to `runBGTrainWake()` (NOT more `tlog` — tlog's stderr is only readable during a `devicectl --console`/Xcode-attached session, never during a real unattended wake, so more of it wouldn't have helped diagnose this): `model_loaded`, `training_setup_complete` (LoRA/GC applied, resume point known), `chunk_start` (stamped before each `LoRATrain.train` chunk attempt) — a wake that dies now leaves a precise breadcrumb of how far it got. Also added `--bg-train-cancel` (calls `BGTaskScheduler.cancelTaskRequestWithIdentifier:`) as a clean stop lever independent of a full uninstall, for future use. **Full reset performed:** `devicectl device uninstall` (kills any resident process, cancels the pending request, wipes the entire data container in one action — confirmed this is the correct/only reliable way to stop the chain, since `runBGTrainWake()` re-arms the next request as its literal first action, so wiping on-disk files alone would NOT have stopped it from continuing to fire), rebuilt + reinstalled, re-pushed the side-loaded `Documents/user_data/lamp3_*.jsonl` (6 users, from a local cached copy — uninstall wipes this too, easy to miss), resubmitted. **Gotcha:** uninstalling apparently resets the device's per-app trust record, not just app data — needed a second manual "Trust This Developer" tap in Settings before the reinstalled app would launch. **Confirmed clean restart:** fresh `bg_train_config.json` (`submittedAtUtc: 2026-07-13T12:55:52Z`), empty checkpoint dir, JSONL doesn't exist yet (no wake fired since reinstall). Old (voided) telemetry preserved for provenance, not deleted: `results/ondevice/{train_bench_metrics_e2e_bg,bg_run_meta,figures/bg_progress}_2026-07-13_VOIDED-attempt1.*`. **Now monitoring** (on-request, not automated — user pings periodically, no `/loop`/daily-scheduled pulls): pull `train_bench_metrics_e2e_bg.jsonl` + `bg_run_meta.json` via `devicectl device copy from`, save to `results/ondevice/` (dated), run `eval/bg_progress.py`. Do not force-quit the app from the app switcher — confirmed operationally critical, unverified-but-trusted per Apple docs that it disables the next scheduled wake. **Watch closely whether this restart repeats the same zero-progress pattern** — if it does, that itself becomes the headline finding (windows too short for this recipe to ever complete one chunk), and the new diagnostic markers should pinpoint exactly where. **Mistake caught + fixed right after the restart:** `devicectl device uninstall` also wiped the cached ~1.73GB model download (`ageyko/SmolLM3-3B-a1lamp-4bit`), not just training-generated files — CLAUDE.md's documented "model persists across reinstalls" only holds for an ordinary install-over-existing, not a full uninstall. Both submitted `BGProcessingTaskRequest`s have `requiresNetworkConnectivity=false` (valid when the model is cached, not valid for a multi-GB cold download), so a background wake almost certainly couldn't have redownloaded it. Caught because the user opened the app in the foreground to check on it and saw the download in progress; it completed there (foreground Wi-Fi, no background constraints) — confirmed no other state (config/checkpoint dir/pending wake) was disrupted. **Lesson for any future uninstall+reinstall on this project:** re-warm the model cache via a normal foreground app launch before trusting background requests to work — re-pushing side-loaded user data alone isn't sufficient. **First real progress + a second bug found, same day:** wake 0 (13:07:15Z) fully succeeded — model load (10s) → LoRA/GC setup (~33s) → 4 chunks/40 iterations (loss 2.56→2.44→2.72→2.51) → graceful `expiration_handler` termination → checkpoint saved. **First confirmed end-to-end proof the whole mechanism works on a real unattended wake.** But the next 2 wakes (13:19:05Z, 13:28:57Z) both died identically: `model_loaded` fires, then nothing — no setup-complete, no chunk, no checkpoint. The one difference from wake 0: both needed to resume the saved checkpoint. Investigated rather than just adding more markers (explicit user ask): found `loadLoRAWeights` used `Module.update(parameters:)`'s convenience overload, which hardcodes `verify: .none` + `try!` — shape-mismatch checking is skipped entirely, so a mismatch wouldn't throw, it'd silently corrupt state with the real crash surfacing later as an uncatchable native abort (matches the zero-trace symptom exactly). Not confident this is the true cause (identical code worked in debug validation, shapes should be deterministic) — leading hypothesis is memory pressure/jetsam from the extra allocation needed to load+assign the checkpoint on top of an already-loaded model, which background execution has a much tighter budget for than foreground/debug-attached. **Fix (h6 schema v2):** `loadLoRAWeights` now uses the throwing `verify: .shapeMismatch` overload (safety improvement regardless of root cause); added `resume_start`/`resumed` JSONL markers bracketing exactly the weight-load step with a `peak_mem_bytes` reading on success, to directly confirm or rule out the memory-pressure theory next wake. Rebuilt + reinstalled via a normal `devicectl device install` (no uninstall this time) — confirmed the 40-iteration checkpoint, model cache, and side-loaded data all survived intact. **Schema v2 did NOT resolve it:** 2 more wakes (13:59:04Z, 14:29:41Z) died in the SAME narrow window, but neither even reached `resume_start` — pushing localization earlier than the weight-load step itself. Now 4/4 consecutive resume-needing wakes dead in that early region vs. wake 0's lone fresh-start success; genuinely can't yet rule out "later wakes just get shorter OS windows than the lucky-first one" vs. "resume-specific work is the bottleneck" with only one fresh-start data point. **h6 schema v3 (2026-07-13, same day):** added `lora_apply_start`/`lora_apply_complete` markers bracketing `LoRAContainer.from(...)` directly (the one call both paths share), plus a **heartbeat mechanism** — `bg_heartbeat.json`, overwritten ~1x/sec by a concurrent `Task` (started after `wake_start`, cancelled via `defer` on every exit path) independent of milestone markers, so a silent death's last-written `wake_elapsed_s` gives the actual OS-granted time-slice length directly rather than only bounding it between two markers. Rebuilt + reinstalled normally again — checkpoint (40 iters) confirmed intact. **Schema v3's first dead wake (15:00:34Z) gave a much sharper localization**: `lora_apply_start` fired but not `lora_apply_complete`, and the heartbeat's last tick was at wake_elapsed=8.68s (just before `model_loaded`/`lora_apply_start` at ~9.6s) — meaning this wake died within roughly half a second of entering `LoRAContainer.from(...)`, not partway through a slow operation. Since that call is identical regardless of resume state and wake 0 sailed through it fine, this reframed the leading theory away from "resume-specific bottleneck" toward **wildly variable OS-granted window length** (as short as ~10s, vs. wake 0's 300+s). **User's thermal-throttling theory checked against the full trajectory**: thermal_state was `nominal` (fully cooled) at the start of every one of the 4 fast-dying wakes; only the wake immediately following wake 0's actual training ran `fair` (residual heat). Battery pinned at 100%/charging throughout. Data argues against thermal throttling as the driver, though `thermalState` is a coarse 4-level enum with no reading captured at the literal moment of death (wakes die too fast to log one) — not a hard rule-out, but doesn't support the theory either. **Deep research done (WebSearch, ~9 queries) on whether BGProcessingTask variance is a known phenomenon and whether better alternatives exist:** Apple's own `BGProcessingTaskRequest` header hedges explicitly — grants are "best-effort... as long as the user has used your app within the past week"; multiple Apple Developer Forum threads since 2020 report tasks suspended after as little as ~5 seconds despite "several minutes" being the documented target for heavy work (Core ML training is Apple's own cited example use case), and describe BGProcessingTask as "only working a fraction of the time" — closely matching our own empirical distribution (10s to 300+s). One forum lead, not confirmed: sustained high CPU utilization during a granted window can itself trigger an early watchdog kill despite BGProcessingTask nominally relaxing CPU limits — plausible and directly relevant given LoRA training is CPU/GPU-heavy, but unconfirmed by Apple docs. iOS explicitly runs energy/data budgets across the day and favors frequently-used apps in scheduling — our test methodology (submit once via `devicectl`, then leave the phone alone) doesn't resemble "frequent engagement" to the predictive engine, a real external-validity caveat: genuine production usage might score better than this unattended test does. Confirmed iOS 26's new `BGContinuedProcessingTaskRequest` (foreground-initiated, user-visible progress UI, possibly gated behind a background-GPU entitlement of uncertain availability on a free personal team) exists seemingly to address exactly this gap — read as corroboration that `BGProcessingTask` is the wrong tool for sustained heavy compute, not evidence of a bug in our implementation. Found a legitimate academic precedent for the empirical-measurement methodology itself: [Chen et al., "Smartphone Background Activities in the Wild," MobiCom 2015](https://www.sigmobile.org/mobicom/2015/papers/p40-chenA.pdf) (large-scale background-activity measurement across thousands of phones; pre-dates `BGTaskScheduler` but same general phenomenon) — no peer-reviewed paper found specifically reverse-engineering modern `BGProcessingTask` heuristics, which if anything makes this round's own characterization more novel. **Decision: keep the current `BGProcessingTask` round running as designed, do NOT pivot to `BGContinuedProcessingTask`** — that API answers a materially different research question (foreground-initiated + continues-into-background, not silent OS-scheduled wakes) and would be a new round, not a fix to this one. Treat "windows are highly variable and often too short for this recipe" as a real, well-corroborated headline finding for co-headline #2, citing the above sources as context in the eventual write-up (`experiments/2026-07-2X-ondevice-bg-training.md`). **2026-07-14: the ~30min/~10s pattern held for 30+ wakes over 16h then broke** (a ~4.5h gap, then a wake dying even earlier than usual, before `model_loaded`). Built `eval/bg_timeslice.py` (new: x=time since launch, y=granted time slice per wake, log scale) for fast repeated check-ins. **Root-caused rather than just observed further, per user push:** every wake since wake 0 dies SILENTLY (no `wake_end`, so `setTaskCompleted` never fires) — the only `Task.isCancelled` check was inside the training while-loop, never earlier, e.g. before the synchronous `LoRAContainer.from(...)` call where every recent death occurs. Hypothesis (explicitly unconfirmed, undocumented iOS internals): the scheduler may track clean-completion-acknowledgment as a signal for grant *size* (not scheduling *frequency*, which stayed rock-steady throughout — a distinction the user correctly pushed me to sharpen re: what `setTaskCompleted(success:)` actually means). **Fix (h6 schema v4):** `Task.isCancelled` checks added at every setup-path step boundary (not just the while-loop) + an independent loose wall-clock backstop (`bgWallClockBackstopS=25.0`, well above the ~10s death zone so it won't preempt a long wake like wake 0's ~324s) — both trigger a clean `return` so `setTaskCompleted` fires even on a zero-progress wake. Added `--bg-train-resubmit` (re-arms without wiping config/checkpoint/cap-origin, unlike `--bg-train-submit`). Cancelled the old request, rebuilt, normal-reinstalled (checkpoint 40 iters + config timestamp both confirmed intact), resubmitted. Full narrative + reasoning in memory (`project_bg_ondevice_training_plan.md`) — kept this entry to a summary to avoid further bloat. **v4 outcome (2026-07-14):** the wall-clock backstop DID fire cleanly once (a wake suspended by the OS for ~30.7 min, caught right after `model_loaded` with `wake_termination_reason: wall_clock_backstop`) — first proof the mechanism works — but the very next wake reverted to the same ~10s silent death, and across 5 more wakes checked the following morning, still 40/1215 iterations, zero grant-size recovery visible. **h6 schema v5 (2026-07-14):** `runBGTrainWake()` used to loop, attempting as many `bgChunkIterations`-sized chunks as time allowed within one wake (wake 0 ran 4 back-to-back before being cancelled) — i.e. always grabbing as much as it could get. Changed to attempt exactly ONE chunk per wake, checkpoint, then voluntarily return (`voluntary_yield`) even if more time was clearly available, layered on top of the unchanged v4 safety net. Explicit hypothesis test (user-proposed), not a confirmed fix: does a consistently small, quick, always-completes-cleanly request pattern earn steadier scheduling than a greedy one? Doesn't address the current dominant failure mode (dying during model load/LoRA setup, before any chunk is ever reached) — a complementary, lower-priority experiment. Cancelled the pending request, rebuilt + normal-reinstalled (checkpoint 40 iters confirmed intact via a fresh pull), resubmitted via `--bg-train-resubmit` (preserves checkpoint + original 7-day cap origin). Only 1 wake fired under v5 before the next step (below) — died silently at ~9.5s, same as the dominant pattern, never reaching the chunk loop (as flagged, v5 can't matter until a wake gets past setup). **TRUE RESTART 2026-07-14T16:09:08Z** (user request, after noticing `--bg-train-resubmit`'s by-design checkpoint/cap-origin preservation meant totals still read 40/1215 and "26.2h since launch" despite the v5 rebuild): cancelled, zero-byte-wiped `bg_run_meta.json`/`bg_heartbeat.json`/`train_bench_metrics_e2e_bg.jsonl`/`bg_train_config.json` on-device via `devicectl device copy to`, then `--bg-train-submit --user u00008075 --condition bg_overnight` (wipes the checkpoint dir itself + writes a fresh config). Confirmed clean: new `bg_train_config.json` (`submittedAtUtc: 2026-07-14T16:09:08Z`, `nUser=405`, `iterationsTotal=1215`), empty checkpoint dir, empty run-meta, 0-line JSONL. **New cap: 2026-07-21T16:09:08Z.** All prior telemetry (wakes 0-44, schema v1-v4 plus the one v5 wake) preserved locally as dated pulls in `results/ondevice/` — genuinely a fresh 0/1215 run under schema v5 now, not a resumed one. **7/7 post-restart wakes all died at 9.3-9.9s (median 9.5s)** — a tight, repeatable ceiling, not noisy variance. Checked all documented gating factors: Background App Refresh ON (global + per-app), Low Power Mode OFF, thermal nominal, entitlements/Info.plist confirmed correct (submit never throws `BGTaskSchedulerErrorCodeNotPermitted`). Corroborated by extensive external research (Apple dev forum threads going back to iOS 13, Apple's own guidance "never rely on background tasks for core functionality") that BGProcessingTask grant-size variance/short windows are a widely-reported, multi-year, cross-app phenomenon, not specific to this project. **Control experiment added 2026-07-15 (user request):** `ios/BGProbe/` — a brand-new, standalone, minimal Xcode project (NOT a target on mlx-swift-examples.xcodeproj, to keep zero risk to the live h6 round), bundle id `com.geyko.bgprobe`, task id `mlx.bgprobe.test`. Does nothing but register + resubmit a `BGProcessingTaskRequest` and log a 0.2s-resolution heartbeat (`Documents/bgprobe.jsonl`) — no model load, no heavy allocation, no real CPU/GPU work. Tests directly whether the ~9.5s ceiling is specific to LLMEval's resource footprint (model load + LoRA/GC setup) or a platform/device-level constraint that also hits a trivial, freshly-installed app with no prior scheduling history. Installed + launched once (foreground) to trigger initial registration; `submit: ok=true` confirmed via a fresh `bgprobe.jsonl` pull. **RESULT (2026-07-15): footprint hypothesis confirmed.** BGProbe's first 5 wakes: 57.4s (real graceful OS expiration), then 240.1-240.2s ×4 (hit BGProbe's own defensive 240s cap — the OS never cut it off; true ceiling is at least 4+ min). Directly compared against LLMEval in the same window: **wake timestamps matched EXACTLY between the two apps** (07:50:43Z, 08:20:54Z, 08:51:53Z, 09:24:47Z, down to the second — the OS batches both apps' background opportunities into the same maintenance windows) — LLMEval got ~9.5-10.2s at every one of those same instants; BGProbe got 240s+. **This is NOT a platform/OS-level ceiling** — the OS is willing to grant several minutes on this exact device/iOS build/moment, just not to LLMEval specifically. Proximate cause is almost certainly LLMEval's own resource footprint (loading the ~1.7GB 4-bit model) triggering an early memory-pressure kill right around `lora_apply_start`, not a generic short-grant phenomenon. Reopens "shrink LLMEval's setup footprint" as the clearly-indicated next step. **h6 schema v6 (2026-07-15, diagnostic-only, no behavior change):** added `peak_mem_bytes`/`active_mem_bytes` (`Memory.snapshot()`) to the `model_loaded`/`lora_apply_start`/`lora_apply_complete` markers, a single `GPU.resetPeakMemory()` near wake start for a clean per-wake baseline, and bumped the heartbeat cadence 1s→200ms (also now carrying the same memory fields) — prior localization already pinned death to within ~0.1-0.5s of `lora_apply_start`, too fast for 1s heartbeat resolution to say more; this should pin both timing and memory footprint at the moment of death much more precisely. Cancelled pending request, rebuilt (`BUILD SUCCEEDED`), normal-reinstalled (checkpoint dir confirmed genuinely empty — 0/1215 iterations completed since the 2026-07-14 restart, no wake has ever finished a chunk — and config's original `submittedAtUtc` intact), resubmitted via `--bg-train-resubmit`. **v6's first wake (11:05:57Z) gave the sharpest data point yet:** survived past setup for the first time since the restart — `model_loaded` 9.81s (peak=active=**3,459,923,896 bytes ≈ 3.46GB**, for a model whose 4-bit file is ~1.6GB — roughly 2x), `lora_apply_start` same footprint (no growth), `lora_apply_complete` at 10.01s (first time this marker ever fired — LoRA construction itself adds only ~6MB), `training_setup_complete`/`chunk_start` at 37.3s (a previously-invisible ~27s gap, almost certainly `capExamples()` tokenizing all 405 examples — a real, newly-discovered cost bigger than model load itself), then died anyway inside the actual training chunk. **The very next wake had the IDENTICAL ~3.46GB footprint and died within ~0.02s of `lora_apply_start` anyway** — same footprint, opposite outcome, ruling out "footprint always exceeds a fixed wall" in favor of fluctuating background-memory headroom (jetsam-style) on the device at that moment. BGProbe reached 9/9 wakes, 8/8 consecutive hitting its own 240s cap cleanly (never OS-killed) — reinforcing the contrast is real and consistent, not a fluke.
-
-**h6 schema v7 (2026-07-15) — first REAL behavior change** (not just instrumentation) since the footprint investigation began, per explicit user direction ("investigate why load costs 3.46GB"). Traced the vendored model-load path (`ios/mlx-swift-lm-local/Libraries/MLXLMCommon/Load.swift`, `loadWeights(...)`): weights are read from safetensors into a local `weights: [String: MLXArray]` dict → `quantize(model:)` builds the model's own parameter storage → `model.update(parameters:)` copies `weights` in → `eval(model)` materializes the WHOLE model at once. **Ruled out KV-cache preallocation cleanly** — `KVCacheSimple` grows lazily in 256-token steps, empty until the first forward pass, which hasn't happened yet at `model_loaded`. The `weights` dict staying alive in scope through `eval(model)` is the leading remaining candidate (if `update` doesn't just swap references, both copies could be resident at the peak moment) — not confirmed without live memory profiling (Instruments, unavailable in this toolset), presented as plausible not certain. **Fix attempt:** added `weights.removeAll()` right after `model.update(...)` succeeds, before `eval(model)` — cheap, low-risk, one line, in vendored code already edited once before (for GC). Rebuilt (`BUILD SUCCEEDED`), cancelled pending request, normal-reinstalled (nothing at risk, checkpoint already empty), resubmitted via `--bg-train-resubmit`. **NOT YET OBSERVED** — no wake had fired under v7 as of last check.
-
----
-**⚑ HANDOFF STATE for a fresh session (as of 2026-07-15, mid-investigation) — read this first, skip the long narrative above unless you need the "why" of a specific decision:**
-
-
-- **Live and running right now:** two separate apps on the same physical iPhone (UDID `00008150-000674C60A3B401C`, also shows as `61A5D517-E8C8-5701-85BA-7515E5EA3550` in `devicectl list devices` — both work).
-  1. **LLMEval** (bundle `mlx.LLMEvalJGW9U9Y36Y`) — the real h6 training round, schema **v7** (weights.removeAll() memory fix), user `u00008075`, checkpoint at **0/1215 iterations** (nothing banked yet since the 2026-07-14T16:09:08Z true restart), cap **2026-07-21T16:09:08Z**.
-  2. **BGProbe** (bundle `com.geyko.bgprobe`, project at `ios/BGProbe/`) — trivial control app, no model/no real work, reliably gets 240s+ grants (its own defensive cap, true ceiling unknown/higher). Keep this running alongside LLMEval as the standing control.
-- **The core finding so far:** BGProcessingTask grant length is NOT a platform/OS ceiling (BGProbe proves the OS grants 240s+ readily) — it's specific to LLMEval, almost certainly memory pressure from model load (~3.46GB peak for a ~1.6GB 4-bit file, roughly 2x expected). v7 is an untested fix attempt for that 2x gap.
-- **Immediate next action:** pull telemetry from BOTH apps (same pattern every time):
-  ```
-  export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-  xcrun devicectl device copy from --device 00008150-000674C60A3B401C --domain-type appDataContainer --domain-identifier mlx.LLMEvalJGW9U9Y36Y --source Documents/train_bench_metrics_e2e_bg.jsonl --destination /tmp/pull/train_bench_metrics_e2e_bg.jsonl
-  xcrun devicectl device copy from --device 00008150-000674C60A3B401C --domain-type appDataContainer --domain-identifier com.geyko.bgprobe --source Documents/bgprobe.jsonl --destination /tmp/pull/bgprobe.jsonl
-  ```
-  Check LLMEval's v7 records (`bench_schema_version == 7`) for `peak_mem_bytes` at `model_loaded` — did it drop below ~3.46GB? Did survival past `lora_apply_start` improve? Compare against BGProbe's wake timestamps (they've matched LLMEval's to the second every time so far — a real batching effect, not coincidence).
-- **If v7 didn't move the number:** that's real negative evidence against the "weights dict stays resident" theory — next place to look is inside `quantize(model:)` itself or MLX/Metal allocator overhead, which needs deeper vendored-code digging or, better, live Instruments profiling (not available through this toolset — would need the user to do it directly in Xcode).
-- **If v7 DID lower peak memory and survival improves:** consider whether a similar fix helps elsewhere, and whether the round can now realistically finish within the 2026-07-21 cap.
-- **Operational gotchas hit repeatedly this session, expect them again:** the device locks itself between check-ins constantly — every `devicectl device process launch` while locked fails with `FBSOpenApplicationErrorDomain error 7`; just ask the user to unlock it, this happened ~6 times this session and is normal, not a sign of a real problem. `devicectl list devices` showing `unavailable` usually means asleep, not actually disconnected — same fix.
-- **Build/deploy recipe (unchanged all session):** `xcodebuild ... -destination 'id=00008150-000674C60A3B401C' ... build` from `ios/mlx-swift-examples/`, then `--bg-train-cancel` (launch arg) → `devicectl device install app` (normal install, NEVER `uninstall` — that wipes the model cache and side-loaded user data, learned the hard way earlier in this round) → `--bg-train-resubmit` (preserves checkpoint + cap origin; use `--bg-train-submit` only for a deliberate full restart, which also needs zero-byte-wiping `bg_run_meta.json`/`bg_heartbeat.json`/the JSONL via `devicectl device copy to` first if you want clean telemetry too).
-- **Full blow-by-blow reasoning, every schema version's changelog, and all research/links** are in memory (`project_bg_ondevice_training_plan.md`) if the summary above isn't enough context for a specific decision.
----
-- **Phase 3 — E2E on-device per-user training (PRIMARY).** Status **IN PROGRESS as of 2026-07-13** (corrected — was stale-documented as "PRE-EXECUTION," actually provisioned and running since ~2026-07-06). Plan locked (grilled): `experiments/2026-07-03-ondevice-e2e-training-plan.md`. Shift from *cost benchmark* (generic 50-line data, weights discarded, fixed 200 steps) → *E2E*: train **real top-100 LaMP-3 User-LoRAs to completion (3 epochs) with the faithful R5 recipe, save the adapters**, and measure cost + how it degrades under adverse conditions. **Primary claim = COST** (time/energy/thermal/memory) as a function of profile size → extrapolate to all 100; **secondary = FIDELITY** via train-loss overlay vs cluster R5 (accuracy only a nice-to-have). **Recipe (minimal edits, NO fork):** 4-bit SmolLM3 **+ fused A1-lamp Task-LoRA**, `AdamW(1e-5)` (default wd 0.01 == R5 L2), r=8 q+v α16, batch 1, GC on (h4), `iterations=3×n_user`, cap 1024, save adapter. Forced deviations: 4-bit not bf16, no dropout, batch 1 not eff-8, fixed LR not cosine. **6 sample users**: S=`u00008075`/405, M=`u00005020`/550, L=`u00012502`/987, 448=`u00005228`, 500=`u00011077`, 653=`u00013218`. **4 conditions:** C0 ideal / C1 Low-Power-Mode / C2 unplugged / C4 heavy-3D-game contention. **14-run matrix**: S C0×1+C2×2 (3), M C0×3+C1×2+C4×2 (7), 448/500/653/L C0×1 each (4) = 14 total, ~25 device-hrs. **5 plots** (cost-vs-profile+extrapolation, thermal trajectory, condition bars, loss overlay, battery drain). **Energy only measurable UNPLUGGED** (no per-process power API) → C2 on short user S. Harness → **h5** (`smollm3-ondevice-train-e2e-h5`), JSONL `train_bench_metrics_e2e.jsonl` (dated pulls in `results/ondevice/`, cumulative — latest pull is authoritative, aggregate via `eval/e2e_aggregate.py`). **Progress as of the 2026-07-08 pull (7/14 runs done):** S C0×1 ✅, S C2×1/2 (1 more C2 needed), M C0×2/3 + C1×0/2 + C4×0/2 (5 more needed), 448 C0×1 ✅, 500 C0×1 ✅, L C0×1 ✅, **653 (`u00013218`) not started at all**. **Remaining 7 runs: S C2×1, M C0×1+C1×2+C4×2, 653 C0×1.** **BLOCKED until the h6 background-training round (above) concludes** (completes or hits its 2026-07-20 cap) — same phone, same app; a rebuild/reinstall to run more E2E launches risks disrupting the live pending `BGProcessingTaskRequest`/checkpoint, and more importantly, active foreground use of the app would itself feed iOS's engagement-recency scheduling heuristic and bias the h6 round's "unattended background" measurement (see h6 entry — confirmed via research, not speculative). Provisioning (fuse+convert 4-bit, publish HF repo `SmolLM3-3B-a1lamp-4bit`, side-load 6 user JSONL) is long done, not a blocker; see plan §Provisioning if ever re-needed from scratch.
-- **Phase 3 — on-device *cost* training benchmarks (DONE, superseded by E2E above).** Naive baseline **DONE 2026-06-29** (`experiments/2026-06-29-ondevice-training-naive.md`): naive LoRA FT of SmolLM3-3B-4bit jetsams on the first backward step at deployment seq lengths; feasible only to a **256-tok ceiling** (cap=512 OOMs), throttled there (0.41 iter/s, 4.1 GB). **Gradient-checkpointing variant DONE 2026-06-30** (`experiments/2026-06-30-ondevice-training-gc.md`). **Headline:** per-block GC lifts the ceiling **256 → 1024 tok (4×)** — cap=512 AND cap=1024 now train, zero OOM across the full sweep; memory savings grow with seq len (−17% @32 → −41% @256); **GC@1024 (4014 MB) fits in less peak than naive@256 (4128 MB)**; recompute cost ~0.78–0.85× naive iter/s. The bound is now thermal, not memory (cap=1024 = ~52 min/200 steps, `serious`). **Implementation:** per-block checkpoint via public MLX `CustomFunction`+`vjp` (NOT the raw `mlx_checkpoint` C binding — `Cmlx` isn't a public product; the C route would force vendoring mlx-swift too), LoRA params threaded as explicit differentiable inputs. `mlx-swift-lm` is now **vendored as a local SPM override** at `ios/mlx-swift-lm-local/` (replaces the remote pin in `project.pbxproj`; edits confined to `Libraries/MLXLLM/Models/SmolLM3.swift` — `SmolLM3Model.useGradientCheckpoint` flag). No fork of `LoraTrain.swift` needed (flag on the model drives the stock trainer). Harness h4, separate JSONL `train_bench_metrics_gc.jsonl`. (The "stack next MeBP technique" idea is deferred behind the E2E run.)
-- **Phase 3 — base-vs-Task-LoRA inference.** Deferred (was next milestone before training track opened). Also same-phone/same-app as the E2E and h6 rounds above — same "blocked until h6 concludes" reasoning applies once actually picked up. When resumed: fuse A1-lamp ckpt-1000, convert to MLX, swap `modelConfiguration` id, measure with existing inference rig.
-- **Round 6 (LaMP-4 multi-user) — DONE 2026-07-07.** Writeup: `experiments/2026-07-07-user-lora-lamp4-round6-multi.md`. **Headline:** cross-task OPPU-recipe replication on LaMP-4, K=100 users. Mean per-user ROUGE-1 0.235→0.242 (Δ+0.007), **not statistically significant** (paired-t p=0.20, Wilcoxon p=0.30, 95% CI [−0.002, +0.018] spans zero) — falls in the plan's pre-specified "≈0" disposition bucket, consistent with OPPU's own weak LaMP-4 result (+0.003 R-1) and our four single-user LaMP-4 rounds (R1–R4, all sub-MDE). Expected outcome per the plan's own priors, not a setback — R5's LaMP-3 confirmation of Q4 is unaffected; no R7 follow-up queued. Paper table updated: `overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/2026-06-18-per-user-lora-lamp3.tex` (`tab:r6-lamp4-multi`). Two infra issues surfaced and fixed along the way (see writeup): `tyr1` GPU-slot oversubscription (retry, no code change) and a Blackwell (sm_120) incompatibility on `fornjoter` (now guarded via `require_gpus` on all LaMP-4 GPU subs — the same guard the Llama subs already had; CLAUDE.md's own GPU-capability-ceiling note had already flagged this as likely to eventually hit un-hardened subs).
-- **Llama-family scale comparison — DONE 2026-06-30 on 3 tasks, extended to all 7 tasks 2026-07-15.** Original writeup: `experiments/2026-06-30-llama-scale-comparison.md` (LaMP-3/4/7 only). Extension results live in `overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/cross-model-comparison.tex` (no separate `experiments/*.md` writeup for the extension — just the paper section). Ran Llama-3.1-8B and Llama-3.1-70B-Instruct, no-profile + BM25 k=4, full test split, on the 4 new tasks (16-job matrix, Condor cluster 172483; one job hit the known transient `tyr1` GPU-oversubscription CUDA error and needed a retry with `Machine != "tyr1.hpc.uni-saarland.de"` added to `requirements`, cluster 172696). **Headline: SmolLM3-3B + One-LoRA FT beats Llama-3.1-70B-Instruct + BM25 on all seven LaMP tasks** — citation ID +0.13, movie tagging +0.01, news categorization +0.02, ratings +0.01, headlines +0.01, title generation +0.12, tweets +0.12. Llama-8B trails Llama-70B on every task as expected, and One-LoRA FT beats it by an even wider margin than it beats the 70B model. Scale alone narrows but does not close the gap to fine-tuning, now confirmed across the full 7-task suite, not just the original three. **The K=100 personalization-hard subset (Table 2) is still LaMP-3-only and was not re-run this round** — it needs User-LoRA retrained on One-LoRA FT first (that's the R8+ work queued under the R7 bullet above). Aggregator: `eval/tables.py`. Caveats: point estimates only (no CIs); R5's User-LoRA lift is at MDE (p≈0.10), so Table 2 inherits that.
-
-**The "no on-device/mobile code" hard constraint is LIFTED for Phase 3** (it
-remains the historical framing for Phases 1–2).
+> Compacted 2026-08-14. The previous 152 KB narrative version is recoverable verbatim:
+> `git show c230c48:CLAUDE.md`. Per-round detail lives in `experiments/*.md` and in the
+> memory files listed in `MEMORY.md`; this file keeps the durable facts, numbers, commands
+> and traps. When a round's memory file and this file disagree, **memory is newer**.
 
 ---
 
-## Phase 3 runbook — on-device deployment
+## Paper story (pivoted 2026-08-10, pinned via `/grill_me`)
+
+The paper is a **systems characterization of on-device LLM training**, in three acts:
+
+1. **Characterization** (h4–h11): memory wall, thermal wall, energy ceiling, scheduling null,
+   per-op breakdown.
+2. **Kernel fix**: MLX's non-transposed NAX quantized matmul — 1.93x end-to-end on a real
+   adapter. Upstream **PR #4051 filed 2026-08-07**.
+3. **Demonstration (h12)**: train the Per-Task-LoRA (LaMP-7) *entirely on-device* with NAX ON
+   and show benchmark parity with cluster training.
+
+**Per-user personalization is DROPPED from this track** (R5 at-MDE, R6 null, R8 exact
+cancellation) — demoted to motivation at most. Phases 1 & 2 stay frozen below as history.
+
+**Deadlines:** ODI (NeurIPS workshop) **2026-08-29 AoE**, 5 pages non-archival — existing draft
+`workshop_odi2026/` needs restructure + NeurIPS-2026 template swap. **HotMobile 2026-10-09.**
+
+**Landscape (survey 2026-08-10, memory `project_systems_pivot_landscape_2026-08.md`):** no
+"MELT for training" exists; no ≥1B real-task adapter has been phone-trained with
+benchmark-verified quality → h12 is a genuine first. Claim-calibration facts (NAX issues
+#3362/#3435, PEFT-compute prior art, bitsandbytes backward) are in that memory.
+
+---
+
+## Current state (2026-08-14)
+
+**LIVE: NAX-ON rerun campaign** — recreate every NAX-off on-device figure with the fixed kernel,
+verbatim protocols, plus off/on overlays. Plan `experiments/2026-08-11-nax-on-rerun-campaign-plan.md`;
+**live state is memory `project_nax_rerun_campaign.md` (authoritative, updated per night)**.
+
+- Done: h11 per-op, pinned-arm discrepancy check, h7 hot+cold, h10 Runs A/B/C + cycling, h8 sweep,
+  h9 XS + L energy points, full e2e C0 cost-law figure family.
+- Open: **cycling-verdict confirmation run at matched conditions** (sequencer committed c230c48),
+  h9 XXL unplugged point, battery-drain S C2, e2e figure refresh as points land.
+- Dropped from the campaign for good (user call 2026-08-12): **Low-Power-Mode (C1) and
+  game-contention (C4) arms** — never run NAX-off either, feed no figure, do not re-propose.
+- **h12 deprioritized behind the campaign** (user call 2026-08-11). Harness + data builder + Mac
+  control + MLX→PEFT converter built and committed (`6cc1488`); cluster reference already exists
+  (327 steps, LaMP-7 R-1 0.5597). Spec: `experiments/2026-08-10-ondevice-task-adapter-lamp7-h12-plan.md`
+  (self-contained, Decisions table settled), state: memory `project_task_adapter_h12_execution.md`.
+
+**Device is now on iOS 26.6 (23G71)**; every NAX-off round ran on 26.5.2 — carry this caveat on
+every off/on comparison.
+
+**Deferred / open, not abandoned:**
+- **Base-vs-Task-LoRA on-device inference** — the fused 4-bit model it needs already exists
+  (`ageyko/SmolLM3-3B-a1lamp-4bit`); swap `modelConfiguration` and reuse the h2/h3 inference rig.
+- **Unplugged decode-curve run** (pre-registered in the h1 plan): clean steady-state decode curves
+  are unobtainable while plugged, for both 3B and 8B.
+- **h5 E2E backlog** (7 of 14 NAX-off runs remain) — largely superseded by the NAX-ON campaign's C0
+  point set; C1/C4 are dropped for good.
+- **R9 / PT-track** cluster rounds are designed and pinned but not run (and are off the paper's
+  critical path after the pivot).
+- **MLX upstream:** audit the rest of the quantized `transpose=false` training path (see NAX section).
+
+---
+
+## Phase 3 — findings ledger
+
+One block per round. Numbers here are the quotable ones; raw telemetry paths are given so every
+figure is reproducible.
+
+### Inference (h1–h3, closed)
+
+- **SmolLM3-3B-4bit base inference, 2026-06-21** (`experiments/2026-06-21-ondevice-base-inference.md`):
+  decode ~37 tok/s (38.8 @64-tok prompt → 32.0 @2048), prefill 620–740 tok/s, cold
+  launch→answer ≈1.7 s (load 1362±114 ms + TTFT 380±6 ms), realistic LaMP-3 35.0±1.2 tok/s,
+  peak ≈2.2 GB. **Sustained decode throttles −53%** (37.8→17.9 tok/s over 5 min, knee ~90 s)
+  while `thermalState` stayed `nominal` the whole time — the enum is useless as a throttle proxy
+  at 3B. Telemetry `results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl`.
+- **Qwen3-8B-4bit, 2026-06-22** (`experiments/2026-06-22-ondevice-qwen3-8b-inference.md`):
+  feasible, no OOM under `increased-memory-limit`. Peak 4.74→5.43 GB, decode ~15.5 tok/s,
+  prefill ~240 tok/s, cold ≈2.8 s — all tracking the ~2.7x param ratio. Heat-soaks to `serious`
+  during the prefill sweep; sustained decode collapses to ~5 tok/s. **At 8B the thermalState enum
+  DOES report the throttle** (opposite of 3B). Harness h3 added `GPU.resetPeakMemory()` per cell
+  (before that, `peak_mem_bytes` was a session high-water mark confounded by execution order —
+  only the session peak was meaningful) plus `git_commit`/`git_dirty` per record.
+- **Capped/bursty stress, 2026-07-03** (`experiments/2026-07-03-ondevice-capped-stress.md`):
+  repeated 128-tok generations for 10 min from a cooled device. **3B 38.5→21.0 tok/s (−46%,
+  knee ~83 s), 8B 16.0→9.5 tok/s (−40%)**, flat peak 2.11/5.01 GB. Per-query gaps buy a little
+  headroom but do not avoid the throttle: the budget a user feels is the plateau, ~half the
+  cold-decode rate. 3B stays interactive throttled; 8B marginal (~13.5 s per 128-tok answer).
+  Figures `results/ondevice/figures/capped_stress_*_2026-07-03.*`.
+
+### h4 — gradient checkpointing (closed 2026-06-30)
+
+`experiments/2026-06-30-ondevice-training-gc.md`. Naive LoRA FT jetsams on the first backward at
+deployment lengths; feasible only to a **256-tok ceiling** (0.41 iter/s, 4.1 GB). Per-block GC
+lifts it **256 → 1024 tok (4x)**, zero OOM across the sweep; savings grow with length (−17% @32
+→ −41% @256); **GC@1024 (4014 MB) fits in less peak than naive@256 (4128 MB)**; recompute costs
+0.78–0.85x iter/s. The bound became thermal, not memory. Implementation: per-block checkpoint via
+public MLX `CustomFunction`+`vjp` with LoRA params threaded as explicit differentiable inputs
+(NOT the raw `mlx_checkpoint` C binding — `Cmlx` is not a public product). No fork of
+`LoraTrain.swift`; a flag on the model drives the stock trainer.
+
+### h5 — E2E per-user training (partially executed, superseded by the campaign)
+
+Plan `experiments/2026-07-03-ondevice-e2e-training-plan.md`, memory `project_e2e_ondevice_training_plan.md`.
+Train real top-100 LaMP-3 User-LoRAs to completion (3 epochs, faithful R5 recipe, adapter saved)
+and measure cost vs profile size. Recipe: 4-bit SmolLM3 **+ fused A1-lamp Task-LoRA**,
+`AdamW(1e-5)` (default wd 0.01 == R5 L2), r=8 q+v α16, batch 1, GC on, `iterations = 3 × n_user`,
+cap 1024. Forced deviations: 4-bit not bf16, no dropout, batch 1 not effective-8, fixed LR.
+**Sample users:** S/XS=`u00008075`/405, M=`u00005020`/550, L=`u00012502`/987, plus
+448=`u00005228`, 500=`u00011077`, 653=`u00013218`. (h9 relabels these XS=405, L=550, XXL=987.)
+Conditions C0 ideal / C1 Low-Power-Mode / C2 unplugged / C4 game contention. 7 of 14 planned runs
+completed NAX-off; **the NAX-ON campaign has since produced the complete C0 cost-law point set**
+(405/448/500/550/987) — token cost law `wall_s ≈ 0.0101·tokens + 222` (r=0.984) vs off `0.0183`,
+**1.81x cheaper per token**. Aggregate `results/ondevice_e2e_smollm3_a1lamp_nax-on_2026-08-13.json`,
+figures `{cost_law,cost_extrapolation,loss_curves,thermal_trajectory_composite,battery_drain}_nax-on_2026-08-13.*`.
+
+### h6 — background-scheduled training (closed 2026-07-16, negative result)
+
+Memory `project_bg_ondevice_training_plan.md` (full 100 KB blow-by-blow; schema v1→v7 changelog).
+**Mystery solved: plain `BGProcessingTask` grants ~2.3 s of real GPU access and then explicitly
+revokes it**, regardless of the granted wall-clock window. Control app `ios/BGProbe/`
+(`com.geyko.bgprobe`, trivial, no model) got 240 s+ at the *exact same* wake timestamps where
+LLMEval got ~9.5 s — so it is not a platform ceiling, it is this app's footprint (model load
+peaked ~3.46 GB for a ~1.6 GB 4-bit file) plus GPU revocation. The proper fix
+(`BGContinuedProcessingTaskRequest` + GPU entitlement) is **confirmed unsupported on iPhone 17 Pro
+/ iOS 26.5.2** via a `supportedResources` check. **True-background GPU training is unachievable on
+this hardware; foreground/screen-on is the only working path.** Checkpoint/resume works (LoRA
+weights + iteration counter every 10 iterations); AdamW moments reset each wake because
+`MLXOptimizers.AdamW`'s m/v are `internal` with no accessor.
+API facts worth keeping if this is ever revisited: the property is `requiresExternalPower` (not
+`…Connected`); SwiftUI's `.backgroundTask` modifier has no `.processing` case, so registration must
+use `BGTaskScheduler.register(forTaskWithIdentifier:using:launchHandler:)` from `App.init()`; and
+`runBGTrainWake()` re-arms the next request as its first action, so wiping on-disk state does not
+stop the chain — cancel it (`--bg-train-cancel`).
+
+### h7 — per-iteration token-time cost model (closed 2026-07-25)
+
+Plan+results `experiments/2026-07-24-ondevice-tokentime-plan.md`, memory `project_tokentime_plan.md`.
+**Cost is `f(tokens, thermal_history)`, not `f(tokens)`.** Grid 50…1000 tok, same h5 recipe.
+- HOT (sustained, no cooldown): `s/iter ≈ -1.957 + 0.02154·tokens` (r=0.992) ← **use this for E2E
+  predictions**.
+- COLD (cooldown-to-nominal between cells): `s/iter ≈ -0.678 + 0.01158·tokens` (r=0.993), genuinely
+  clean only ≲300–650 tok.
+- At 500 tok HOT ≈ 1.7x COLD. Secondary finding: the shared h3/h4 `cooldownCapSeconds=120` is
+  insufficient once cell duration scales with tokens; a dedicated 300 s cap helped (clean-nominal
+  range 200→300 tok) but cells ≥700 tok never reach `nominal` even then.
+- **NAX-ON rerun:** HOT `-1.476 + 13.52 ms/tok` (r=0.982), COLD `-0.489 + 7.15 ms/tok` (r=0.987)
+  → 1.59x / 1.62x slope drop. Quotable: **hot-with-fix ≈ cold-without-fix** (curves overlap).
+
+### h8 — GC granularity sweep (closed 2026-07-26)
+
+`experiments/2026-07-26-ondevice-gc-granularity-h8.md`, memory `project_granularity_plan.md`.
+K = consecutive blocks per checkpoint boundary, all 9 divisors of 36, cap 1024, 100 steps/cell.
+**K=1 (per-block) is Pareto-best.** Peak memory rises monotonically 4126→5238 MB (+27%) K=1→6 —
+the robust finding. Raw run-mean throughput looked like a clean −14% decline but that is mostly a
+**within-run thermal-drift confound** (user pushback, correct): grouped by matched `thermal_state`
+there is no trend at nominal/fair and only ~12% K=1→3 plateauing at serious. **K≥9 jetsams
+outright** (hard OOM wall between 6 and 9). NAX-ON rerun: throughput lifted uniformly ~1.6x
+(K=1 0.098→0.155 iter/s), **peak memory identical to the off round** (kernel changes dispatch, not
+allocation), OOM wall unchanged on iOS 26.6.
+This round also found the **`loraLayers = 28` bug** (SmolLM3-3B has 36 blocks and
+`LoRAContainer.from` takes a *suffix*, so h1–h7 trained only the last 28) — fixed for h8 onward
+(h10/h11 use 36); h1–h7 left as-is, h7's NAX rerun deliberately kept 28 for bug-compatibility.
+
+### h9 — energy (closed 2026-07-29)
+
+`experiments/2026-07-29-ondevice-energy-h9.md`, memory `project_energy_h9_plan.md`.
+Method: unplugged (C2) `%drain × 3998 mAh × 3.87 V` (full battery ≈ **55,700 J**; capacity from
+device model `MG8N4ZD/A`), minus a paired idle baseline's average power × duration.
+- NAX-off: XS(405) **28,443 J ≈ 51%** of a battery; L(550) **48,398 J ≈ 87%**; XXL(987) **died at
+  1460/2961 iterations (49.3%)** having consumed 50,398 J ≈ 90.5% — silent OS force-shutdown, no
+  adapter saved. **One-charge ceiling sits between 550 and 987 examples**, and cost scales faster
+  than iteration count.
+- NAX-ON: XS **17,667 J = 31.7%** of a charge, 1.94 h, 2.79 W avg; L **35,590 J = 63.9%**, 3.62 h,
+  **3.00 W avg vs off 3.06 — the sustained power envelope is unchanged, so time savings convert
+  directly to energy savings** (confirms h10's power-capped reasoning). Unplugged speedups (XS
+  1.20x, L 1.33x) are consistently *below* plugged per-op (1.5–1.9x) — candidate causes: battery
+  clock caps, iOS 26.6 confound. Flag, do not overclaim.
+- **Protocol rule: start energy runs from ≤85% charge, never 100%** — a 100%-start run sits on a
+  fuel-gauge plateau that under-reads drain (demonstrated twice; the voided 100%-start XS attempt
+  is kept as the citable demonstration).
+
+### h10 — thermal cooldown, duty cycling, pacing (closed 2026-07-30)
+
+Plan+results `experiments/2026-07-28-ondevice-thermal-cooldown-h10-plan.md`, memory
+`project_thermal_cooldown_h10_plan.md`. Six arms.
+- **Recovery is fast**: after a 60-min soak R = 2.146x, t50/t90/t95 = 180/327/346 s; after a
+  10-min soak t50/t95 = 82/118 s.
+- **60-min bursts are a wash**: best schedule 1.017 / 1.028 / 1.073x across three runs — the
+  cold-start bonus (+13.2% over a 60-min burst) evaporates in ~2 min.
+- **Run C (10-min soak) suggested 1.25x, and the sustained cycling arm (h10c, 10-on/2-off ×6)
+  REFUTED it: 0.755x — cycling is ~25% *worse* than continuous.** Bursts settle at 10.7–11.1 s/iter,
+  hotter than continuous training's own 9.98 plateau; restart overhead measured at 1–2 s/burst, far
+  too small to explain it. Run C measured the one burst that starts from a genuinely cool chassis.
+- **Self-limiting/pacing (h10d)**: inserting a delay after every iteration inside one continuous
+  train call converges to 0.877x (12.3% throughput loss). Measured exchange rate
+  **dc/dD = −0.303 s of compute bought per s of delay, against the −1 pacing needs**; throttle
+  response is continuous (no governor steps >3%); equilibrium is path-independent (no hysteresis).
+- **`thermalState` releases ~59 min LATE** after a long burst (~28 min after a short one) — gating
+  cooldowns on `nominal` (h3/h4/h7/h8 all did) burns an hour for nothing.
+- **Conclusion (NAX-off): no workload-scheduling strategy pays at any granularity.** Root cause:
+  training already sits at the device's sustained dissipation envelope (~3.05 W measured vs a
+  published 3–5 W), so there is no thermal headroom to reclaim. Platform framing: iOS exposes no
+  DVFS API, so *when* to run is an app's only lever and it does not pay.
+- **NAX-ON rerun flips the cycling verdict.** Thermal *structure* is kernel-invariant (R = 2.172x,
+  recovery 164/312/344 s, Run C t50 = 82 s identical), only the level scales (plateau 9.98→6.505,
+  cold ref 4.655→2.995). But the cycling arm now **settles cooler than continuous (5.13 vs 6.72
+  s/iter) and wins: 0.1644 iter/s = 1.105x continuous, where it lost by 25% off.** So "no schedule
+  pays" is **kernel-dependent**. Caveats before quoting: n=1, ambient uncontrolled (cycling ran
+  04:49–05:59 vs the off round's 22:06), continuous reference is the A+B plateau mean. **A matched
+  confirmation run is queued and required before the paper claims this.**
+
+### h11 — per-op / per-phase iteration breakdown (closed 2026-08-06)
+
+`experiments/2026-08-06-ondevice-perop-h11.md`, memory `project_perop_h11_plan.md`. Explicitly
+descriptive, nothing pre-registered. Tier 1 = 6-phase eval-barrier decomposition; Tier 2 =
+`GPU.startCapture` per-phase `.gputrace` read in Xcode's shader profiler.
+
+**Tier 1 (12 cells, 264 iterations, zero errors):** backward **~78%** of an iteration at ≥250 tok,
+forward ~21%, everything else <1%. `backward/forward = 3.5–3.9x`, above the textbook ~3x.
+**Shares are thermally invariant** (≲1 pp cool-vs-hot at matched tokens) while absolute cost rises
+~25%. `readback` is 0.000 s in all cells. `graph_build` flat ~0.031–0.038 s (pure CPU). Barrier
+overhead Σphases/fused = 1.02–1.08. Barriered peak memory is *lower* than fused (0.87–0.985x).
+Cold-ref 4.702 s/iter @500 tok reproduces h10's 4.609–4.710 — a cross-round rig check.
+Data `results/ondevice/train_bench_metrics_perop_2026-08-04.jsonl`.
+
+**Tier 2 kernel tables (all three phases ~100% transcribed):**
+- Forward: frozen 4-bit base weights `affine_qmm_t_*` **86.3%**, LoRA `steel_gemm_*` **3.2%**,
+  elementwise+copies 7.6%, SiLU 1.8%, attention+norm+RoPE 0.9% (**attention is negligible — the
+  model is weight-bound at these lengths**), loss 0.25%.
+- Backward: quantized matmul **89.95%**, elementwise 6.46%, LoRA gemm 2.21%, attn+norm+RoPE 0.80%.
+  Captured as top-K blocks; category totals stable across K (90.59% @K=4 vs 89.95% @K=12), and a
+  two-point fit separates the fixed lm_head term: `qmm_n/qmm_t = 25.9/K + 4.95` → at K=36,
+  qmm_n ~76.5% / qmm_t ~13.5%, i.e. **GC recompute is ~13–14% of backward, not the 7.2% a K=4
+  sample naively reads**.
+- Optimizer: pure elementwise, no matmul (75.7% elementwise, 18.8% sqrt/square, 5.5% scalar).
+- **SIMD-group count and cost rank disagree sharply** (`vvn_Multiply` runs 11x the groups of the
+  dominant `affine_qmm_t` for 4.79% of cost) — optimizing by op count targets the wrong thing.
+- **The number Tier 2 exists for:** adapter-attributable compute @250 tok = forward gemms 0.0209 s
+  + backward gemms 0.0617 s + the entire optimizer phase 0.0662 s = **0.1488 s of a 3.5523 s
+  iteration = 4.19%. ~95.8% of an on-device LoRA training iteration is the frozen base model.**
+- **Reading for the paper: PEFT saves memory and storage, NOT compute.** Freezing 99% of parameters
+  removes almost none of the work; the levers are the base-weight matmul path and the recompute.
+- Unplanned finding that led straight to the NAX round: forward uses the **tiled**
+  `affine_qmm_t_nax_...`, backward the **untiled** `affine_qmm_n_*`, costing 2.3x more per SIMD
+  group.
+- Kernel data `results/ondevice/perop_kernels_2026-08-04.json`; `.gputrace` bundles (~20 GB)
+  deleted after transcription (re-capture is ~90 s).
+- **NAX-ON rerun:** backward share **78% → 65–67%**, forward ~21% → ~32%, hot-500 fused
+  8.96 → 5.15 s (1.74x). Data `..._perop_nax-on_2026-08-11.jsonl`.
+
+### NAX kernel fix — MLX non-transposed quantized matmul (2026-08-06/07)
+
+`experiments/2026-08-06-mlx-nax-qmm-n-backward.md`, upstream handoff
+`experiments/2026-08-07-mlx-upstream-pr-handoff.md`, memory `project_mlx_nax_backward_patch.md`.
+**PR #4051 filed 2026-08-07.**
+
+**Premise:** MLX gates NAX on `transpose == true` (`quantized.cpp:694`), so backward's `dX` falls
+to a generic 32×32-tiled kernel while `affine_qmm_n_nax` sits compiled and unreachable.
+`QuantizedLinear` always computes `x·Wᵀ`, so `transpose=false` is reachable essentially only from a
+backward pass — **a training-only path**. Every NAX quantized bug filed to date is an inference
+path (#3925, #3887, #3797); a tracker search for `qmm_n` returns nothing.
+
+**Two independent upstream defects, both in one function (= code that was never run):**
+1. **Weight addressing uses the transposed layout** — `qmm_n_nax_tgp_impl` was copy-adapted from
+   `qmm_t_nax` and never converted (`wl += y_col*K_w`, `scales += y_col*K_g`, leading dim `K`).
+   Fixing 3 offsets + the leading dim makes it **bit-exact** (rel. error 1.5–7826 → 0.0). Also
+   repairs the MoE path (`affine_gather_qmm_n_nax` shares the impl).
+2. **No partial-M-tile handling** (`(void)M`, no `load_safe`/`store_safe`) — unaligned M **writes y
+   out of bounds** (~49 KB at M=250) while still returning correct values in the valid region by
+   luck. Fixed by porting `sgp_sm` + `dispatch_bool` + safe load/store from `qmm_t_nax`; verified
+   across M ∈ {1,2,31,…,1025} incl. the 33–63 range where `sgp_sm` goes negative. **M is now
+   unconstrained; the guard retains only `N % 64 == 0`** (structural for group_size ≥ 64).
+
+**Speedups.** Per-op paired A/B at h11's exact grid: backward 1.65–2.13x (mean 45% removed), whole
+iteration 1.45–1.68x (mean 1.55x). **E2E (the decisive arm, one full User-LoRA `u00008075`, 1215
+iterations): 2.906 h → 1.503 h = 1.93x, same loss (0.8829 vs 0.8813, −0.18%), loss correlation
+0.9999 over 1210 steps.** Quote **1.93x** as the realistic sustained figure; report per-op numbers
+as the mechanism decomposition, not a competing estimate.
+The **1.93x-vs-1.55x discrepancy**: the leading hypothesis (per-iteration arm alternation in the
+per-op design) was tested with a pinned-arm run and **REFUTED** — pinned gives 1.52x, agreeing with
+alternating. The gap must come from the long-session regime / 28-vs-36 loraLayers / real-data
+composition; still open. The pinned run also **closed the "unexplained ~3% forward residual"**:
+the forward control flips sign between designs (+5.7% pinned vs −3% alternating), so it is a
+design artifact, not a kernel effect.
+Data: `results/ondevice/train_bench_metrics_naxab*{,_h11grid,_e2e,_pinned}_*.jsonl`,
+analysis `eval/naxab_aggregate.py`, `eval/plot_naxab_e2e.py`.
+
+**Traps this round taught (each silently produces a FALSE NULL):**
+- **The NAX kernels are JIT-compiled at runtime from `Source/Cmlx/mlx-generated/quantized_nax.cpp`** —
+  editing `mlx/backend/metal/kernels/quantized_nax.h` does nothing in the mlx-swift build.
+  **Upstream it is the reverse**: `kernels/quantized_nax.h` is the source of truth there.
+- **SPM local-override identity**: the vendored directory must be named exactly `mlx-swift`
+  (SPM matches local packages by directory basename against the remote URL tail), or SPM silently
+  fetches unpatched MLX for `mlx-swift-lm`. Point both `mlx-swift-lm-local/Package.swift` and
+  `mlx-swift-examples/Package.swift` at `.package(path:)`.
+- **M = tokens − 1** (`LoRABatchIterator` slices inputs `[:, :-1]`), so an alignment grid must be
+  `{65,129,257,…}`; every iteration records `seq_len`/`seq_len_aligned_64` so this is verified.
+- **Vendor before building** — patch-in-place-then-vendor pays the long `Cmlx` rebuild twice.
+- **Test-data conditioning nearly produced a false positive**: `sin(row*a + col*b)` test matrices
+  make every row a smooth sinusoid, products cancel, the reference norm collapses and *every*
+  relative error inflates (the known-good generic kernel scored 0.99). Use a two-stage fractional
+  hash and log reference norms.
+- **Paired A/B needs a seeded batch iterator** (`LoRATrain.shuffleSeed`, local opt-in, default nil).
+  MLX's `LoRABatchIterator` otherwise uses Swift's unseeded system RNG, so the two arms consume
+  different batch orders and the comparison becomes unfalsifiable.
+- **Symmetric thermal protocol is necessary, not padding**: 60 min idle before *each* arm, baseline
+  first so residual heat works against the patched arm. Both arms then start `nominal`.
+- Device is left **SAFE**: `enable_nax_n()` defaults to 0, dispatch identical to stock upstream.
+  Patch documented in `ios/mlx-swift/{VENDORED,LOCAL_PATCHES}.md`.
+
+**Open upstream follow-ups:** audit the rest of the quantized training path (if `transpose=false`
+is systematically untested, two defects in one kernel predicts more — check `gather_qmm_n_nax`,
+`fp_quantized_nax`, K-tail handling); this could turn one bug into a finding about the class.
+Note NAX cannot be validated on the M3 Mac — all validation was on the A19 Pro phone.
+
+### h12 — on-device Task-LoRA (LaMP-7), the demonstration arm
+
+Spec `experiments/2026-08-10-ondevice-task-adapter-lamp7-h12-plan.md` (implement from it alone;
+Decisions table settled). Our A1-lamp recipe verbatim (not OPPU's); masked loss via Mac-side
+pre-tokenized ids + assistant-mask span (**prompt-prefix masking is documented-broken for SmolLM3
+in `train.py`**); effective batch 32 by accumulation, wd 0.0, clip 1.0; no gates, bare single-shot,
+smoke first. Three descriptive arms: cluster reference (`pt_lamp7_1ep.json`, exists), Mac control
+on the exact MLX 4-bit model, device overnight run (~7.3 h, 326 optimizer steps; corpus 10,437
+examples, mean ~212 tok, 0% over the 1024 cap).
+
+---
+
+## Phase 3 — runbook
 
 ### Runtime decision (verified against official sources only)
 
-- **Runtime = MLX** (`mlx-swift` on device, `mlx-lm` on the Mac). llama.cpp / ExecuTorch rejected.
-- Apple Foundation Models is the standard framework; "Core AI" is its ship-your-own-local-model provider. Apple's adapter-training toolkit is Apple-model-only (rank-32 LoRA bound to the OS system model) — cannot adapt SmolLM3.
-- **SmolLM3 is first-class in MLX**: `mlx_lm/models/smollm3.py` (Python) and `Libraries/MLXLLM/Models/SmolLM3.swift` (Swift, in `ml-explore/mlx-swift-lm`). Confirmed by reading source.
-- MLX is also the credible **on-device training** route (`mlx_lm.lora`, the `LoRATrainingExample` app, Apple paper arXiv:2510.03425).
-- **Model delivery = HF download on-device.** The app pulls `mlx-community/SmolLM3-3B-4bit` into its sandbox on first generation. We publish our own HF repo only once we fuse Task-LoRA.
+**Runtime = MLX** (`mlx-swift` on device, `mlx-lm` on the Mac). llama.cpp / ExecuTorch rejected.
+SmolLM3 is first-class in MLX (`mlx_lm/models/smollm3.py`, `Libraries/MLXLLM/Models/SmolLM3.swift`).
+Apple Foundation Models' adapter toolkit is Apple-model-only (rank-32 LoRA bound to the OS model) —
+cannot adapt SmolLM3. MLX is also the credible on-device *training* route (`mlx_lm.lora`, the
+`LoRATrainingExample` app, Apple paper arXiv:2510.03425).
 
-### Host / device / signing facts
+### Host / device / signing
 
-- Mac: Apple **M3, 16 GB**. Full Xcode 26.5 at `/Applications/Xcode.app`, but active dev dir is CommandLineTools — **prefix every Xcode/devicectl command** with `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
-- Signing: **Apple Development: andrew.geyko@icloud.com**, team **`JGW9U9Y36Y`** (free personal team; bundle IDs auto-disambiguated via `DISAMBIGUATOR=${DEVELOPMENT_TEAM}` in `Configuration/Build.xcconfig`).
-- Testbed: **iPhone 17 Pro** (`iPhone18,1`), iOS **26.5.1**, Developer Mode on. UDID **`00008150-000674C60A3B401C`**. List: `xcrun devicectl list devices`.
+- Mac: Apple **M3, 16 GB**. Xcode 26.5 at `/Applications/Xcode.app`, but the active dev dir is
+  CommandLineTools — **prefix every Xcode/devicectl command** with
+  `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
+- Signing: **Apple Development: andrew.geyko@icloud.com**, team **`JGW9U9Y36Y`** (free personal
+  team; bundle IDs auto-disambiguated via `DISAMBIGUATOR=${DEVELOPMENT_TEAM}` in
+  `Configuration/Build.xcconfig`).
+- Device: **iPhone 17 Pro** (`iPhone18,1`), **iOS 26.6 (23G71)**, Developer Mode on.
+  UDID **`00008150-000674C60A3B401C`** (also appears as `61A5D517-E8C8-5701-85BA-7515E5EA3550`).
+  Apps: **`mlx.LLMEvalJGW9U9Y36Y`** (main) and `com.geyko.bgprobe` (BGProbe control, h6).
+  List devices with `xcrun devicectl list devices`.
+- **Model delivery = HF download on-device**: the app pulls its `modelConfiguration` repo (~1.73 GB
+  for the 4-bit 3B, ~4.3 GB for 8B) into the sandbox on first generation, over Wi-Fi, once. It
+  survives install-over, not uninstall.
 
-### Local MLX toolchain (Mac-side)
+### Mac-side MLX toolchain
 
-- venv **`.venv-mlx/`** (Python **3.11** — 3.14 too new for MLX wheels), `mlx-lm` (mlx 0.31.2). Gitignored.
-- Convert + quantize: `.venv-mlx/bin/python -m mlx_lm convert --hf-path HuggingFaceTB/SmolLM3-3B --mlx-path data/models/SmolLM3-3B-mlx-4bit -q --q-bits 4`
-- Sanity generate: `.venv-mlx/bin/python -m mlx_lm generate --model data/models/SmolLM3-3B-mlx-4bit --prompt "..." --max-tokens 60` (SmolLM3 has **thinking mode on by default** — emits `<think>…</think>`).
+venv **`.venv-mlx/`** (Python **3.11** — 3.14 has no MLX wheels), `mlx-lm` (mlx 0.31.2), gitignored.
+```
+.venv-mlx/bin/python -m mlx_lm convert --hf-path HuggingFaceTB/SmolLM3-3B \
+  --mlx-path data/models/SmolLM3-3B-mlx-4bit -q --q-bits 4
+.venv-mlx/bin/python -m mlx_lm generate --model data/models/SmolLM3-3B-mlx-4bit --prompt "..." --max-tokens 60
+```
+SmolLM3 has **thinking mode on by default** (emits `<think>…</think>`).
 
-### iOS app — vendored, edited, built, deployed
+### iOS app — vendoring layout
 
-- **`ios/mlx-swift-examples/`** is vendored into this repo via `git subtree` (upstream `ml-explore/mlx-swift-examples` base `378f244`). Edit harness files → ordinary `git commit`. Bump upstream: `git subtree pull --prefix=ios/mlx-swift-examples https://github.com/ml-explore/mlx-swift-examples <tag> --squash`. Only `build/` + Xcode user state gitignored. See `ios/README.md`.
-- LLM libs come from `ml-explore/mlx-swift-lm`, **vendored as a LOCAL SPM override** at `ios/mlx-swift-lm-local/` (was remote-pinned; converted 2026-06-30 for the gradient-checkpointing experiment — `SmolLM3.swift` has the per-block GC support). The Xcode project references it via `XCLocalSwiftPackageReference "../mlx-swift-lm-local"`; `.build/` gitignored, source tracked. To bump upstream, re-copy a fresh checkout (minus `.build`/`.git`) over the local dir and re-apply the SmolLM3 GC edits. mlx-swift itself is still remote-pinned. mlx-swift-examples remains git-subtree vendored.
-- **Edited:** `ios/mlx-swift-examples/Applications/LLMEval/ViewModels/LLMEvaluator.swift` (`modelConfiguration` → `mlx-community/SmolLM3-3B-4bit`; `appendBenchRecord(...)` appends one flat-JSON line per generation to `Documents/bench_metrics.jsonl`; `hardwareModelIdentifier()` helper).
-- Benchmark harness: `ios/mlx-swift-examples/Applications/LLMEval/Benchmark/{BenchmarkSupport,LLMEvaluator+Benchmark}.swift` (+ edits to `LLMEvaluator.swift`, `ContentView.swift`, `project.pbxproj`). Bump `BenchConstants.appBuild` whenever harness logic changes.
+- `ios/mlx-swift-examples/` — vendored via `git subtree` (upstream base `378f244`). Edit + commit
+  normally. Bump: `git subtree pull --prefix=ios/mlx-swift-examples <url> <tag> --squash`.
+- `ios/mlx-swift-lm-local/` — **local SPM override** of `ml-explore/mlx-swift-lm` (converted
+  2026-06-30 for GC). Edits: `Models/SmolLM3.swift` (`checkpointGroupSize`), `LoraTrain.swift`
+  (`LoRATrain.shuffleSeed`), `Load.swift` (`weights.removeAll()` before `eval(model)`).
+- `ios/mlx-swift/` — **local SPM override of mlx-swift carrying the NAX patch.** Directory name
+  must stay exactly `mlx-swift` (see SPM identity trap above).
+- Harness code: `Applications/LLMEval/{ViewModels/LLMEvaluator.swift,Benchmark/*}`,
+  `LLMEval-Info-Additions.plist` (carries `UIBackgroundModes`, `BGTaskSchedulerPermittedIdentifiers`,
+  `MetalCaptureEnabled` — `INFOPLIST_KEY_*` synthesis cannot express array-valued keys).
 
-**Build (device, signed)** — `-skipMacroValidation` is **required** (else fails on `MLXHuggingFaceMacros … must be enabled`):
+**Build (device, signed)** — `-skipMacroValidation` is **required** (else it fails on
+`MLXHuggingFaceMacros … must be enabled`):
 ```
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 cd ios/mlx-swift-examples
@@ -109,67 +392,137 @@ xcodebuild -project mlx-swift-examples.xcodeproj -scheme LLMEval \
   -derivedDataPath ./build -allowProvisioningUpdates -skipMacroValidation \
   DEVELOPMENT_TEAM=JGW9U9Y36Y build
 ```
-Output: `build/Build/Products/Debug-iphoneos/LLMEval.app`, bundle id **`mlx.LLMEvalJGW9U9Y36Y`**.
-
-**Install + launch:**
+**Install + launch (install-over, NEVER uninstall):**
 ```
-xcrun devicectl device install app --device 00008150-000674C60A3B401C build/Build/Products/Debug-iphoneos/LLMEval.app
-xcrun devicectl device process launch --device 00008150-000674C60A3B401C mlx.LLMEvalJGW9U9Y36Y
+xcrun devicectl device install app --device 00008150-000674C60A3B401C \
+  build/Build/Products/Debug-iphoneos/LLMEval.app
+xcrun devicectl device process launch --device 00008150-000674C60A3B401C mlx.LLMEvalJGW9U9Y36Y <args>
 ```
-First generation downloads ~1.73 GB from HF (Wi-Fi, one-time; model persists across reinstalls of the same bundle id). The app UI requires a human tap to start generation.
-
-### Reading metrics off the device
-
-No live console (macOS `log stream` has no `--device`; `log collect --device` needs root; `idevicesyslog` not installed). Pull the JSONL from the app container (no sudo); accumulates one line per run:
+**Pull telemetry** (no live console: macOS `log stream` has no `--device`, `log collect --device`
+needs root, `idevicesyslog` is not installed):
 ```
 xcrun devicectl device copy from --device 00008150-000674C60A3B401C \
   --domain-type appDataContainer --domain-identifier mlx.LLMEvalJGW9U9Y36Y \
-  --source Documents/bench_metrics.jsonl --destination /tmp/devpull/bench_metrics.jsonl
+  --source Documents/<file>.jsonl --destination /tmp/devpull/<file>.jsonl
 ```
 
-### Base-inference benchmark — DONE 2026-06-21
+### Harness conventions
 
-Design: `experiments/2026-06-21-ondevice-base-inference-plan.md`. Writeup: `experiments/2026-06-21-ondevice-base-inference.md`. Rig is reused verbatim for base-vs-Task-LoRA.
+- `app_build` string per mode (`smollm3-ondevice-train-perop-h11`, `...-thermal-cooldown-h10`,
+  `...-granularity`, `...-tokentime-h7`, `...-bg-h6`, `qwen3-8b-ondevice-bench-h3`, …). **Bump it
+  whenever harness logic changes**; schema version bumps are separate and per-mode.
+- **One JSONL per mode** in `Documents/` (`train_bench_metrics_{e2e,gc,granularity,thermal,
+  selflimit,perop,naxab*,e2e_bg}.jsonl`) so an in-flight round's file is never touched. Dated pulls
+  land in `results/ondevice/`; aggregates in `results/ondevice_*.json`.
+- **`--nax-arm on|off` is honored globally in every bench mode** (commit `d75d940`): records carry
+  `nax_arm`, `app_build` is suffixed `-nax-<arm>`, and JSONLs route to `_nax-<arm>` siblings
+  (aggregators summarize whole files, so separation prevents kernel-mixing). `--pin-arms` keeps the
+  arm constant per sub-block for A/B.
+- Every record carries `git_commit`/`git_dirty`, thermal state, memory, and a passive sampler
+  (10–30 s cadence depending on mode).
+- Aggregators/plots (all in `eval/`, **note `.gitignore` has `eval/*` — use `git add -f`**):
+  `bench_aggregate.py`, `e2e_aggregate.py`, `train_tokentime_aggregate.py`,
+  `train_granularity_aggregate.py`, `thermal_aggregate.py`, `perop_aggregate.py`,
+  `naxab_aggregate.py`, `bg_progress.py`, `bg_timeslice.py`, `dedupe_gputrace.py`,
+  `plot_{thermal,granularity,energy,perop,naxab_e2e}.py`,
+  `plot_{perop,tokentime,granularity}_overlay.py`.
+- Sequencing scripts live in `scripts/` (`nax_rerun_night*.sh`, `run_granularity_sweep.sh`).
 
-**Headline (steady-state, cool device, n=5/cell):** decode ~37 tok/s at deployment context sizes (gen64: 38.8 @64-tok prompt → 32.0 @2048), prefill 620–740 tok/s, cold app-launch→first-answer ≈ 1.7 s (model load 1362±114 ms + cold TTFT 380±6 ms), realistic LaMP-3 (natural EOS) 35.0±1.2 tok/s, peak ≈ 2.2 GB (at 2048-tok contexts).
+**Launch args by round** (all passed to `devicectl device process launch`):
 
-**Two findings that shape the next pass:**
-1. **Sustained decode throttles −53%** (37.8 → 17.9 tok/s over 5 min / 6144 tokens, knee ~90 s) and `ProcessInfo.thermalState` stayed `nominal` throughout — coarse enum is useless as throttle proxy; trust per-segment tok/s.
-2. **Clean steady-state long-decode curves unobtainable while plugged.** Pre-registered unplugged-over-Wi-Fi follow-up is the way to get a clean decode curve — deferred, not blocking.
+| Round | Args |
+|---|---|
+| h2 inference | `--benchmark` (cold+prefill+decode), `--benchmark-tail` (realistic + 5-min stress), `--benchmark-cold` |
+| h4 capped stress | `--benchmark-stress-capped` |
+| h5 E2E | `--user <uid> --condition <C0\|C1\|C2\|C4>` |
+| h6 background | `--bg-train-submit --user U --condition C`, `--bg-train-resubmit` (keeps checkpoint + cap origin), `--bg-train-cancel`, `--bg-train-validation` |
+| h7 token-time | `--benchmark-train-tokentime`, `--benchmark-train-tokentime-cold` |
+| h8 granularity | `--benchmark-train-granularity --granularity-k <K>` |
+| h9 energy | `--benchmark-train-idle-baseline` (+ h5 args, `--condition C2`) |
+| h10 thermal | `--benchmark-thermal-cooldown --soak-minutes M --probe-interval-s S`; `--benchmark-thermal-cycle --burst-minutes 10 --rest-seconds 120 --cycles 6`; `--benchmark-thermal-selflimit [--selflimit-delay D --selflimit-minutes M]` |
+| h11 per-op | `--benchmark-train-perop [--idle-minutes N]`; `--benchmark-train-perop-capture [--capture-tokens N] [--capture-backward-layers K]` |
+| NAX A/B | `--benchmark-nax-ab [--pin-arms]`; `--nax-arm on\|off` (global, every mode) |
 
-**Harness verified vs `mlx-swift-lm` source:** EOS suppression for forced length = drive `TokenIterator` directly and ignore the stop-token set to `maxTokens` (EOS check is in MLXLMCommon's loop wrapper, not `TokenIterator.next()`); `model_load_ms` brackets the `ModelContainer` load. Launch args: `--benchmark` (cold + prefill + decode), `--benchmark-tail` (realistic + 5-min stress, separate launch), `--benchmark-cold` (load+1 gen+exit, ×3 for cold variance). `app_build` baked in (`smollm3-ondevice-bench-h2`).
+**Canonical NAX-off data files** (the campaign's overlays compare against these):
 
-**Deliverables:** aggregator `eval/bench_aggregate.py` (stdlib-only); raw telemetry `results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl` (89 records); aggregate `results/ondevice_base_smollm3_4bit_2026-06-21.json`.
+| Round | Telemetry / aggregate |
+|---|---|
+| Inference 3B | `results/ondevice/bench_metrics_smollm3-4bit-base_2026-06-21.jsonl` → `results/ondevice_base_smollm3_4bit_2026-06-21.json` |
+| Inference 8B | `bench_metrics_qwen3-8b-4bit-base_2026-06-22.jsonl` → `results/ondevice_base_qwen3_8b_4bit_2026-06-22.json` |
+| Capped stress | `bench_metrics_{smollm3-4bit,qwen3-8b-4bit}-stresscap_2026-07-03.jsonl` → `results/ondevice_stresscap_*.json` |
+| h7 | **hot = `results/ondevice_tokentime_smollm3_4bit_*_fine50.json`, cold = `*_cold_v4.json`** — several other aggregates exist and fit different slopes; these two are canonical |
+| h8 | `train_bench_metrics_granularity_2026-07-26.jsonl`, figures `figures/granularity_2026-07-26.*` |
+| h9 / E2E | `train_bench_metrics_e2e_smollm3_a1lamp_2026-07-29.jsonl` → `results/ondevice_e2e_smollm3_a1lamp_2026-07-29.json` (energy block is schema-v3-filtered) |
+| h10 | `train_bench_metrics_thermal_2026-07-28.jsonl` → `results/ondevice_thermal_smollm3_4bit_2026-07-28.json` |
+| h11 | `train_bench_metrics_perop_2026-08-04.jsonl` → `results/ondevice_perop_smollm3_4bit_2026-08-04.json` + `perop_kernels_2026-08-04.json` |
+| NAX A/B | `train_bench_metrics_naxab{_h11grid,}_2026-08-06.jsonl`, `..._naxab_e2e_2026-08-07.jsonl` |
 
-**`peak_mem_bytes` caveat:** MLX `peakMemory` is a process high-water mark (monotonic within a session), so per-cell peaks are confounded by execution order — meaningful number is the session peak (~2.2 GB). Reset-per-run is the h3 improvement for the base-vs-LoRA comparison.
+---
 
-### 7B-class characterization (Qwen3-8B-4bit) — DONE 2026-06-22
+## Operational traps (each of these has already cost hours)
 
-Exploratory "does the next size class up fit + run, and at what cost" pass. Reuses the 3B plan verbatim (same grid/regime/harness), only the subject model swapped. Writeup: `experiments/2026-06-22-ondevice-qwen3-8b-inference.md`. Subject = `mlx-community/Qwen3-8B-4bit` (8.2B; first-class `qwen3` arch in `mlx-swift-lm`; `enable_thinking:false` matches the SmolLM3 thinking-off regime). **`peak_mem_bytes` caveat above is RESOLVED here** — harness bumped to **h3** (`app_build` `qwen3-8b-ondevice-bench-h3`): `GPU.resetPeakMemory()` before each measured gen → clean **per-cell** peak; `git_commit`/`git_dirty` now baked into each record. `--benchmark` (`.full`) ran the whole suite (cold+prefill+decode+realistic+stress) in one ~95-min session.
+**Device / launch**
+- A **resident app silently absorbs new launch args** — an idle instance makes a launch a no-op.
+  **Kill any resident PID before every launch** (`devicectl device process signal --signal SIGKILL`).
+- `devicectl … process launch --console` **propagates SIGTERM to the app** — killing the monitor
+  kills training (`signal 15`). Launch detached and poll the device JSONL instead.
+- Run long sequencers under `nohup` + `caffeinate -ims`, fully detached: **harness-tracked
+  background tasks have been killed mid-experiment twice.**
+- Device locked → `FBSOpenApplicationErrorDomain error 7`; `devicectl list devices` showing
+  `unavailable` usually means asleep. Ask the user to unlock. Set Auto-Lock to Never for runs.
+- A wedged devicectl tunnel stuck "connecting" is fixed by **killing user-level `remotepairingd`**
+  (no sudo). A fully dropped wireless connection needs a fresh USB reconnect.
+- **Never `devicectl device uninstall`** — it wipes the ~1.7 GB cached model *and* side-loaded
+  `Documents/user_data/*.jsonl`, and resets the per-app trust record (requires a manual
+  Settings ▸ VPN & Device Management tap). Install-over is always the right move. After any
+  uninstall, re-warm the model cache with a foreground launch before trusting anything else.
+- 8B weights get evicted by reinstalls; the next launch re-downloads ~4.3 GB and can appear hung —
+  SIGKILL and relaunch.
+- **"Plugged" is not guaranteed**: a 448-example C0 run drained 100→25% on Mac USB power. Check the
+  charger source for plugged runs.
 
-**Headline — feasibility YES:** Qwen3-8B-4bit runs on the iPhone 17 Pro, **no OOM/jetsam**, per-cell peak **4.74 GB (p64) → 5.43 GB (p2048)** under the `increased-memory-limit` entitlement. Cost vs the 3B (clean nominal channel = cold + prefill-64): **decode ~15.5 vs ~37 tok/s (0.40×), prefill ~240 vs ~684 tok/s, cold app-launch→answer ≈ 2.8 vs 1.7 s (load 2043 ms + TTFT 770 ms), peak ~5.0 vs ~2.2 GB** — all tracking the ~2.7× param ratio. Realistic LaMP-3 tier = clean 1-token answers (thinking-off confirmed for Qwen3).
+**Metal GPU capture (h11 Tier 2)**
+- `MTLCaptureManager.stopCapture()` **finalises asynchronously** — starting the next capture too
+  soon fails with `Already capturing`, an mlx-c fatal that kills the process, and the symptom points
+  at a wedged device. Poll `isCapturing` (`awaitCaptureIdle()`); do not substitute a fixed sleep.
+- **Never SIGKILL a capture-mode process** — it wedges the capture daemon persistently (survives
+  device reboot; quitting Xcode releases it).
+- `devicectl` **cannot read symlinks** (ELOOP, aborts the whole transfer) and Metal fills bundles
+  with them. **Hard-link** on device (not copy — links point inside the same bundle, copying
+  re-expands duplicates and blows past a 3 GB cap), pull, then re-collapse with
+  `eval/dedupe_gputrace.py`.
+- Deduping a bundle whose transfer is still running **silently corrupts it** (truncated files hash
+  equal); the script now refuses to run on an unsettled directory.
+- The replay ceiling is on **resource count, not bytes** (~1900–2200 files): a *smaller* backward
+  trace fails where a *larger* forward one replays. Shrinking tokens never helps because backward's
+  file count barely moves with sequence length — use `--capture-backward-layers K` instead.
+- `MetalCaptureEnabled` **is** honoured under a `devicectl` launch. `GPU+Metal.swift`'s doc comment
+  claiming `MLX_METAL_DEBUG` is required is stale.
 
-**Two findings:**
-1. **8B heat-soaks the phone fast** — reaches `serious` *within* the prefill sweep; sustained/decode collapses to ~5 tok/s (a 2048-tok answer can take >7 min). Plugged-and-idle it can't recover between cells. 8B deployment is thermally bounded, not throughput-bounded.
-2. **At 8B `ProcessInfo.thermalState` DOES report the throttle** (`serious`) — opposite of the 3B, where the enum lied `nominal`. The load is heavy enough the coarse enum catches it; still trust per-segment tok/s as primary.
-
-Telemetry `results/ondevice/bench_metrics_qwen3-8b-4bit-base_2026-06-22.jsonl` (68 records); aggregate `results/ondevice_base_qwen3_8b_4bit_2026-06-22.json`. Decode/realistic/stress cells are all hot-device (`serious`) — clean steady-state 8B decode curve still needs the deferred unplugged-over-Wi-Fi run. `modelConfiguration` id is left at `mlx-community/SmolLM3-3B-4bit` (the training-track default); flip the one line in `LLMEvaluator.swift` to Qwen3-8B for 8B work.
-
-### Capped-stress (bursty-workload) throttle — DONE 2026-07-03
-
-Writeup: `experiments/2026-07-03-ondevice-capped-stress.md`. Re-ran the sustained-stress test as a **realistic bursty workload**: repeated **128-tok** forced generations back-to-back for **10 min** (each a fresh 256-tok prefill), device cooled to `nominal` first — instead of one continuous 60k-tok decode. New harness mode `--benchmark-stress-capped` (`runStressCapped`), harness **h4** (`ondevice-bench-stresscap-h4`, schema v4), one JSONL record per generation with a real-wall-clock `stress_elapsed_s` column. Aggregator (`bench_aggregate.py`) stress block now carries `elapsed_s` + stress `peak_mem_bytes`; plot (`plot_thermal_stress.py`) prefers real elapsed + has a `--title` flag.
-
-**Headline:** bursty throttles nearly as hard as continuous. **3B 38.5→21.0 tok/s (−46 %)**, knee ~83 s; **8B 16.0→9.5 tok/s (−40 %)**, both nominal→fair→serious, no OOM/jetsam, **flat peak 2.11 / 5.01 GB**. Per-query prefill gaps buy a little headroom (8B settles ~9.5 vs continuous ~5) but don't avoid the throttle — **the steady-state budget a user feels under sustained use is the plateau (~half the cold-decode rate), not the cold-start number**. 3B stays interactive throttled; 8B marginal (~13.5 s / 128-tok answer hot). Telemetry `results/ondevice/bench_metrics_{smollm3-4bit,qwen3-8b-4bit}-stresscap_2026-07-03.jsonl`; aggregates `results/ondevice_stresscap_{smollm3_4bit,qwen3_8b_4bit}_2026-07-03.json`; figures `results/ondevice/figures/capped_stress_*_2026-07-03.{pdf,png}`.
-
-**Gotcha:** the 8B run hung ~25 min at model load — Qwen3-8B-4bit had been evicted from the app sandbox by reinstalls since 2026-06-22, so first load re-downloaded ~4.3 GB and stalled. `devicectl … process signal --signal SIGKILL` on the stuck PID + relaunch recovered it. **Before any 8B on-device launch after a gap, expect a re-download; if it hangs (cold phone, no JSONL growth), kill + relaunch.**
-
-**Paper:** this replaced the sustained-decode figure in the write-up. The LaTeX lives in a **separate git repo at `~/Documents/Research/overleaf/`** (remote `git.overleaf.com`, `git pull`/`git push` to sync). The on-device inference experiment is `sections/experiments/2026-06-21-ondevice-base-inference.tex`; its `\autoref{fig:thermal-stress}` now includes `sections/figures/thermal_stress_overlay.pdf` = the bursty capped-stress overlay (copied from `results/ondevice/figures/capped_stress_overlay_2026-07-03.pdf`), stress paragraph + caption updated to match. Pull before editing, push when done.
-
-### Phase 3 next steps
-
-- **E2E on-device per-user training (PRIMARY next):** execute `experiments/2026-07-03-ondevice-e2e-training-plan.md`. Provisioning first (pull A1-lamp ckpt + raw `lamp_time/LaMP_3` + R5 per-user loss from cluster; fuse+convert 4-bit; publish HF `SmolLM3-3B-a1lamp-4bit`; side-load 6 user JSONL). Then harness h5 (`AdamW`, `iterations=3×n_user`, save adapter, capture loss, timed battery, `--user` arg). Then the 14-run matrix. Note: the fuse+convert+publish step here is the SAME artifact the base-vs-Task-LoRA inference milestone needs — do it once.
-- **Task-LoRA on-device inference (base-vs-Task-LoRA):** reuses the fused HF model published above; swap `modelConfiguration` id, measure base vs Task-LoRA with the inference rig.
-- **Unplugged decode-curve follow-up** (pre-registered, deferred).
+**Measurement validity**
+- **Check matched-thermal-state slices before publishing any run-mean trend** — within-run drift
+  manufactures trends (h8). Memory `feedback_thermal_drift_confound.md`.
+- **Phases must reach equilibrium**: the device needs 40–50 min to plateau; 20-min phases are ramps
+  and ramps systematically *flatter* whatever intervention is being tested (h10d pilot).
+- **Verify schedules by running them**: single-burst extrapolation predicted 1.25x, sustained
+  cycling measured 0.755x (h10).
+- **Score an arm against the right baseline, or it reports a false null**: a 10-min soak never
+  reaches continuous training's throttled steady state, so scored against its *own* plateau (correct
+  for the 60-min runs) h10 Run C read −0.1% instead of +50.6%. Fixed by `apply_reference_plateau()` —
+  short-soak sessions borrow only the long-soak continuous baseline, keeping their own burst work.
+- The **cold-reference probe is necessary but not sufficient** as a cross-run check — it measures
+  die temperature, so three runs agreed within 2% while the bursts they preceded differed 5.4% in
+  work. Report idle history alongside it.
+- **`ProcessInfo.thermalState` is not a throttle proxy**: it lied `nominal` through a −53% decode
+  throttle, reads `serious` from the first bucket of every training session, and releases ~59 min
+  *late* after a burst. Do not gate on it.
+- MLX fuses a whole training iteration into one lazy `eval` — per-phase timing needs explicit
+  barriers. MLX dense/quantized kernels are value-independent, so timings do not depend on which
+  weights are resident (which is why h11's no-op weight-snapshot bug did not affect timings; it was
+  removed and fidelity is instead read as loss *continuity* across the mode boundary).
+- `Module.update`'s leaf case swaps the handle *inside* an existing `MLXArray`, so
+  `trainableParameters()` returns **aliases** of the live arrays — a "snapshot" taken that way
+  tracks training and restores nothing. A genuine reset needs a deep copy.
 
 ---
 
@@ -179,82 +532,178 @@ Writeup: `experiments/2026-07-03-ondevice-capped-stress.md`. Re-ran the sustaine
 
 | Q | Status |
 |---|---|
-| **Q1** — Does fine-tuning on LaMP help a 3B model at all? | **YES** — A1-lamp ckpt-1000 gives +0.11 / +0.07 / +0.13 on LaMP-3/4/7 test over BM25 baseline. |
-| Q2 — Synthetic preference-conditional data on top of LaMP? | DROPPED with 2026-06-02 pivot. |
-| Q3 — General Task-LoRA vs domain-specific? | DROPPED with 2026-06-02 pivot. |
-| **Q4** — Per-user LoRA on time-ordered user history beyond Task-LoRA alone? | **YES (LaMP-3)** confirmed by R5 (2026-06-19): ΔMAE −0.050, acc 0.680→0.730, RMSE 0.616→0.575, zero inference overhead. **Does not extend to LaMP-4**: R6 (2026-07-07) found mean ΔR-1 +0.007, not significant (p=0.20) — expected per the plan's own priors (OPPU's own LaMP-4 lift is a weak +0.003 R-1). Q4 stands as LaMP-3-specific. |
-| **Q5** — Does the 3B + two-LoRA stack survive a scale comparator (Llama-3.1-{8B,70B}-Instruct + BM25)? | **YES** (2026-06-30): A1-lamp Task-LoRA beats Llama-70B+BM25 on LaMP-3/4/7 by +0.006/+0.017/+0.116; on K=100 LaMP-3 the two-LoRA stack reaches 0.730 acc / 0.290 MAE vs Llama-70B+BM25 0.700 / 0.330. `experiments/2026-06-30-llama-scale-comparison.md`. |
+| **Q1** — does fine-tuning on LaMP help a 3B model at all? | **YES** — A1-lamp ckpt-1000: +0.11 / +0.07 / +0.13 on LaMP-3/4/7 test over the BM25 baseline. |
+| Q2 — synthetic preference-conditional data | DROPPED (2026-06-02 pivot). |
+| Q3 — general vs domain-specific Task-LoRA | DROPPED (2026-06-02 pivot). |
+| **Q4** — per-user LoRA beyond Task-LoRA? | **YES for LaMP-3** (R5: ΔMAE −0.050, acc 0.680→0.730, RMSE 0.616→0.575, at MDE p≈0.10). **Null on LaMP-4** (R6: ΔR-1 +0.007, p=0.20). **Does not survive a base-adapter swap** (R8). |
+| **Q5** — does the 3B two-LoRA stack survive a scale comparator? | **YES** — beats Llama-3.1-70B-Instruct + BM25 on all 7 LaMP tasks. |
+
+### Phase 1 headline numbers (LaMP test, seed 0, greedy, BM25 k=4)
+
+| Task | No-profile floor | Profile baseline | A1-lamp (ckpt-1000) | Δ |
+|---|---|---|---|---|
+| LaMP-3 (acc) | 0.4508 | 0.6964 | **0.8056** | +0.109 |
+| LaMP-4 (rouge1) | 0.1393 | 0.1537 | **0.2259** | +0.072 |
+| LaMP-7 (rouge1) | 0.4170 | 0.4372 | **0.5619** | +0.125 |
+| BFCL AST overall | — | **0.8078** (base) | **0.7696** | −0.038 |
+
+Results: `results/LaMP_{3,4,7}_test_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0.{json,predictions.jsonl}`
+(+ `_dev_*`), `results/bfcl_ast_*`. Test-split correction and the Pareto sweep narrative were
+`experiments/2026-06-13-lamp-test-split-correction.md` and `2026-06-02-a1-lamp-1ep-pareto.md` —
+**neither is in this working tree** (see the note under Round history).
 
 ### Canonical artifacts
 
-- **A1-lamp Task-LoRA:** `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/` (1-epoch sweep, step 1000, epoch 0.75, frozen 2026-06-02).
-- **100 LaMP-3 User-LoRAs (R5):** `train/checkpoints/user_lora_lamp3_<fp>_seed0/final/` (one per user in `data/lamp_user_stats/LaMP_3_top100_users.json`).
-- **4 single-user LaMP-4 User-LoRAs (R1/R2-B/R4):** retained for re-analysis.
-- **100 LaMP-4 multi-user User-LoRAs (R6):** `train/checkpoints/user_lora_lamp4_<fp>_oppu_seed0/final/` (one per user in `data/lamp_user_stats/LaMP_4_top100_users.json`).
+- **A1-lamp Task-LoRA:** `train/checkpoints/a1_lamp_1ep_seed0/checkpoint-1000/` (frozen 2026-06-02).
+  The 2-epoch `a1_lamp_seed0/` is Pareto-dominated, kept for provenance. `checkpoint-400` is the
+  alternative if maximum BFCL retention dominates.
+- **One-LoRA FT** (7-task Task-LoRA, R7): `train/checkpoints/a2_lamp_1ep_seed0/final/`.
+  **Always called "One-LoRA FT" in prose, never "A2-lamp"** (explicit user preference).
+- **100 LaMP-3 User-LoRAs (R5):** `train/checkpoints/user_lora_lamp3_<fp>_seed0/final/`,
+  pool `data/lamp_user_stats/LaMP_3_top100_users.json`.
+- **100 LaMP-4 User-LoRAs (R6):** `train/checkpoints/user_lora_lamp4_<fp>_oppu_seed0/final/`,
+  pool `data/lamp_user_stats/LaMP_4_top100_users.json`.
+- Training configs: `train/config/{a1_lamp,a1_lamp_1ep,a2_lamp_1ep,user_lora_*,pt_lamp7_1ep}.json`.
+  R7 corpus `data/lamp_train_mixed7_bm25k4.jsonl`; R7 BFCL result
+  `results/bfcl_ast_a2_lamp_1ep_seed0_final_seed0.json`.
+- **Fused 4-bit device model:** HF `ageyko/SmolLM3-3B-a1lamp-4bit` (base: `mlx-community/SmolLM3-3B-4bit`).
 
-### Phase 1 headline numbers (LaMP test, seed=0, greedy, BM25 k=4 — dev numbers within ±0.01; see `experiments/2026-06-13-lamp-test-split-correction.md`)
+### Round history
 
-| Task | No-profile floor | Profile baseline | A1-lamp (ckpt-1000) | Δ adapter − baseline |
-|---|---|---|---|---|
-| LaMP-3 (acc) | 0.4508 | 0.6964 | **0.8056** | **+0.109** |
-| LaMP-4 (rouge1) | 0.1393 | 0.1537 | **0.2259** | **+0.072** |
-| LaMP-7 (rouge1) | 0.4170 | 0.4372 | **0.5619** | **+0.125** |
-| BFCL AST overall | — | **0.8078** (Py-only 0.8870) | **0.7696** | **−0.038** |
+**Warning:** the `experiments/*.md` docs for R7, R8, R9, PT1, LL1, the Pareto sweep, the test-split
+correction and the per-user-count analysis are **not present in this working tree** (nor are the
+`project_user_lora_*` memories they cite). These lines, plus `results/*.json`, are the surviving
+record — do not compress them further without re-creating the docs.
 
-Result files: `results/LaMP_{3,4,7}_test_a1_lamp_1ep_seed0_checkpoint-1000_bm25k4_seed0.{json,predictions.jsonl}` (test, canonical), plus `_dev_*` variants. BFCL: `results/bfcl_ast_a1_lamp_1ep_seed0_checkpoint-1000_seed0.{json,predictions.jsonl}`. Baselines: `results/LaMP_{3,4,7}_test_base_{bm25k4,noprofile}_seed0.*` and `results/bfcl_ast_base_seed0.*`.
+- **R1–R4** (single-user u00000011, LaMP-4): all failed pre-registered test gates, with a
+  consistent dev/test asymmetry (dev Δ +0.030/+0.043/+0.047/+0.040 vs test +0.003/−0.004/+0.010/−0.018).
+- **R5** (LaMP-3, K=100, OPPU recipe stacked on A1-lamp ckpt-1000): confirmed Q4 at MDE — ΔMAE
+  −0.050, acc 0.680→0.730, 7/91/2 win/tie/loss, zero inference overhead.
+- **R6** (LaMP-4, K=100, 2026-07-07, `experiments/2026-07-07-user-lora-lamp4-round6-multi.md`):
+  mean R-1 0.235→0.242 (+0.007), **not significant** (paired-t p=0.20, Wilcoxon p=0.30, CI spans
+  zero) — expected per the plan's own priors (OPPU's own LaMP-4 lift is +0.003).
+- **R7** (LaMP coverage 3→7 tasks, One-LoRA FT, 2026-07-15): one shared Task-LoRA on a 72,062-example
+  7-task corpus (1 epoch, 2250 steps, ~4h23m, loss 1.86→0.89). Beats BM25-only on **every** task;
+  biggest lifts on citation ID, title generation and tweets (+0.12–0.14); the original 3 tasks are
+  unchanged vs A1-lamp. **BFCL regresses hard: 0.633** (base 0.808, A1-lamp 0.767) — concentrated in
+  multi-call categories (`multiple` 0.86→0.50, `parallel_multiple` 0.785→0.58). A checkpoint sweep
+  (200/1000/1800) ruled out both overfitting and data-ordering: the collapse is sharp between step
+  200 and 1000 and is a **format-fidelity collapse** — unparseable bare-dict output instead of
+  `<tool_call>{…}</tool_call>` jumps 0.7%→15.3%→21.7%, i.e. SmolLM3's pretrained formatting habit
+  resurfacing as the adapter's grip erodes. Training loss across the window is flat.
+  **Decision 2026-07-16: One-LoRA FT stays canonical despite this** — a knowing trade-off, flagged
+  before it was made.
+- **R8** (LaMP-3 re-run on One-LoRA FT, 2026-07-17): **the personalization lift does not survive the
+  base-adapter swap.** C2′ (One-LoRA FT + BM25) acc 0.71 / MAE 0.310 — fine on its own — but
+  stacking the User-LoRA gives **C3′ = C2′ exactly** (mean_diff 0.0000, p=1.0, 5/90/5): 10 users'
+  predictions changed, split exactly 5 wins / 5 losses, an **exact cancellation**, verified by
+  diffing raw predictions and by re-checking provenance at every layer.
+- **R9** (LaMP-4 on One-LoRA FT) is designed and pinned, not run. **PT-track** (Per-Task-LoRA, one
+  adapter per task, + PT1/PT2 User-LoRA rounds) is designed, not run.
+- **LL1** (LongLaMP Product Review Task-LoRA, 2026-07-25): floor 0.328 R-1 → BM25 0.343 → LongLaMP-LoRA
+  **0.182 (regression)**. Root cause: the adapter degenerates into verbatim-sentence greedy-decoding
+  repetition loops (~897 mean generated tokens vs ~375), present from checkpoint-100 onward; matches
+  a documented LoRA/greedy interaction (`huggingface/peft#1003`). `repetition_penalty=1.3` applied
+  identically to all arms made every arm worse and was rejected. BFCL 0.645. `max_seq_length` had to
+  go 2048→8192 (2048 truncated 75% of examples). Separate harness:
+  `data/download_longlamp.py`, `train/build_longlamp_dataset.py`, `eval/eval_longlamp.py`.
+- **Llama scale comparison** (2026-06-30, extended to 7 tasks 2026-07-15): SmolLM3-3B + One-LoRA FT
+  beats Llama-3.1-70B-Instruct + BM25 on all seven tasks (+0.01 to +0.13); Llama-8B trails 70B
+  everywhere. The K=100 personalization-hard subset table is still LaMP-3-only.
+- **Per-user viability, corrected 2026-07-25:** the earlier record-count analysis wrongly called
+  LaMP-2-movies and LaMP-5 dead ends. Their profile entries match their task's input→output shape,
+  so the **profile-entry reframing** `build_user_dataset.py` already implements for LaMP-3/4 applies.
+  Revised: **LaMP-2-movies / 2-news / 5 are viable via supervised reframing; LaMP-1 and LaMP-7 are
+  viable only via OPPU's unsupervised right-shifted-history recipe** (new code path, not built).
+  LaMP-2-news has 321 users / 102 unseen / up to 211 records, natural K≈27.
 
-Earlier `a1_lamp_seed0/` (2-epoch run) is Pareto-dominated but on disk for provenance. Full Pareto sweep narrative: `experiments/2026-06-02-a1-lamp-1ep-pareto.md`. `checkpoint-400` is the alternative if maximum BFCL retention is the dominant criterion.
+### Model & training (cluster side)
 
-### Phase 2 history (one line per round)
+Base `HuggingFaceTB/SmolLM3-3B`, bf16, frozen. HF Transformers + PEFT. **CE loss only — no KD, no
+teacher co-loading, no base-weight modification.**
 
-Single-user u00000011 LaMP-4 rounds **R1–R4 all failed pre-registered gates on test** (dev/test asymmetry across all four: dev Δ +0.030/+0.043/+0.047/+0.040 vs test Δ +0.003/−0.004/+0.010/−0.018). **R5 LaMP-3 K=100 OPPU recipe** (r=8 q+v only, LR=1e-5, L2=1e-2, 3 epochs, stacked on A1-lamp ckpt-1000) confirmed Q4 at MDE. **Phase 2 closed 2026-06-19**, reopened same day as R6 cross-task descriptive replication. **R6 done 2026-07-07**: LaMP-4 replication, mean ΔR-1 +0.007, not significant (p=0.20) — expected null per the plan's own priors; no R7 queued, Phase 2 stays closed. Full per-round detail in `experiments/2026-06-{15,16,17,18,19}-*.md`, `experiments/2026-07-07-user-lora-lamp4-round6-multi.md`, and memory `project_user_lora_lamp4_single_user_retrospective.md`, `project_user_lora_round5_lamp3_design.md`, `project_user_lora_round6_lamp4_design.md`.
-
-**R6 carryovers from R5 (settled, not relitigated):** OPPU recipe verbatim (r=8, q+v only, alpha=16, dropout=0.05, AdamW, LR=1e-5, L2=1e-2, cosine + 3% warmup, 3 epochs, save_strategy=epoch, save_total_limit=1); per_device=2 / grad_accum=4 (R5's final working config — skip the OOM iteration); base = SmolLM3-3B + A1-lamp ckpt-1000 stacked via `--base-adapter`; eval = BM25 k=4 + greedy + seed=0 + `enable_thinking=False` + max_new_tokens=64; smoke = one user (smallest profile_size).
-
----
-
-## Model & training
-
-- **Base:** `HuggingFaceTB/SmolLM3-3B`, bf16, frozen.
-- **Framework:** HuggingFace Transformers + PEFT.
-- **Loss:** CE only. **No KD, no teacher co-loading, no base-weight modification.** Teacher is offline data generation only (and that whole branch is dropped — see hard constraints).
-
-**Task-LoRA config:**
 ```python
-LoraConfig(
-    r=4, lora_alpha=8,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                    "gate_proj", "up_proj", "down_proj"],
-    lora_dropout=0.05, bias="none", task_type="CAUSAL_LM",
-)
+LoraConfig(r=4, lora_alpha=8,
+           target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"],
+           lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
 ```
-r=4 (vs original spec r=64) because the value prop is on-device efficiency — adapter params scale linearly in r; alpha drops proportionally (alpha/r=2). See OPPU arXiv:2402.04401 for typical r=4–16 mobile configs.
+r=4 (not 64) because the value prop is on-device efficiency; alpha/r = 2. Training: AdamW lr=3e-4,
+cosine + 3% warmup, per-device bs 4 × grad_accum 8 (effective 32), 2–3 epochs, checkpoint every 500
+steps, metrics to `metrics.jsonl` + `train_meta.json`. W&B wired but off by default.
 
-**Training setup:** AdamW lr=3e-4, cosine + 3% warmup, per-device bs=4 × grad_accum=8 (effective 32), 2–3 epochs, checkpoint every 500 steps. Metrics streamed to `metrics.jsonl` + `train_meta.json` summary. W&B wired up in `train.py` but defaults off (flip `report_to` in config to re-enable).
+**User-LoRA (OPPU) recipe, settled — do not relitigate:** r=8, q+v only, alpha=16, dropout 0.05,
+AdamW lr=1e-5, L2 1e-2, cosine + 3% warmup, 3 epochs, `save_strategy=epoch`, `save_total_limit=1`,
+per_device 2 / grad_accum 4; base = SmolLM3-3B + A1-lamp ckpt-1000 via `--base-adapter`;
+eval = BM25 k=4, greedy, seed 0, `enable_thinking=False`, `max_new_tokens=64`; smoke on the
+smallest-profile user.
+
+### Datasets
+
+- `data/lamp/LaMP_{3,4,7}/` — **user-based** split (users disjoint across splits), used for A1-lamp.
+- `data/lamp_time/` — **time-based** split (same users, chronological partition), used for User-LoRA;
+  present for all 7 tasks. Profile entries carry `date`; test_outputs present.
+- Built corpora: `data/lamp_train_{LaMP_3,LaMP_4,LaMP_7,mixed}_bm25k4.jsonl` (mixed = 42,964) and
+  the 7-task `mixed7` (72,062). **`LEGACY_MIXED_TASKS` in `build_dataset.py` keeps the 3-task
+  `mixed` file distinct from `mixed7`** so A1-lamp's training data is never silently touched;
+  existing per-task files are reused read-only (`per_task_reused` sidecar).
+- Per-user volume varies sharply by task (`experiments/2026-06-12-lamp-time-split-per-user-counts.md`).
+  **LaMP-6 unsupported** (private Avocado corpus).
+
+### Eval methodology (frozen)
+
+- **Personalization channel = BM25 top-k (k=4)** of the user's profile into the `system` slot — not
+  summarization (tried, reverted; rationale `notebooks/lamp_evaluation_approach.md`). **Same BM25, same k, same formatting, same role layout at
+  training and eval time. Train/eval consistency is the cardinal rule.**
+- **System-always prompt regime** (resolved 2026-05-31): the profile sits in `system` for every
+  training example, so the adapter expects that shape at inference. Open hypothesis: an on-device
+  User-LoRA could absorb the profile into weights and drop the +118…+482 token/query prompt tax.
+- **BFCL = Path C** — install `bfcl-eval` in the image, generate with our own transformers stack,
+  call `ast_checker` as a library. SmolLM3 isn't in `MODEL_CONFIG_MAPPING`, so we pass
+  `model_name="meta-llama/Llama-3.1-8B-Instruct"` as a neutral placeholder (recorded as
+  `scorer_model_name_placeholder`); `BFCL_PROJECT_ROOT` must be set before any `bfcl_eval` import
+  (`eval_bfcl.py` sets it to `/tmp/bfcl_project_root`).
+- **BFCL `irrelevance` skipped** (its `possible_answer` file doesn't ship); Java/JS type errors
+  (~80) account for most of the 80.78-vs-92.3 base gap and were never investigated.
 
 ---
 
-## Datasets
+## Conventions
 
-- **LaMP user-based split** at `data/lamp/LaMP_{3,4,7}/` — used for A1-lamp Task-LoRA training (users disjoint across train/dev/test).
-- **LaMP time-based split** at `data/lamp_time/` — same users in every split, partitioned chronologically. Used for User-LoRA. Originally downloaded 2026-06-10 for LaMP-{3,4,7} via `data/download_lamp.py --split-type time`; **confirmed present for all 7 tasks as of 2026-07-20** (`data/lamp_time/{LaMP_1,LaMP_2_movies,LaMP_2_news,LaMP_3,LaMP_4,LaMP_5,LaMP_7}/`, all populated with real data, not placeholders) — exact download date for the 4 new tasks not tracked in this file, presumably alongside R7's work. Test_outputs present (not withheld); profile entries carry `date` for the partition. **Per-user viability (record counts, profile-entry-reframing needs) has only been analyzed for LaMP-{3,4,7}** (see the line below) — the 4 new tasks need the equivalent analysis before any User-LoRA round can be designed for them (queued as R10-R13 prep).
-- **Per-user volume varies sharply by task** (`experiments/2026-06-12-lamp-time-split-per-user-counts.md`, extended 2026-07-20 to the 4 new tasks — see `project_user_lora_per_task_viability.md` memory, no separate writeup yet): LaMP_4 ~7.5 records/user avg with records framing; LaMP_3 richest with profile-entry reframing (~175 review→rating pairs/user); LaMP_7 stuck at 1–2 examples/user regardless. Of the 4 tasks added in R7, only **LaMP-2-news** is viable for per-user User-LoRA (321 users, 102 unseen, up to 211 records/user) — **LaMP-1, LaMP-2-movies, and LaMP-5 are dead ends**, essentially exactly 1 record per user, same failure mode as LaMP-7. Tasks: LaMP-3 (rating prediction), LaMP-4 (headline gen), LaMP-7 (tweet paraphrase). **LaMP-6 unsupported** — only Avocado email file-id placeholders ship; needs licensed corpus.
-- **Built corpora:** `data/lamp_train_{LaMP_3,LaMP_4,LaMP_7,mixed}_bm25k4.jsonl` (42,964 examples in `mixed`; 20,000 + 12,527 + 10,437; 87.9 MB), provenance in `lamp_train_mixed_bm25k4.meta.json`.
-- **Synthetic preference-conditional data and domain-specific A2 corpora are DROPPED** (2026-06-02 pivot — Q2/Q3 dropped).
+### Standard script patterns (all eval/train/data-prep scripts)
 
----
+- **Provenance banner** on the first stdout line: task / split / condition / seed / commit / Condor
+  IDs / host.
+- **Provenance dict in every result record**: `git_commit`, `git_dirty`, `condor_cluster_id`,
+  `condor_proc_id`, `hostname`, `timestamp_utc`, library versions.
+- **Flat single-level JSON results** — every field scalar, so
+  `pd.DataFrame([json.load(open(p)) for p in glob("results/*.json")])` works with no unnesting.
+- **Per-example predictions in a sibling JSONL** (`{id, pred, gold}`; BFCL adds `category`,
+  `pred_text`, `pred_parsed`, `valid`, `error_type`).
+- **Refuse-to-overwrite by default** — `sys.exit(1)` unless `--overwrite`. Smoke runs (`--limit N`)
+  get an `_limitN` filename suffix so they can never collide with full-run outputs.
+- Condor IDs forwarded via the submit file's `environment`
+  (`CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)`).
+- Under Condor, `Path(__file__).parent.parent` does **not** resolve — use the `PROJECT_ROOT`/`LAMP_DIR`
+  env-var pattern `build_dataset.py` already uses.
 
-## Evaluation
+### Experiment log format
 
-| Task | Metric |
-|---|---|
-| LaMP-3 (rating prediction) | Accuracy |
-| LaMP-4 (headline gen) | ROUGE-1 |
-| LaMP-7 (tweet paraphrase) | ROUGE-1 |
+Every run gets `experiments/YYYY-MM-DD-<slug>.md` with `## Hypothesis / ## Setup (command, config,
+seed) / ## Result / ## Conclusion`. Note only a minority of `experiments/*` are force-added to git —
+check `git ls-files experiments/` before assuming a doc is versioned.
 
-Plus **BFCL AST regression** before/after each Task-LoRA training run (target ≥90; baseline 92.3; sanity check only).
+### Paper writeup style
 
-**Comparison chain (post-pivot):** Baseline → A1-lamp (Q1, answered) → A1-lamp + User-LoRA (Q4, answered YES for LaMP-3; answered NULL for LaMP-4 per R6).
+LaTeX lives in a **separate git repo at `~/Documents/Research/overleaf/6a2b1ada3ba0566171e752a2/`**
+(sections in `sections/experiments/*.tex`, `sections/90-appendix.tex`; remote `git.overleaf.com`;
+pull before editing, push when done — credentials are not always configured, so some sections sit
+committed-but-unpushed). Match the plain, direct style of the existing sections: short declarative
+sentences, first person plural, minimal jargon, number-first. Per explicit feedback, avoid: inline
+research-question bookkeeping ("RQ1", "corroborates Q4"); introducing a shorthand as a parenthetical
+aside mid-sentence; justification asides for choices that don't change the takeaway; any line that
+over-explains rationale nobody asked for. See memory `feedback_terse_paper_style.md` and
+`feedback_no_ai_sounding_commits.md` (no Claude co-author trailers; plain human voice in commits and
+public PR/issue prose; no dashes as punctuation).
 
 ---
 
@@ -263,146 +712,56 @@ Plus **BFCL AST regression** before/after each Task-LoRA training run (target �
 ```
 /
 ├── CLAUDE.md, Dockerfile, requirements.txt, pyrightconfig.json
-├── condor/                       # Condor submit files + helper scripts
-│   ├── build_dataset.sub         # CPU: preprocess LaMP train → JSONL
-│   ├── download_model.{py,sub}   # one-time HF Hub pull of SmolLM3-3B
-│   ├── download_llama.{py,sub}   # one-time HF Hub pull of Llama-3.1-{8B,70B}-Instruct
-│   ├── interactive.sub           # CPU shell for ad-hoc inspection (uncomment GPU block for smoke tests)
-│   ├── eval_lamp.sub             # LaMP profile-baseline + adapter eval (×3 parallel)
-│   ├── eval_lamp_floor.sub       # LaMP non-personalized floor (×3 parallel)
-│   ├── eval_lamp_llama.sub       # Llama scale comparator, full test sets (12 jobs)
-│   ├── eval_lamp_llama_k100.sub  # Llama scale comparator, K=100 subset (4 jobs)
-│   ├── eval_bfcl.sub             # BFCL AST regression (1 GPU, all categories)
-│   ├── train.sub                 # superseded (2-epoch A1-lamp)
-│   ├── train_1ep.sub             # canonical (1-epoch A1-lamp)
-│   ├── chat.py                   # REPL with model + optional adapter
-│   └── smoke_test.py             # Docker-image env check
-├── data/
-│   ├── download_lamp.py          # `--split-type {user,time}` (default user)
-│   ├── lamp/                     # user-based split — A1-lamp training
-│   ├── lamp_time/                # time-based split — User-LoRA
-│   ├── lamp_user_stats.py        # per-user record-count analysis
-│   ├── lamp_user_stats/          # per-task user CSVs + R5/R6 top-K JSONs
-│   ├── models/SmolLM3-3B/        # downloaded weights (~6 GB)
-│   ├── models/Llama-3.1-{8B,70B}-Instruct → /scratch/<group>/<user>/models/  # symlinks; ~16 + ~141 GB on /scratch
-│   ├── lamp_train_*_bm25k4.jsonl # built by build_dataset.py
-│   └── lamp_train_mixed_bm25k4.meta.json
-├── train/
-│   ├── build_dataset.py          # raw LaMP train → BM25-retrieved JSONL
-│   ├── build_user_dataset.py     # per-user variant (User-LoRA)
-│   ├── train.py                  # SFT trainer — config-driven, SmolLM3 chat template (thinking off), loss-masked to assistant, supports --base-adapter
-│   ├── config/
-│   │   ├── a1_lamp.json          # superseded (2-epoch)
-│   │   ├── a1_lamp_1ep.json      # canonical (1-epoch, → checkpoint-1000)
-│   │   └── user_lora_*.json      # R5/R6 OPPU templates
-│   └── checkpoints/              # training output (gitignored)
-├── eval/
-│   ├── eval_lamp.py              # LaMP harness (BM25 k=4, refuse-to-overwrite, --base-adapter, --user-records, --user-records-from-file, --resume, --device-map)
-│   ├── eval_bfcl.py              # BFCL via bfcl-eval's ast_checker as a library
-│   ├── paired_compare.py         # single-user paired stats (User-LoRA R1-R4)
-│   ├── paired_compare_per_user.py # multi-user grouped paired stats (R5/R6)
-│   ├── bench_aggregate.py        # on-device bench JSONL → aggregate JSON
-│   ├── tables.py                 # Llama-scale Tables 1 + 2 from results/*.json (markdown or plain)
-│   └── summary.py                # flatten results/*.json → table
-├── ios/mlx-swift-examples/       # git-subtree vendored (upstream 378f244); LLMEval edited for SmolLM3 + benchmark harness
-├── results/                      # flat scalar JSON + per-example predictions JSONL; ondevice/ subdir for bench telemetry
-├── runlogs/                      # Condor stdout/stderr (gitignored)
-├── experiments/                  # YYYY-MM-DD-<slug>.md per run
-└── notebooks/                    # personal analysis (gitignored)
+├── condor/          # submit files: build_dataset, download_model, download_llama, interactive,
+│                    #   eval_lamp{,_floor,_llama,_llama_k100}, eval_bfcl, train{,_1ep}, chat.py
+├── data/            # download_lamp.py (--split-type user|time), download_longlamp.py,
+│                    #   lamp/, lamp_time/, lamp_user_stats{.py,/}, models/, lamp_train_*.jsonl
+├── train/           # build_dataset.py, build_user_dataset.py, build_longlamp_dataset.py,
+│                    #   train.py, config/, checkpoints/ (gitignored)
+├── eval/            # eval_lamp.py, eval_bfcl.py, eval_longlamp.py, paired_compare*.py,
+│                    #   tables.py, summary.py + all on-device aggregators/plots (gitignored, -f)
+├── ios/             # mlx-swift-examples/ (subtree), mlx-swift-lm-local/, mlx-swift/ (NAX patch),
+│                    #   BGProbe/
+├── scripts/         # device sequencers (nax_rerun_night*.sh, run_granularity_sweep.sh)
+├── results/         # flat scalar JSON + predictions JSONL; ondevice/ for device telemetry+figures
+├── experiments/     # YYYY-MM-DD-<slug>.md per run (mostly gitignored)
+├── workshop_odi2026/  # ODI paper draft
+└── runlogs/, notebooks/  # gitignored
 ```
-
----
-
-## Standard script patterns (converged across all eval/train/data-prep scripts)
-
-- **Provenance banner at startup** — first stdout line prints task / split / condition / seed / commit short SHA / Condor cluster.proc IDs / host.
-- **Provenance dict in every result record** — `git_commit`, `git_dirty`, `condor_cluster_id`, `condor_proc_id`, `hostname`, `timestamp_utc`, library versions.
-- **Flat single-level JSON result records** — every field a scalar, so `pd.DataFrame([json.load(open(p)) for p in glob("results/*.json")])` works with zero unnesting.
-- **Per-example predictions in a sibling JSONL** — one `{id, pred, gold}` per line (BFCL adds `category`, `pred_text`, `pred_parsed`, `valid`, `error_type`).
-- **Refuse-to-overwrite by default** — every output-producing script checks existing files and `sys.exit(1)` unless `--overwrite` is passed. Smoke runs (`--limit > 0`) get an `_limitN` filename suffix so they can't collide with full-run outputs even if `--overwrite` was used.
-- **Condor IDs forwarded via submit file's `environment`**: `CONDOR_CLUSTER_ID=$(ClusterId) CONDOR_PROC_ID=$(ProcId)` — script reads via `os.environ.get`. Links result records back to runlog files.
-
----
-
-## Eval methodology choices (frozen — don't relitigate)
-
-- **LaMP personalization channel = BM25 top-k retrieval** (k=4) of the user's profile into the `system` slot. Not summarization (tried, reverted — see `notebooks/lamp_evaluation_approach.md`). Same BM25, same k, same per-task formatting, same role layout at training time (`build_dataset.py`) and eval time (`eval_lamp.py`). Train/eval consistency is the cardinal rule.
-- **System-always prompt regime** (resolved 2026-05-31) — BM25 profile sits in `system` for every training example, so the Task-LoRA expects that shape at inference. Open hypothesis is on-device User-LoRA could absorb the profile into adapter weights and drop the `system` prompt tax (+118 to +482 tokens/query).
-- **BFCL eval uses Path C** — install bfcl-eval in the image, generate via our own transformers stack, call `ast_checker` as a library on outputs. SmolLM3 isn't in BFCL's `MODEL_CONFIG_MAPPING`, so we pass `model_name="meta-llama/Llama-3.1-8B-Instruct"` as a neutral placeholder (recorded as `scorer_model_name_placeholder`); `BFCL_PROJECT_ROOT` must be set before any `bfcl_eval` import (`eval_bfcl.py` sets it to `/tmp/bfcl_project_root`).
-- **BFCL `irrelevance` skipped** (data file `possible_answer/BFCL_v4_irrelevance.json` doesn't ship — correct answer is "no call"). Could be extended in ~10 lines to score `correct iff pred_parsed == []`.
-- **BFCL Java/JS errors not investigated** — 80 `type_error:{java,js}` account for most of the 80.78 vs 92.3 gap. Worth a 2-min spot-check before post-training comparison.
-
----
 
 ## Docker image
 
-Current tag: **`ghcr.io/gordofreemo/smollm3-train:ver4`**.
-1. Base `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime` (Python 3.11, torch 2.5.1+cu124)
-2. `apt-get install git` (added ver3) — for `git_commit` provenance inside the container
-3. `pip install -r requirements.txt` — transformers, peft, datasets, accelerate, wandb, rouge_score, bfcl-eval, soundfile
+Current tag **`ghcr.io/gordofreemo/smollm3-train:ver4`** — base
+`pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime` (Python 3.11, torch 2.5.1+cu124), `apt-get install git`
+(for in-container `git_commit` provenance), `pip install -r requirements.txt`.
+**When `requirements.txt` or the Dockerfile changes, bump the tag and update all ten sub files**
+(`eval_lamp`, `eval_lamp_floor`, `eval_lamp_llama`, `eval_lamp_llama_k100`, `eval_bfcl`,
+`build_dataset`, `train`, `interactive`, `download_model`, `download_llama`).
 
-**When you change `requirements.txt` or the Dockerfile**, bump the tag and update **all ten** sub files: `condor/{eval_lamp,eval_lamp_floor,eval_lamp_llama,eval_lamp_llama_k100,eval_bfcl,build_dataset,train,interactive,download_model,download_llama}.sub`.
-
-**GPU capability ceiling.** The cluster has RTX PRO 6000 Blackwell (sm_120) nodes that ver4's PyTorch 2.5.1+cu124 cannot target. Llama submits constrain to `Capability >= 8.0 && Capability < 10.0` via `require_gpus` — anything that lands on Blackwell dies at the first CUDA op with "no kernel image is available for execution on the device". Other submits don't yet carry this guard; harden them if they start failing the same way.
+**GPU capability ceiling.** RTX PRO 6000 Blackwell (sm_120) nodes cannot run ver4's cu124 build —
+jobs die at the first CUDA op ("no kernel image is available"). Llama submits constrain
+`Capability >= 8.0 && Capability < 10.0` via `require_gpus`; LaMP-4 GPU subs now carry it too.
+Harden others as they start failing. Known flaky hosts: `tyr1` (GPU-slot oversubscription — retry or
+exclude), `modi` (uncorrectable ECC), `fornjoter` (Blackwell).
 
 ---
 
 ## Hard constraints
 
-- **Never modify base model weights.** LoRA only; base frozen.
-- **No KD loss.** CE only.
-- **No co-loading teacher and student.** (Teacher branch dropped entirely with the 2026-06-02 pivot.)
-- **Reproducibility first.** Every training run launchable from one CLI command with fixed seed. Log full command in the experiment file.
-- **No profile leakage between splits.** Validate explicitly. For time-based splits this means no overlap within a user between train-period and dev-period interactions — enforced by LaMP's split by construction.
-- **No on-device / mobile code** — **LIFTED for Phase 3** only. Phases 1 & 2 retain it as historical framing.
-
----
-
-## Experiment log format
-
-Every run gets `experiments/YYYY-MM-DD-<slug>.md`:
-
-```markdown
-## Hypothesis
-## Setup (command, config, seed)
-## Result (loss curve, eval numbers)
-## Conclusion
-```
-
----
-
-## Paper writeup style (Overleaf prose)
-
-When writing the Hypothesis/Setup/Result/Conclusion prose in
-`overleaf/6a2b1ada3ba0566171e752a2/sections/experiments/*.tex` (not the tables
-— tables and the Provenance block stay technical), match the plain, direct
-style already in the existing sections (e.g. `2026-05-29-baseline_LaMP.tex`,
-`2026-06-18-per-user-lora-lamp3.tex`): short declarative sentences that say
-what was done and what happened, first person plural, minimal jargon.
-
-Concretely avoid, per explicit feedback (2026-07-13) on an early draft that
-read as too AI-generated:
-- Meta-references to research-question numbers inline (no "RQ1", "corroborates
-  Q4", etc. in prose — the reader doesn't need the paper's internal
-  bookkeeping surfaced).
-- Introducing a shorthand/acronym as an awkward parenthetical aside mid-sentence
-  (e.g. "...should produce a single adapter (A2-lamp) that..."). If a new
-  short name is needed, give it its own plain sentence ("We call the new
-  adapter A2-lamp.").
-- Justification asides for design choices that don't change what the reader
-  takes away from the result (e.g. explaining *why* a task is excluded is
-  usually unnecessary — just note it's excluded).
-- Any other line that over-explains rationale nobody asked for ("keeps the
-  on-device story simple", etc.) — cut it; let the numbers and plain
-  description carry the point.
-
----
+- **Never modify base model weights.** LoRA only.
+- **No KD loss.** CE only. **No co-loading teacher and student.**
+- **Reproducibility first** — every training run launchable from one CLI command with a fixed seed;
+  log the full command in the experiment file.
+- **No profile leakage between splits** — validate explicitly.
+- "No on-device / mobile code" is **LIFTED for Phase 3** (historical framing for Phases 1–2 only).
 
 ## Key references (do not hallucinate URLs)
 
-- SmolLM3-3B: `HuggingFaceTB/SmolLM3-3B` on HuggingFace
-- LaMP benchmark: lamp-benchmark.github.io
-- OPPU (per-user PEFT recipe used in R5/R6): arXiv 2402.04401
+- SmolLM3-3B: `HuggingFaceTB/SmolLM3-3B` (HuggingFace)
+- LaMP: lamp-benchmark.github.io · LongLaMP: longlamp-benchmark.github.io (arXiv:2407.11016)
+- OPPU (per-user PEFT recipe): arXiv:2402.04401
 - BFCL: gorilla.cs.berkeley.edu/leaderboard.html
-- CDCDA-PLM (closest prior work — cloud synthetic + on-device PEFT + LaMP): arXiv 2508.21313
-- Apple on-device fine-tuning (memory-efficient backprop): arXiv 2510.03425
+- CDCDA-PLM (closest prior work): arXiv:2508.21313
+- Apple on-device fine-tuning (memory-efficient backprop): arXiv:2510.03425
+- MELT (per-op mobile inference benchmarks, MobiCom '24) — the model for h11's Tier 2
+- EnerInfer arXiv:2606.23001, PELM (ACM 2026) — DVFS/config-selection edge-LLM levers
