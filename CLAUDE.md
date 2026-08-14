@@ -26,7 +26,7 @@ The paper is a **systems characterization of on-device LLM training**, in three 
 1. **Characterization** (h4–h11): memory wall, thermal wall, energy ceiling, scheduling null,
    per-op breakdown.
 2. **Kernel fix**: MLX's non-transposed NAX quantized matmul — 1.93x end-to-end on a real
-   adapter. Upstream **PR #4051 filed 2026-08-07**.
+   adapter. Upstream **PR #4051, merged into ml-explore/mlx on 2026-08-12**.
 3. **Demonstration (h12)**: train the Per-Task-LoRA (LaMP-7) *entirely on-device* with NAX ON
    and show benchmark parity with cluster training.
 
@@ -280,7 +280,7 @@ Data `results/ondevice/train_bench_metrics_perop_2026-08-04.jsonl`.
 
 `experiments/2026-08-06-mlx-nax-qmm-n-backward.md`, upstream handoff
 `experiments/2026-08-07-mlx-upstream-pr-handoff.md`, memory `project_mlx_nax_backward_patch.md`.
-**PR #4051 filed 2026-08-07.**
+**PR #4051, filed 2026-08-07, merged upstream 2026-08-12.**
 
 **Premise:** MLX gates NAX on `transpose == true` (`quantized.cpp:694`), so backward's `dX` falls
 to a generic 32×32-tiled kernel while `affine_qmm_n_nax` sits compiled and unreachable.
@@ -454,11 +454,11 @@ xcrun devicectl device copy from --device 00008150-000674C60A3B401C \
 |---|---|
 | h2 inference | `--benchmark` (cold+prefill+decode), `--benchmark-tail` (realistic + 5-min stress), `--benchmark-cold` |
 | h4 capped stress | `--benchmark-stress-capped` |
-| h5 E2E | `--user <uid> --condition <C0\|C1\|C2\|C4>` |
+| h5 E2E | `--benchmark-train-e2e --user <uid> --condition <C0\|C1\|C2\|C4>` |
 | h6 background | `--bg-train-submit --user U --condition C`, `--bg-train-resubmit` (keeps checkpoint + cap origin), `--bg-train-cancel`, `--bg-train-validation` |
 | h7 token-time | `--benchmark-train-tokentime`, `--benchmark-train-tokentime-cold` |
 | h8 granularity | `--benchmark-train-granularity --granularity-k <K>` |
-| h9 energy | `--benchmark-train-idle-baseline` (+ h5 args, `--condition C2`) |
+| h9 energy | `--benchmark-idle-baseline` (+ h5 args, `--condition C2`) |
 | h10 thermal | `--benchmark-thermal-cooldown --soak-minutes M --probe-interval-s S`; `--benchmark-thermal-cycle --burst-minutes 10 --rest-seconds 120 --cycles 6`; `--benchmark-thermal-selflimit [--selflimit-delay D --selflimit-minutes M]` |
 | h11 per-op | `--benchmark-train-perop [--idle-minutes N]`; `--benchmark-train-perop-capture [--capture-tokens N] [--capture-backward-layers K]` |
 | NAX A/B | `--benchmark-nax-ab [--pin-arms]`; `--nax-arm on\|off` (global, every mode) |
