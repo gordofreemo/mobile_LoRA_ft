@@ -1,0 +1,33 @@
+{
+ "generated_utc": "2026-08-16T09:10:48.559855+00:00",
+ "method": "h9 replication; 100%-start fuel-gauge caveat applies to the gross estimate (direction: under-read), but the death point itself is exact",
+ "point_nax_on": {
+  "user": "u00012502",
+  "profile_size": 987,
+  "condition": "C2",
+  "nax_arm": "on",
+  "completed": false,
+  "iterations_total": 2961,
+  "iterations_reached": 2100,
+  "pct_iterations": 70.9,
+  "duration_s": 17964.0,
+  "gross_j": 55143.0,
+  "net_j": 50451.0,
+  "avg_power_w": 3.07,
+  "pct_full_battery_net": 90.6,
+  "death": "silent critical-battery shutdown, no run_end",
+  "bench_session_id": "87D1049B-C4EB-4B1C-B20E-ADC90B21731A",
+  "os_version": "Version 26.6 (Build 23G71)"
+ },
+ "reference_nax_off": {
+  "iterations_reached": 1460,
+  "pct_iterations": 49.3,
+  "net_j": 50398.0,
+  "pct_net": 90.5
+ },
+ "headline": {
+  "iters_per_charge_to_death": "1.44x (2100 vs 1460)",
+  "energy_ceiling": "unchanged: ~50.4 kJ net = 90.5-90.6% of a charge in BOTH kernels",
+  "completion_requirement": "~128% of a charge (was ~184%) \u2014 XXL still cannot finish on one charge"
+ }
+}
