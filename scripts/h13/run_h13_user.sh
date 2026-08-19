@@ -44,7 +44,7 @@ wait_for_device() {
 # returns non-zero here, and that must never be fatal to the campaign.
 launch() {
   local tries=0
-  while [ "$tries" -lt 40 ]; do
+  while [ "$tries" -lt 480 ]; do
     wait_for_device || return 1
     if xcrun devicectl device process launch --timeout "$DCTL_TIMEOUT" --device "$DEV" \
          --terminate-existing "$APP" "$@" >/dev/null 2>&1; then
@@ -54,10 +54,12 @@ launch() {
     # A locked phone still reports "available (paired)" but refuses the launch
     # (FBSOpenApplicationErrorDomain error 7), so ride it out rather than
     # skipping the user. Set Auto-Lock to Never to avoid this entirely.
-    log "launch failed (attempt $tries), retrying in 90 s"
+    if [ "$tries" -eq 1 ] || [ $((tries % 20)) -eq 0 ]; then
+      log "launch failed (attempt $tries) — is the phone LOCKED? (error 7). Unlock it; will keep retrying"
+    fi
     sleep 90
   done
-  log "launch failed 40x (1 h), giving up on this step; a later queue pass retries"
+  log "launch failed 480x (12 h), giving up; unlock the phone and rerun the queue"
   return 1
 }
 
