@@ -14,15 +14,24 @@ q=json.load(open('$ROOT/data/oppu_movie/h13_queue.json'))['queue']
 print('\n'.join(e['user_id'] for e in q[$START:$END]))" > "$QFILE"
 echo "[queue] $(wc -l < "$QFILE" | tr -d ' ') users, ranks $START..$END"
 
+PASS=${PASS:-1}
 while IFS= read -r U; do
   [ -z "$U" ] && continue
   if [ -s "$ROOT/results/ondevice/h13_preds/$U/device.jsonl" ] \
      && [ -s "$ROOT/results/ondevice/h13_preds/$U/rag.jsonl" ] \
-     && [ -s "$ROOT/results/ondevice/h13_preds/$U/mac.jsonl" ]; then
+     && [ -s "$ROOT/results/ondevice/h13_preds/$U/cluster.jsonl" ]; then
     echo "[queue] $U already complete, skipping"; continue
   fi
   echo "[queue] === $U ($(date +%H:%M:%S)) ==="
   "$ROOT/scripts/h13/run_h13_user.sh" "$U" || echo "[queue] $U FAILED, continuing"
 done < "$QFILE"
+REMAIN=$(while IFS= read -r U; do
+  [ -z "$U" ] && continue
+  [ -s "$ROOT/results/ondevice/h13_preds/$U/device.jsonl" ] || echo "$U"
+done < "$QFILE" | wc -l | tr -d " ")
 rm -f "$QFILE"
-echo "[queue] done $(date +%H:%M:%S)"
+echo "[queue] pass $PASS done $(date +%H:%M:%S); $REMAIN users still incomplete"
+if [ "$REMAIN" -gt 0 ] && [ "$PASS" -lt 5 ]; then
+  echo "[queue] starting pass $((PASS + 1))"
+  PASS=$((PASS + 1)) START=$START END=$END exec "$0"
+fi

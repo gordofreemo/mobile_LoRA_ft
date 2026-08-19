@@ -12,7 +12,7 @@
 # The eval runs every arm inside ONE process launch: the model load is
 # ~30-60 s against ~0.4 s of generation per query, so per-arm launches would
 # spend more wall-clock loading than measuring.
-set -euo pipefail
+set -uo pipefail
 
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 DEV=00008150-000674C60A3B401C
@@ -26,6 +26,38 @@ USER_ID=$1
 LOG=/tmp/h13_stderr_$USER_ID.log
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
+
+wait_for_device() {
+  local tries=0
+  until xcrun devicectl list devices 2>/dev/null | grep -q "available (paired)"; do
+    tries=$((tries + 1))
+    [ "$tries" -eq 1 ] && log "device unavailable, waiting (unlock it if it is asleep)"
+    [ "$tries" -gt 240 ] && { log "device still unavailable after 2 h"; return 1; }
+    sleep 30
+  done
+  return 0
+}
+
+# Launch with retries. A phone that auto-locked, dropped its tunnel, or was busy
+# returns non-zero here, and that must never be fatal to the campaign.
+launch() {
+  local tries=0
+  while [ "$tries" -lt 40 ]; do
+    wait_for_device || return 1
+    if xcrun devicectl device process launch --device "$DEV" --terminate-existing \
+         "$APP" "$@" >/dev/null 2>&1; then
+      return 0
+    fi
+    tries=$((tries + 1))
+    # A locked phone still reports "available (paired)" but refuses the launch
+    # (FBSOpenApplicationErrorDomain error 7), so ride it out rather than
+    # skipping the user. Set Auto-Lock to Never to avoid this entirely.
+    log "launch failed (attempt $tries), retrying in 90 s"
+    sleep 90
+  done
+  log "launch failed 40x (1 h), giving up on this step; a later queue pass retries"
+  return 1
+}
 
 pull_log() {
   rm -f "$LOG"
@@ -58,9 +90,8 @@ if [ "$SKIP_TRAIN" != 1 ]; then
   # the wait (it already contains the marker from an earlier run).
   BEFORE=$(count_of "h13 train complete user=$USER_ID")
   log "train $USER_ID (baseline $BEFORE)"
-  xcrun devicectl device process launch --device "$DEV" --terminate-existing "$APP" \
-    --benchmark-h13-train --user "$USER_ID" --nax-arm on --condition C0 >/dev/null 2>&1
-  wait_for "h13 train complete user=$USER_ID" $((BEFORE + 1))
+  launch --benchmark-h13-train --user "$USER_ID" --nax-arm on --condition C0 || exit 1
+  wait_for "h13 train complete user=$USER_ID" $((BEFORE + 1)) || exit 1
   log "train done; cooldown ${COOLDOWN}s"
   sleep "$COOLDOWN"
 fi
@@ -83,9 +114,8 @@ fi
 
 BEFORE=$(count_of "h13 eval ALL DONE user=$USER_ID")
 log "eval $USER_ID arms=$ARMS (baseline $BEFORE)"
-xcrun devicectl device process launch --device "$DEV" --terminate-existing "$APP" \
-  --benchmark-h13-eval --user "$USER_ID" --arm "$ARMS" --nax-arm on >/dev/null 2>&1
-wait_for "h13 eval ALL DONE user=$USER_ID" $((BEFORE + 1))
+launch --benchmark-h13-eval --user "$USER_ID" --arm "$ARMS" --nax-arm on || exit 1
+wait_for "h13 eval ALL DONE user=$USER_ID" $((BEFORE + 1)) || exit 1
 
 mkdir -p "$PULL/$USER_ID" "$ROOT/results/ondevice/h13_telemetry"
 TMP=$(mktemp -d)
