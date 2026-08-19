@@ -80,7 +80,8 @@ def git_info():
     return run(["git", "rev-parse", "--short", "HEAD"]), bool(run(["git", "status", "--porcelain"]))
 
 
-def train_user(model, reset_state, user_dir, out_dir, commit, dirty, max_steps=0):
+def train_user(model, reset_state, user_dir, out_dir, commit, dirty, max_steps=0,
+               throttle=0.0):
     examples = []
     with open(user_dir / "train.jsonl") as f:
         for line in f:
@@ -156,6 +157,13 @@ def train_user(model, reset_state, user_dir, out_dir, commit, dirty, max_steps=0
         opt.update(model, clipped)
         mx.eval(model.trainable_parameters(), opt.state)
 
+        if throttle > 0:
+            # Idle between steps so the GPU is not held at 100% duty. Purely a
+            # wall-clock cost: the math, the data order and the LR schedule are
+            # untouched, so throttled and unthrottled runs are identical.
+            mx.clear_cache()
+            time.sleep(throttle)
+
         mf.write(json.dumps({
             "record_type": "opt_step", "step": step + 1,
             "epoch": step // max(1, schedule_total_steps // EPOCHS),
@@ -188,7 +196,26 @@ def main():
                     help="--all follows this frozen queue order")
     ap.add_argument("--max-steps", type=int, default=0)
     ap.add_argument("--skip-existing", action="store_true")
+    # Politeness knobs. The Mac control arm has enormous slack -- it needs ~3 h
+    # of work while the device queue needs ~50 h -- so it can afford to run
+    # slowly rather than saturate an interactive machine.
+    ap.add_argument("--throttle", type=float, default=0.0,
+                    help="seconds to idle after each optimizer step (GPU duty cycling)")
+    ap.add_argument("--cache-limit-gb", type=float, default=0.0,
+                    help="cap MLX's buffer cache (0 = MLX default); keeps the "
+                         "trainer off swap on a 16 GB machine")
+    ap.add_argument("--nice", type=int, default=0,
+                    help="re-nice this process (0 = leave alone)")
     args = ap.parse_args()
+
+    if args.nice:
+        try:
+            os.nice(args.nice)
+        except OSError as e:
+            print(f"[h13_mac] could not re-nice: {e}", flush=True)
+    if args.cache_limit_gb > 0:
+        mx.set_cache_limit(int(args.cache_limit_gb * 2**30))
+        print(f"[h13_mac] MLX cache limit {args.cache_limit_gb} GB", flush=True)
 
     data_root, out_root = Path(args.data_root), Path(args.out_root)
     if args.users:
@@ -227,7 +254,7 @@ def main():
             print(f"[h13_mac] {i+1}/{len(users)} {uid} SKIP (exists)", flush=True)
             continue
         steps, elapsed = train_user(model, reset_state, data_root / uid, out_dir,
-                                    commit, dirty, args.max_steps)
+                                    commit, dirty, args.max_steps, args.throttle)
         print(f"[h13_mac] {i+1}/{len(users)} {uid} {steps} steps in {elapsed:.0f}s "
               f"-> {out_dir}", flush=True)
 
