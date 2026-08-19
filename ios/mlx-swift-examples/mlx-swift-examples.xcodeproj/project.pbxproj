@@ -302,6 +302,7 @@
 				LLMEval/Benchmark/BenchmarkSupport.swift,
 				"LLMEval/Benchmark/LLMEvaluator+Benchmark.swift",
 				"LLMEval/Benchmark/LLMEvaluator+BGTrain.swift",
+				"LLMEval/Benchmark/LLMEvaluator+H13.swift",
 				"LLMEval/Benchmark/LLMEvaluator+TrainBenchmark.swift",
 				LLMEval/Benchmark/TrainBenchConstants.swift,
 				LLMEval/Data/lora_train.jsonl,

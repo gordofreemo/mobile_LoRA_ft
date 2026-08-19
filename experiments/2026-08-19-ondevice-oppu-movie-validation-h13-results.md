@@ -1,0 +1,132 @@
+# h13 — on-device OPPU movie-tagging validation: build + verification log
+
+Companion to `2026-08-19-ondevice-oppu-movie-validation-h13-plan.md`. Records the
+pre-flight verification, the two bugs the build surfaced, and the campaign state.
+
+## Pre-flight verification (the plan's five "verify on conduit BEFORE building" items)
+
+1. **What the cluster movie OPPU arm stacks.** `run_oppu.py` does
+   `PeftModel.from_pretrained(base, task_lora)` then `merge_and_unload()`, so each
+   User-LoRA trains over a MERGED movie task adapter
+   (`train/checkpoints/oppu_rep/movie_tagging/task_lora_k1`, r=8 α=8, q/k/v — its
+   `out_proj` target is dead on SmolLM3). The device base is therefore a 4-bit MLX
+   quantisation of THAT merge, built by `scripts/h13/fuse_oppu_movie_task.py`.
+   **Verified exactly**: the merge reproduces the cluster run's recorded
+   `merged_base_hash` `20cc0133e8d1ebf83c80b802e1edc240`.
+2. **Loss masking + training text.** Prompt-prefix masking by token count:
+   `full = tok(full_prompt)+EOS`, `loss_start = len(tok(prompt))`, `loss_end = len(full)`.
+   Rather than re-implement the text construction, `scripts/h13/dump_movie_texts.py`
+   runs THEIR `utils.py` + `prompt.json` + vendored BM25 on conduit and dumps the
+   per-user training and eval strings; the Mac builder only tokenises them.
+   Prefix-property violations: **0/5,558**. Examples hitting the 2048 cutoff: **0**.
+3. **R5-ablation adapter coverage.** All 100 movie users have `oppu_k1_r5_user000..099`
+   (plus 100 hot-recipe ones). Full coverage, no gaps.
+4. **Queue.** Frozen in `data/oppu_movie/h13_queue.json` before the first run, by
+   descending predicted paired-queries-per-device-hour. Corpus: 5,558 profile
+   entries / 3,302 test queries over 100 users; median 36 train examples and 22
+   queries per user; max example 401 tokens (nothing near the 1024 cap).
+5. **Scoring entry point.** `oppu_rep_score.py` reads `{id, output}` JSON per arm, so
+   device predictions enter by being written in that shape. `eval/h13_score.py`
+   replicates their LaMP_2M mapping for the in-loop layer and **reproduces the
+   published cluster numbers exactly** on their own prediction files:
+   rag 0.4933, oppu_r5 0.5697, Δ +0.0763.
+
+## Bug 1 — `rope_theta` lost in the merge (SEVERE, silent, wider than h13)
+
+transformers ≥5 writes rope settings ONLY into a nested `rope_parameters` block.
+Both `mlx-lm` (python) and **mlx-swift** read the TOP-LEVEL `rope_theta` and fall
+back to **10000** when absent. SmolLM3 needs **5,000,000** — a 500× error that
+leaves the model fluent but measurably worse.
+
+Measured on 413 queries (first 15 users), same prompts throughout:
+
+| plane | rag acc | invalid-label rate |
+|---|---|---|
+| cluster reference (bf16, HF) | 0.4939 | 0.000 |
+| MLX bf16, `rope_theta` broken | 0.3535 | 0.000 |
+| MLX 4-bit, `rope_theta` broken | ~0.32–0.36 | **0.187** |
+| MLX bf16, fixed | **0.4939** | 0.000 |
+| MLX 4-bit, fixed | 0.4383 | 0.000 |
+
+Fixed bf16 MLX matches the cluster arm to four decimals, which validates the whole
+h13 pipeline (prompts, tokenisation, merge, LoRA scale, scorer) end to end. The
+18.7% degenerate "list every tag" outputs were entirely this bug.
+
+**This is not h13-only.** `ageyko/SmolLM3-3B-a1lamp-4bit` on the Hub — the model the
+device loads for h5/E2E, h7–h11 and the whole NAX-ON rerun campaign — has the same
+missing key, so those rounds ran with `rope_theta = 10000`. **No published number
+changes**: those rounds measured wall time, memory, energy and thermals, and MLX
+kernel timings are value-independent; the NAX A/B compared two arms under the same
+config. Only absolute loss values are affected. Any future *quality* claim over that
+model must fix the config first. `mlx-community/SmolLM3-3B-4bit` is unaffected.
+
+## Bug 2 — `loraScale` convention was inconsistent across rounds
+
+`LoRALinear` computes `y + scale·(x@a)@b`, so `scale` IS `alpha/r`, exactly PEFT's
+`lora_alpha/r`. h12 encoded this correctly (`2.0` for α8/r4). The h5-era constant
+sets `loraScale = 16.0` for α16/r8, where the correct value is `2.0` — an 8×
+over-scaling of the adapter output. Again this does not move any published h5–h11
+number (they are cost measurements), but h13 is a quality claim, so it uses **2.0**,
+matching the cluster adapters' `lora_alpha/r = 16/8`.
+
+## Queue composition caveat (correcting the plan)
+
+The plan anticipated the early prefix being biased toward *small*-profile users. The
+frozen cost model does the opposite: fixed per-user costs (the 222 s cost-law
+intercept, model loads) amortise over big users, so the queue starts with the
+largest. Those are also the highest-effect users. On the cluster's own predictions,
+the effect accumulated along this exact queue order runs:
+
+| prefix | 1 | 3 | 5 | 10 | 20 | 50 | 100 |
+|---|---|---|---|---|---|---|---|
+| queries | 452 | 726 | 890 | 1193 | 1622 | 2476 | 3302 |
+| cluster Δ | +0.283 | +0.291 | +0.242 | +0.182 | +0.137 | +0.097 | +0.076 |
+
+**Any prefix result overstates the full-pool effect and must be reported with this
+table beside it.** The ordering rule was frozen blind to results, so this is a
+disclosure item, not a selection problem.
+
+## Declared deviations
+
+* **Sampler.** MLX applies filters top_p → min_p → top_k and scales by temperature
+  *after* filtering; HF applies temperature → top_k → top_p. At T=0.1 both are
+  effectively greedy, and all four h13 arms share the identical MLX sampler, so the
+  on-device comparison is internally consistent. Cross-plane comparison against the
+  published bf16/HF numbers is **not** licensed.
+* **Batching.** Batch-1 microbatches × 8 accumulation instead of their per-device
+  2 × accum 4; token-weighted window normalisation makes the gradient equivalent.
+* **Shuffle.** Their `Dataset.shuffle()` is unseeded, so byte-order parity with the
+  cluster is unobtainable. The builder bakes a seeded per-epoch permutation, which
+  is what makes the device-vs-Mac loss comparison a fidelity check.
+* 4-bit base (not bf16), no LoRA dropout — as planned.
+
+## Device fidelity (smoke, user 8000865)
+
+Device and Mac consume the identical corpus file. Step-1 loss (pristine adapter, so
+a pure forward-pass comparison): **device 0.52491 vs Mac 0.53191**, 1.3% relative —
+A19 NAX 4-bit kernels vs M3's. All 12 queries: device predictions identical to both
+the Mac-control and cluster adapters; rag 0.667 → all three adapter arms 0.750.
+
+## Operational trap discovered (cost ~1 h)
+
+`devicectl device copy to` with a **single** `--source` RENAMES that source to
+`--destination`. `--source config.json --destination Documents/h13_model/` replaced
+the `h13_model` DIRECTORY with a file, and a later single-file push replaced
+`Documents` ITSELF with an 18-byte file; every subsequent read returned
+`CoreDeviceError 7000`, and neither killing `remotepairingd` nor a device reboot
+touched it. Recovery: push a PARENT DIRECTORY as `--source <stage> --destination
+Documents`. Multiple `--source` arguments place items inside the destination; a lone
+one renames. Encoded in `scripts/h13/run_h13_user.sh`.
+
+## Build inventory
+
+* `scripts/h13/dump_movie_texts.py` — their-code text dump (runs on conduit)
+* `scripts/h13/build_h13_device_data.py` — pre-tokenised per-user corpora + eval prompts
+* `scripts/h13/build_queue.py` — frozen queue
+* `scripts/h13/fuse_oppu_movie_task.py` — task-adapter merge (hash-verified, config-hardened)
+* `scripts/h13/convert_peft_adapter_to_mlx.py` — cluster adapters → MLX
+* `scripts/h13/diag_eval_plane.py` — the bf16/4-bit × rag/cluster diagnostic above
+* `train/train_user_mlx_h13.py` — Mac control arm
+* `eval/h13_score.py` — reporting kit
+* `scripts/h13/run_h13_user.sh`, `run_h13_queue.sh` — device sequencers
+* `ios/.../Benchmark/LLMEvaluator+H13.swift` — device train + four-arm on-device eval

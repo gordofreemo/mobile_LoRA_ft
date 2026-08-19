@@ -100,6 +100,10 @@ extension LLMEvaluator {
         if args.contains("--benchmark-nax-ab") { return .naxAB }
         // h12: on-device Per-Task-LoRA (LaMP-7) training to completion.
         if args.contains("--benchmark-train-taskadapter") { return .taskAdapter }
+        // h13: on-device OPPU movie-tagging validation — per-user training and
+        // the four-arm on-device eval. Two distinct exact args.
+        if args.contains("--benchmark-h13-train") { return .h13Train }
+        if args.contains("--benchmark-h13-eval") { return .h13Eval }
         // NAX qmm_n numerical check: no model, no training — see
         // runNaxVerifyBenchmark().
         if args.contains("--verify-qmm-n") { return .verifyQmmN }
@@ -182,6 +186,13 @@ extension LLMEvaluator {
         /// pre-tokenized side-loaded data with an assistant-masked loss.
         /// `--max-steps 20` is the smoke form. See runTaskAdapterBenchmark.
         case taskAdapter
+        /// h13 training: one OPPU movie-tagging User-LoRA trained to
+        /// completion over the quantised movie task merge. See
+        /// runH13TrainBenchmark.
+        case h13Train
+        /// h13 evaluation: generate one user's test queries under one arm
+        /// (rag/cluster/mac/device) on-device. See runH13EvalBenchmark.
+        case h13Eval
     }
 
     /// Value of a `--flag <value>` launch arg, or nil if absent/trailing.
@@ -496,6 +507,17 @@ extension LLMEvaluator {
             await runTaskAdapterBenchmark(maxSteps: Self.trainBenchmarkMaxSteps)
             return
         }
+        // h13 — separate orchestration paths (per-user pre-tokenized corpora,
+        // per-user adapters, on-device four-arm generation).
+        if mode == .h13Train {
+            await runH13TrainBenchmark(
+                user: Self.trainBenchmarkUser, maxSteps: Self.trainBenchmarkMaxSteps)
+            return
+        }
+        if mode == .h13Eval {
+            await runH13EvalBenchmark(user: Self.trainBenchmarkUser, arms: Self.h13Arms)
+            return
+        }
         if mode == .thermalCycle {
             await runThermalCycleBenchmark(
                 burstMinutes: Self.trainBenchmarkBurstMinutes,
@@ -729,7 +751,7 @@ extension LLMEvaluator {
         }
     }
 
-    private func finishTrainBenchmark() {
+    func finishTrainBenchmark() {
         tlog("exiting after train benchmark")
         benchLogLine("exiting after train benchmark")
         exit(0)

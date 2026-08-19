@@ -1084,4 +1084,78 @@ enum TrainBenchConstants {
     /// ~7-8 min of work per checkpoint at hot-device step times; a save costs
     /// ~2 s (150 MB of safetensors).
     static let taskAdapterCheckpointEverySteps = 5
+
+    // MARK: - h13 — on-device validation of the OPPU movie-tagging effect
+    //
+    // Trains a per-user OPPU User-LoRA on-device over a 4-bit quantisation of
+    // THEIR merged movie task adapter, then evaluates four arms on-device.
+    // Spec: experiments/2026-08-19-ondevice-oppu-movie-validation-h13-plan.md
+    //
+    // Recipe = the R5 user-stage bundle, which the P19 ablation showed still
+    // yields +0.0763 inside their protocol (run_oppu.py --user-recipe r5):
+    // LR 1e-5, alpha 16 / r 8, cosine + 3% warmup, 3 epochs, effective batch 8,
+    // wd 1e-2, grad-norm 1.0, q+v only, all 36 layers.
+    // Forced deviations: 4-bit base (not bf16), no dropout, batch-1
+    // microbatches instead of per-device 2 x accum 4.
+
+    static let h13AppBuild = "smollm3-ondevice-oppu-movie-h13"
+    static let h13SchemaVersion = 1
+    static let h13MetricsFileName = "train_bench_metrics_h13.jsonl"
+    static let h13EvalMetricsFileName = "eval_bench_metrics_h13.jsonl"
+
+    /// Side-loaded per-user corpora: Documents/h13_data/<user_id>/{train,eval}.jsonl
+    static let h13DataDirName = "h13_data"
+    /// Adapters: Documents/h13_adapters/<user_id>/<arm>/adapters.safetensors
+    static let h13AdapterDirName = "h13_adapters"
+    /// Predictions: Documents/h13_preds/<user_id>/<arm>.jsonl
+    static let h13PredDirName = "h13_preds"
+    /// Side-loaded MLX 4-bit model dir (Documents/h13_model). Avoids publishing
+    /// the merged model to the Hub; falls back to `h13ModelId` if absent.
+    static let h13ModelDirName = "h13_base"
+    static let h13ModelId = "ageyko/SmolLM3-3B-oppu-movie-4bit"
+
+    static let h13LoraLayers = 36
+    static let h13LoraRank = 8
+    /// alpha/r = 16/8 = 2.0. NOTE the h5-era `loraScale = 16.0` above uses a
+    /// DIFFERENT (incorrect) reading of the same field: `LoRALinear` computes
+    /// `y + scale * (x @ a) @ b`, so `scale` IS alpha/r, exactly as PEFT's
+    /// `lora_alpha / r`. h13 evaluates adapter QUALITY, so it must match the
+    /// cluster arm's scaling exactly; the h5-h11 rounds measured cost only,
+    /// and MLX kernel timings are value-independent, so their numbers stand.
+    static let h13LoraScale: Float = 2.0
+    static let h13LoraKeys = ["self_attn.q_proj", "self_attn.v_proj"]
+    static let h13LoraKeysLabel = "q_proj,v_proj"
+
+    static let h13BaseLR: Float = 1e-5
+    static let h13WarmupRatio = 0.03
+    /// Decoupled AdamW weight decay (their TrainingArguments weight_decay=1e-2).
+    /// Non-zero here, unlike h12 — the h13 optimizer applies `p -= lr*wd*p`.
+    static let h13WeightDecay: Float = 0.01
+    static let h13AdamBeta1: Float = 0.9
+    static let h13AdamBeta2: Float = 0.999
+    static let h13AdamEps: Float = 1e-8
+
+    /// Effective batch 8 (their per-device 2 x grad-accum 4), as 8 microbatches
+    /// of batch 1. Windows NEVER straddle an epoch boundary: HF re-shuffles and
+    /// restarts accumulation each epoch, so the last window of every epoch is
+    /// partial. Step count = epochs * ceil(n/8).
+    static let h13AccumWindow = 8
+    static let h13Epochs = 3
+    static let h13GradClipNorm: Float = 1.0
+    static let h13CheckpointEverySteps = 20
+    static let h13SampleSeconds = 30.0
+
+    /// Their sampled decoding (run_oppu.py model.generate): do_sample, top_k=10,
+    /// temperature=0.1, top_p=0.9, max_new_tokens=200.
+    /// DECLARED DEVIATION: MLX applies the filters in the order top_p -> min_p
+    /// -> top_k and scales by temperature AFTER filtering; HF applies
+    /// temperature -> top_k -> top_p. At T=0.1 both are effectively greedy, and
+    /// every h13 arm uses this identical MLX sampler, so the on-device
+    /// comparison stays internally consistent. Cross-plane comparison with the
+    /// published bf16/HF numbers is NOT licensed.
+    static let h13MaxNewTokens = 200
+    static let h13Temperature: Float = 0.1
+    static let h13TopP: Float = 0.9
+    static let h13TopK = 10
+    static let h13EvalSeed: UInt64 = 0
 }
