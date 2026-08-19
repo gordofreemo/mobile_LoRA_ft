@@ -30,6 +30,20 @@ nohup scripts/h13/run_h13_mac_catchup.sh > /tmp/h13_catchup.log 2>&1 &
 
 One extra model load (~1 min) per user. Far cheaper than stalling the phone.
 
+## One deferred check (needs the Mac GPU, ~5 min)
+
+The on-device RAG arm for user `8000201` scored 0.285 where the bf16 cluster arm
+scored 0.5155. Confirm that is the quantised model's honest score rather than a
+device-side artefact, by scoring the same 452 prompts with the Mac 4-bit model:
+
+```
+.venv-mlx/bin/python scripts/h13/diag_eval_plane.py --n-users 1 \
+  --out results/ondevice/h13_diag_user8000201.json
+```
+
+(Edit the script's user slice if rank 0 is not `data[0]`.) The two planes agreed
+exactly on the 15-user diagnostic, so this is expected to confirm.
+
 ## Check the campaign at any time
 
 ```

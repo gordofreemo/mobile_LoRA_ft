@@ -130,3 +130,43 @@ one renames. Encoded in `scripts/h13/run_h13_user.sh`.
 * `eval/h13_score.py` — reporting kit
 * `scripts/h13/run_h13_user.sh`, `run_h13_queue.sh` — device sequencers
 * `ios/.../Benchmark/LLMEvaluator+H13.swift` — device train + four-arm on-device eval
+
+## First queue user (rank 0, `8000201`, 452 queries) — 2026-08-19
+
+Device cost: train 94.8 min (291 steps, predicted 90), 5 min cooldown, 22 min to
+evaluate 452 queries × 3 arms in one model load (0.97 s per query-arm). Loss
+0.31 → 0.066. Total 122 min. The `mac` arm was skipped — Mac-control training is
+paused during the day, and `run_h13_mac_catchup.sh` fills it in later.
+
+| arm | accuracy |
+|---|---|
+| cluster reference, RAG (bf16, HF) | 0.5155 |
+| cluster reference, OPPU r5 (bf16, HF) | 0.7987 |
+| **device: rag** (4-bit MLX, on phone) | **0.2854** |
+| **device: cluster adapter** | **0.7677** |
+| **device: device-trained adapter** | **0.7588** |
+
+**The effect survives on-device training.** `device − rag` = **+0.4634** query-level
+(t_p 2.8e-50, 238/203/23 over both completed users), and the device-trained adapter
+lands on the cluster-trained one: `device − cluster` = −0.0086, ns (p=0.35), with
+only 5.6% of predictions differing between them. That is the h13 claim.
+
+**But the on-device Δ is larger than the cluster's (+0.463 vs +0.283) for a reason
+that must be reported, not celebrated: the baseline degrades, not the adapter.**
+Under 4-bit, the adapter arm loses 0.03 (0.799 → 0.768) while the RAG arm loses
+0.23 (0.5155 → 0.285). This user's gold is 75% "based on a book"; the bf16 RAG arm
+emits that tag 169/452 times, the 4-bit RAG arm only 107/452. So quantisation
+damages *in-context* personalization far more than *weight-baked* personalization —
+a coherent and interesting story, but on n=1 user so far, and one whose RAG arm
+leans hard on a single retrieved example. The earlier 15-user diagnostic put the
+4-bit RAG penalty at only −0.056 (0.4939 → 0.4383), so the size of this penalty is
+strongly user-dependent.
+
+**Open check for the overnight window:** run the Mac 4-bit rag arm on this user to
+confirm 0.285 is the quantised model's honest score and not a device-side artefact.
+The two planes agreed exactly on the 15-user diagnostic, so this is a confirmation,
+not a suspicion.
+
+⚠ n=2 users / 464 queries. The grouped per-user test is meaningless at this size
+(n=2), and the queue front-loads the highest-effect users — see the prefix table
+above.
