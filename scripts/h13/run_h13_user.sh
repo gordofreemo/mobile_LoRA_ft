@@ -16,6 +16,7 @@ set -uo pipefail
 
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 DEV=00008150-000674C60A3B401C
+DCTL_TIMEOUT=${DCTL_TIMEOUT:-180}
 APP=mlx.LLMEvalJGW9U9Y36Y
 ROOT="$HOME/Documents/Research/mobile_LoRA_ft"
 PULL="$ROOT/results/ondevice/h13_preds"
@@ -29,7 +30,8 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 wait_for_device() {
   local tries=0
-  until xcrun devicectl list devices 2>/dev/null | grep -q "available (paired)"; do
+  until xcrun devicectl list devices --timeout 60 2>/dev/null \
+        | grep -E "available \(paired\)|connected" | grep -qv "unavailable"; do
     tries=$((tries + 1))
     [ "$tries" -eq 1 ] && log "device unavailable, waiting (unlock it if it is asleep)"
     [ "$tries" -gt 240 ] && { log "device still unavailable after 2 h"; return 1; }
@@ -44,8 +46,8 @@ launch() {
   local tries=0
   while [ "$tries" -lt 40 ]; do
     wait_for_device || return 1
-    if xcrun devicectl device process launch --device "$DEV" --terminate-existing \
-         "$APP" "$@" >/dev/null 2>&1; then
+    if xcrun devicectl device process launch --timeout "$DCTL_TIMEOUT" --device "$DEV" \
+         --terminate-existing "$APP" "$@" >/dev/null 2>&1; then
       return 0
     fi
     tries=$((tries + 1))
@@ -61,7 +63,8 @@ launch() {
 
 pull_log() {
   rm -f "$LOG"
-  xcrun devicectl device copy from --device "$DEV" --domain-type appDataContainer \
+  xcrun devicectl device copy from --timeout "$DCTL_TIMEOUT" --device "$DEV" \
+    --domain-type appDataContainer \
     --domain-identifier "$APP" --source Documents/h13_stderr.log \
     --destination "$LOG" >/dev/null 2>&1 || true
 }
@@ -103,7 +106,7 @@ MACDIR="$ROOT/train/checkpoints_mlx/h13_mac_control/$USER_ID"
 if [ -f "$MACDIR/adapters.safetensors" ]; then
   TMPM=$(mktemp -d); mkdir -p "$TMPM/mac"
   cp "$MACDIR/adapters.safetensors" "$TMPM/mac/"
-  xcrun devicectl device copy to --device "$DEV" --domain-type appDataContainer \
+  xcrun devicectl device copy to --timeout "$DCTL_TIMEOUT" --device "$DEV" --domain-type appDataContainer \
     --domain-identifier "$APP" --source "$TMPM/mac" \
     --destination "Documents/h13_adapters/$USER_ID/mac" >/dev/null 2>&1 \
     && log "staged mac adapter for $USER_ID" || log "WARN: mac adapter push failed"
@@ -119,18 +122,18 @@ wait_for "h13 eval ALL DONE user=$USER_ID" $((BEFORE + 1)) || exit 1
 
 mkdir -p "$PULL/$USER_ID" "$ROOT/results/ondevice/h13_telemetry"
 TMP=$(mktemp -d)
-xcrun devicectl device copy from --device "$DEV" --domain-type appDataContainer \
+xcrun devicectl device copy from --timeout 600 --device "$DEV" --domain-type appDataContainer \
   --domain-identifier "$APP" --source "Documents/h13_preds/$USER_ID" \
   --destination "$TMP/" >/dev/null 2>&1 || true
 cp "$TMP"/*.jsonl "$PULL/$USER_ID/" 2>/dev/null || true
 rm -rf "$TMP"
 for F in train_bench_metrics_h13_nax-on.jsonl eval_bench_metrics_h13_nax-on.jsonl; do
-  xcrun devicectl device copy from --device "$DEV" --domain-type appDataContainer \
+  xcrun devicectl device copy from --timeout 600 --device "$DEV" --domain-type appDataContainer \
     --domain-identifier "$APP" --source "Documents/$F" \
     --destination "$ROOT/results/ondevice/h13_telemetry/$F" >/dev/null 2>&1 || true
 done
 # The device adapter is a deliverable in its own right (device-vs-Mac weights).
-xcrun devicectl device copy from --device "$DEV" --domain-type appDataContainer \
+xcrun devicectl device copy from --timeout 600 --device "$DEV" --domain-type appDataContainer \
   --domain-identifier "$APP" --source "Documents/h13_adapters/$USER_ID/device" \
   --destination "$ROOT/results/ondevice/h13_device_adapters/$USER_ID/" >/dev/null 2>&1 || true
 log "user $USER_ID COMPLETE: $(ls "$PULL/$USER_ID" 2>/dev/null | tr '\n' ' ')"
