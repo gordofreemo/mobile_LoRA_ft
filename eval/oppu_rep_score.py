@@ -196,7 +196,8 @@ def paired_stats(diffs):
             "losses": sum(1 for d in diffs if d < 0)}
 
 
-def score_task(task, overwrite, smoke=False, task_tag="", oppu_tag="", out_tag=""):
+def score_task(task, overwrite, smoke=False, task_tag="", oppu_tag="", out_tag="",
+               restrict_to_preds=False):
     lamp_id, test_fn = TASKS[task]
     out_path = OUT / (f"score_{task}_smoke.json" if smoke else f"score_{task}{out_tag}.json")
     if out_path.exists() and not overwrite:
@@ -208,11 +209,29 @@ def score_task(task, overwrite, smoke=False, task_tag="", oppu_tag="", out_tag="
     gold_by_id = {str(q["id"]): str(q["gold"]) for u in test_data for q in u["query"]}
     user_by_id = {str(q["id"]): str(u["user_id"]) for u in test_data for q in u["query"]}
 
+    if restrict_to_preds:
+        # PATCH P21: intersect FIRST, so both arms are scored on exactly the same
+        # ids. Restricting inside the loop would score the task arm on a superset
+        # whenever the two arms' prefixes differ, making the headlines
+        # incomparable even though the paired diffs would still line up.
+        common = set(gold_by_id)
+        for arm in ("task", "oppu"):
+            common &= set(load_arm_preds(
+                task, arm, smoke=smoke,
+                tag=task_tag if arm == "task" else oppu_tag))
+        gold_by_id = {i: g for i, g in gold_by_id.items() if i in common}
+        print(f"[P21] scoring a prefix: {len(gold_by_id)} queries present in both arms")
+
     arms = {}
     for arm in ("task", "oppu"):
         preds = load_arm_preds(task, arm, smoke=smoke,
                                tag=task_tag if arm == "task" else oppu_tag)
-        if smoke:
+        if smoke or restrict_to_preds:
+            # PATCH P21: score a PREFIX. h13 evaluates the OPPU movie users on
+            # the phone as an anytime queue, so at any moment only some users
+            # have predictions. Restricting the gold set to the ids actually
+            # present lets their evaluator score the completed prefix unchanged;
+            # without it the missing-prediction guard below (correctly) refuses.
             gold_by_id = {i: g for i, g in gold_by_id.items() if i in preds}
         missing = set(gold_by_id) - set(preds)
         if missing:
@@ -221,7 +240,8 @@ def score_task(task, overwrite, smoke=False, task_tag="", oppu_tag="", out_tag="
             sys.exit(1)
         preds = {i: preds[i] for i in gold_by_id}
         headline = their_headline(task, lamp_id, preds,
-                                  restrict_ids=set(gold_by_id) if smoke else None)
+                                  restrict_ids=set(gold_by_id)
+                                  if (smoke or restrict_to_preds) else None)
         pq = per_query_scores(lamp_id, preds, gold_by_id)
         # validation: our per-query aggregate must reproduce their number
         key0 = pq["metric"]
@@ -294,6 +314,10 @@ def main():
                     help="filename tag of the task arm to load, e.g. '_seed1'")
     ap.add_argument("--oppu-tag", default="",
                     help="filename tag of the oppu arm to load, e.g. '_r5' or '_seed1'")
+    ap.add_argument("--restrict-to-preds", action="store_true",
+                    help="PATCH P21: score only the ids present in BOTH arms' "
+                         "prediction files (h13 evaluates an anytime queue, so "
+                         "a prefix is a legitimate, complete result)")
     ap.add_argument("--out-tag", default="",
                     help="suffix for the score output files, e.g. '_r5'")
     args = ap.parse_args()
@@ -313,7 +337,8 @@ def main():
     ensure_metric_cache()
     for t in tasks:
         score_task(t, args.overwrite, smoke=args.smoke, task_tag=args.task_tag,
-                   oppu_tag=args.oppu_tag, out_tag=args.out_tag)
+                   oppu_tag=args.oppu_tag, out_tag=args.out_tag,
+                   restrict_to_preds=args.restrict_to_preds)
 
 
 if __name__ == "__main__":
