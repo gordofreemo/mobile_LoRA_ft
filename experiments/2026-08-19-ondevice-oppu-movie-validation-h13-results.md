@@ -170,3 +170,31 @@ not a suspicion.
 ⚠ n=2 users / 464 queries. The grouped per-user test is meaningless at this size
 (n=2), and the queue front-loads the highest-effect users — see the prefix table
 above.
+
+## Prefix 10 (10 users, 1,152 queries) — 2026-08-20
+
+| arm | accuracy | invalid |
+|---|---|---|
+| rag | 0.3177 | 0.001 |
+| cluster adapter | 0.6233 | 0.007 |
+| **device-trained adapter** | **0.6293** | 0.003 |
+
+| contrast | query mean | t_p | W/T/L | grouped | grouped t_p | changed |
+|---|---|---|---|---|---|---|
+| cluster − rag | +0.3056 | 7.9e-77 | 384/736/32 | +0.1349 | 0.087 | 0.442 |
+| **device − rag** | **+0.3116** | 2.0e-78 | 392/727/33 | +0.1464 | 0.064 | 0.444 |
+| device − cluster | +0.0061 | 0.307 | 27/1105/20 | +0.0115 | 0.045 | 0.084 |
+
+**The claim holds and is tracking the reference.** As the queue moves past its
+high-effect head, the on-device Δ decays in the same shape as the cluster's own:
+device−rag goes +0.425 (prefix 5) → +0.312 (prefix 10) against the cluster's
++0.242 → +0.182 over the same prefixes. The device arm stays level with the
+cluster arm throughout (0.6293 vs 0.6233).
+
+**Do not read the grouped `device − cluster` p = 0.045 as an effect.** It is one
+of five contrasts at n=10 users, reported at every prefix, with no correction —
+exactly the shape R10 and warm-start's LaMP-5 had, and both were discarded. The
+query-level test on the same contrast is null (p = 0.31, 27 wins / 20 losses out
+of 1,152), and only 8.4% of predictions differ between the two adapters.
+
+Device pace: ~15–19 min per user at this size (train + 5 min cooldown + eval).
