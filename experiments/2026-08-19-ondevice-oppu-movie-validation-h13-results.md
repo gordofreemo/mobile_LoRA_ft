@@ -198,3 +198,42 @@ query-level test on the same contrast is null (p = 0.31, 27 wins / 20 losses out
 of 1,152), and only 8.4% of predictions differ between the two adapters.
 
 Device pace: ~15–19 min per user at this size (train + 5 min cooldown + eval).
+
+## Prefix 20 (20 users, 1,599 queries) — 2026-08-20
+
+| arm | accuracy | invalid |
+|---|---|---|
+| rag | 0.3483 | 0.001 |
+| cluster adapter | 0.5716 | 0.005 |
+| **device-trained adapter** | **0.5822** | 0.002 |
+
+| contrast | query mean | t_p | W/T/L | grouped | grouped t_p | changed |
+|---|---|---|---|---|---|---|
+| cluster − rag | +0.2233 | 2.7e-72 | 396/1164/39 | +0.0733 | 0.064 | 0.343 |
+| **device − rag** | **+0.2339** | 1.9e-77 | 411/1151/37 | +0.0907 | 0.023 | 0.343 |
+| device − cluster | +0.0106 | 0.041 | 43/1530/26 | +0.0174 | 0.0039 | 0.087 |
+
+Still tracking the reference as the queue decays: device−rag +0.425 → +0.312 →
++0.234 over prefixes 5/10/20, against the cluster's own +0.242 → +0.182 → +0.137.
+
+### Watch item: the device adapter may be beating the cluster adapter
+
+`device − cluster` has been positive and strengthening at every prefix —
++0.0061 (p=0.31) at 10, **+0.0106 (p=0.041), grouped +0.0174 (p=0.0039)** at 20,
+with the device arm ahead on the raw accuracy too (0.5822 vs 0.5716). The
+manipulation check says the arms genuinely differ on only 8.7% of predictions,
+and among those the device wins 43 to 26.
+
+**There is a plausible mechanism, which is why this is worth watching rather than
+dismissing: the device adapter is trained on the same 4-bit weights it is
+evaluated over, while the cluster adapter was trained on bf16 and is being ported
+onto a 4-bit base.** A quantisation-aware adapter beating a ported full-precision
+one is exactly what QLoRA-style reasoning predicts, and it would be a directly
+relevant result for an on-device paper — "train the adapter where you deploy it".
+
+**But treat it as a hypothesis, not a finding, until the queue completes.** It is
+one of five contrasts, computed at every prefix, uncorrected — the shape that
+produced R10 and warm-start's LaMP-5, both discarded. The whole effect is ~17
+queries out of 1,599. If it survives to n=100 with the mechanism intact, it is
+worth a dedicated arm (the same user trained on bf16 vs 4-bit, evaluated on 4-bit);
+if it decays, it was multiplicity.
