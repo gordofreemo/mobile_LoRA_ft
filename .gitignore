@@ -55,3 +55,13 @@ __pycache__/
 ios/BGProbe/build/
 train/checkpoints_mlx/
 .playwright-mcp/
+
+# h13 derived data — all regenerable: the texts come from their code on conduit
+# (scripts/h13/dump_movie_texts.py), the per-user corpora and MLX adapters from
+# build_h13_device_data.py / convert_peft_adapter_to_mlx.py.
+data/oppu_movie/data/
+data/oppu_movie/device/
+data/oppu_movie/mlx_adapters/
+data/oppu_movie/h13_movie_texts.json
+data/oppu_movie/prompt.json
+results/ondevice/h13_device_adapters/
