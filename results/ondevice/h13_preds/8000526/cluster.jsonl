@@ -1,0 +1,16 @@
+{"id":"803035","n_gen_tokens":4,"n_prompt_tokens":225,"output":" based on a book","output_ids":[3196,389,264,2363]}
+{"id":"803036","n_gen_tokens":1,"n_prompt_tokens":192,"output":" comedy","output_ids":[23160]}
+{"id":"803037","n_gen_tokens":1,"n_prompt_tokens":226,"output":" comedy","output_ids":[23160]}
+{"id":"803038","n_gen_tokens":2,"n_prompt_tokens":246,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"803039","n_gen_tokens":2,"n_prompt_tokens":360,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"803040","n_gen_tokens":2,"n_prompt_tokens":175,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"803041","n_gen_tokens":2,"n_prompt_tokens":203,"output":" sci-fi","output_ids":[39074,37731]}
+{"id":"803042","n_gen_tokens":2,"n_prompt_tokens":279,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"803043","n_gen_tokens":2,"n_prompt_tokens":237,"output":" sci-fi","output_ids":[39074,37731]}
+{"id":"803044","n_gen_tokens":2,"n_prompt_tokens":239,"output":" sci-fi","output_ids":[39074,37731]}
+{"id":"803045","n_gen_tokens":1,"n_prompt_tokens":226,"output":" classic","output_ids":[11670]}
+{"id":"803046","n_gen_tokens":2,"n_prompt_tokens":229,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"803047","n_gen_tokens":1,"n_prompt_tokens":197,"output":" fantasy","output_ids":[18884]}
+{"id":"81834","n_gen_tokens":2,"n_prompt_tokens":277,"output":" sci-fi","output_ids":[39074,37731]}
+{"id":"81835","n_gen_tokens":2,"n_prompt_tokens":205,"output":" sci-fi","output_ids":[39074,37731]}
+{"id":"81836","n_gen_tokens":2,"n_prompt_tokens":234,"output":" dystopia","output_ids":[69110,30651]}

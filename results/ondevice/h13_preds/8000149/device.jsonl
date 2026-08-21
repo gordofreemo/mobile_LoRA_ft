@@ -1,0 +1,37 @@
+{"id":"80736","n_gen_tokens":1,"n_prompt_tokens":224,"output":" classic","output_ids":[11670]}
+{"id":"80737","n_gen_tokens":1,"n_prompt_tokens":210,"output":" comedy","output_ids":[23160]}
+{"id":"80738","n_gen_tokens":1,"n_prompt_tokens":192,"output":" comedy","output_ids":[23160]}
+{"id":"80739","n_gen_tokens":1,"n_prompt_tokens":199,"output":" comedy","output_ids":[23160]}
+{"id":"80740","n_gen_tokens":1,"n_prompt_tokens":178,"output":" fantasy","output_ids":[18884]}
+{"id":"80741","n_gen_tokens":2,"n_prompt_tokens":346,"output":" sci-fi","output_ids":[39074,37731]}
+{"id":"80742","n_gen_tokens":1,"n_prompt_tokens":251,"output":" comedy","output_ids":[23160]}
+{"id":"80743","n_gen_tokens":1,"n_prompt_tokens":181,"output":" comedy","output_ids":[23160]}
+{"id":"80744","n_gen_tokens":1,"n_prompt_tokens":267,"output":" classic","output_ids":[11670]}
+{"id":"80745","n_gen_tokens":2,"n_prompt_tokens":188,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"80746","n_gen_tokens":1,"n_prompt_tokens":237,"output":" comedy","output_ids":[23160]}
+{"id":"80747","n_gen_tokens":1,"n_prompt_tokens":229,"output":" comedy","output_ids":[23160]}
+{"id":"80748","n_gen_tokens":2,"n_prompt_tokens":214,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"80749","n_gen_tokens":1,"n_prompt_tokens":196,"output":" comedy","output_ids":[23160]}
+{"id":"80750","n_gen_tokens":2,"n_prompt_tokens":219,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"80751","n_gen_tokens":1,"n_prompt_tokens":193,"output":" action","output_ids":[1957]}
+{"id":"80752","n_gen_tokens":1,"n_prompt_tokens":181,"output":" comedy","output_ids":[23160]}
+{"id":"80753","n_gen_tokens":1,"n_prompt_tokens":206,"output":" fantasy","output_ids":[18884]}
+{"id":"80754","n_gen_tokens":1,"n_prompt_tokens":247,"output":" comedy","output_ids":[23160]}
+{"id":"80755","n_gen_tokens":1,"n_prompt_tokens":225,"output":" comedy","output_ids":[23160]}
+{"id":"80756","n_gen_tokens":1,"n_prompt_tokens":226,"output":" comedy","output_ids":[23160]}
+{"id":"80757","n_gen_tokens":1,"n_prompt_tokens":207,"output":" comedy","output_ids":[23160]}
+{"id":"80758","n_gen_tokens":1,"n_prompt_tokens":228,"output":" classic","output_ids":[11670]}
+{"id":"80759","n_gen_tokens":2,"n_prompt_tokens":248,"output":" dystopia","output_ids":[69110,30651]}
+{"id":"80760","n_gen_tokens":4,"n_prompt_tokens":292,"output":" based on a book","output_ids":[3196,389,264,2363]}
+{"id":"80761","n_gen_tokens":1,"n_prompt_tokens":210,"output":" comedy","output_ids":[23160]}
+{"id":"80762","n_gen_tokens":1,"n_prompt_tokens":171,"output":" comedy","output_ids":[23160]}
+{"id":"80763","n_gen_tokens":1,"n_prompt_tokens":190,"output":" comedy","output_ids":[23160]}
+{"id":"80764","n_gen_tokens":2,"n_prompt_tokens":219,"output":" true story","output_ids":[837,3446]}
+{"id":"80765","n_gen_tokens":1,"n_prompt_tokens":171,"output":" classic","output_ids":[11670]}
+{"id":"80766","n_gen_tokens":1,"n_prompt_tokens":248,"output":" fantasy","output_ids":[18884]}
+{"id":"81217","n_gen_tokens":1,"n_prompt_tokens":219,"output":" comedy","output_ids":[23160]}
+{"id":"81218","n_gen_tokens":1,"n_prompt_tokens":168,"output":" comedy","output_ids":[23160]}
+{"id":"81219","n_gen_tokens":1,"n_prompt_tokens":180,"output":" comedy","output_ids":[23160]}
+{"id":"81220","n_gen_tokens":1,"n_prompt_tokens":225,"output":" comedy","output_ids":[23160]}
+{"id":"81221","n_gen_tokens":1,"n_prompt_tokens":172,"output":" action","output_ids":[1957]}
+{"id":"81222","n_gen_tokens":1,"n_prompt_tokens":236,"output":" comedy","output_ids":[23160]}

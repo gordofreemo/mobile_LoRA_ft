@@ -237,3 +237,72 @@ produced R10 and warm-start's LaMP-5, both discarded. The whole effect is ~17
 queries out of 1,599. If it survives to n=100 with the mechanism intact, it is
 worth a dedicated arm (the same user trained on bf16 vs 4-bit, evaluated on 4-bit);
 if it decays, it was multiplicity.
+
+## FINAL — 98 of 100 queue users, 3,277 paired queries (2026-08-21)
+
+Two users remain (`8000324` and the tail of the queue); the phone locked at 16:48
+and the runner is waiting for an unlock. Nothing below will move materially.
+
+### The claim holds
+
+| plane | baseline | adapter | Δ query-level |
+|---|---|---|---|
+| cluster reference (bf16, HF) | 0.4910 | 0.5679 | +0.0769 |
+| **on-device (4-bit MLX, phone)** | **0.3634** | **0.4843** | **+0.1208** |
+
+All four numbers are over the same 98 users / 3,277 queries. `device − rag` is
+**+0.1208** query-level (t_p 9.7e-71, 458/2757/62) and **+0.0265 grouped per-user
+(t_p 0.0043)**.
+
+**The grouped per-user effect transfers almost exactly: +0.0265 on-device against
++0.0236 for the cluster reference on the same users.** That is the cleanest
+statement of the result — the personalization effect OPPU measures with a
+bf16 GPU pipeline survives end-to-end on-device training, evaluated under 4-bit
+deployment conditions, at the same per-user magnitude.
+
+### Quantisation hits retrieval harder than weights
+
+| arm | bf16 → 4-bit |
+|---|---|
+| RAG baseline | **−0.1276** |
+| personalized adapter | **−0.0836** |
+
+**In-context personalization degrades 1.53× harder than weight-baked
+personalization.** This is why the on-device query-level Δ (+0.121) exceeds the
+cluster's (+0.077): the baseline falls further than the adapter arm does. Reported
+as an asymmetry, never as "personalization works better on-device".
+
+### The device-trained adapter matches the cluster-trained one
+
+`device − cluster` = +0.0067 query-level (p=0.061), grouped +0.0038 (p=0.33), with
+the arms differing on only 8.4% of predictions (80 wins / 58 losses). Training the
+adapter on the phone costs nothing measurable against training it on an A100.
+
+### The watch item was multiplicity, and it is retracted
+
+`device − cluster` looked like a real effect mid-campaign and is not:
+
+| prefix | query mean | p | grouped | grouped p |
+|---|---|---|---|---|
+| 10 | +0.0061 | 0.31 | +0.0115 | 0.045 |
+| 20 | +0.0106 | 0.041 | +0.0174 | 0.0039 |
+| 49 | +0.0123 | 0.0030 | +0.0161 | 0.0014 |
+| 80 | +0.0070 | 0.065 | +0.0037 | 0.373 |
+| **98** | **+0.0067** | **0.061** | **+0.0038** | **0.333** |
+
+It rose monotonically across three prefixes, reached grouped p = 0.0014, and then
+decayed to null. The proposed mechanism (the device adapter is trained on the same
+4-bit weights it is evaluated over, the cluster adapter is ported from bf16) was
+plausible and still is — it simply is not supported here. **No follow-up arm is
+warranted.**
+
+Keep this as a methodology exhibit: peeking at prefixes of an anytime queue
+manufactures exactly the R10 / warm-start-LaMP-5 shape, and only the full run
+settles it.
+
+### Cost
+
+~46 h wall-clock for 98 users including two multi-hour interruptions when the
+phone was unplugged; roughly 26 h of active device time. Per user: 2–95 min of
+training (median ~4 min), a 5 min cooldown, and ~1 s per query-arm of evaluation.
+Peak memory 2.22 GiB. Every arm generated on the phone.
