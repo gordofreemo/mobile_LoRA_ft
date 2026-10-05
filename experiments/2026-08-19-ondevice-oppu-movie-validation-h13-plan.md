@@ -1,6 +1,6 @@
 # h13 — on-device validation of the OPPU personalization effect (movie tagging)
 
-Pinned 2026-08-19 via /grill_me. Goes in the EuroSys paper (self-contained section, deletable
+Pinned 2026-08-19 via /grill_me. Goes in the paper (self-contained section, deletable
 without unstitching the two acts). Claude implements everything. No gates (pre-reg retired);
 descriptive stats, user decides meaning.
 
