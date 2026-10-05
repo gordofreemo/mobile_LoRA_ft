@@ -43,6 +43,8 @@ import MLXOptimizers
 // before any `GPU.startCapture`, so a missing `MetalCaptureEnabled` Info.plist
 // key degrades to a logged marker instead of an uncatchable mlx-c error exit.
 import Metal
+// h16dq: os_proc_available_memory() for the footprint fields.
+import os
 
 #if canImport(UIKit)
     import UIKit
@@ -107,6 +109,10 @@ extension LLMEvaluator {
         // NAX qmm_n numerical check: no model, no training — see
         // runNaxVerifyBenchmark().
         if args.contains("--verify-qmm-n") { return .verifyQmmN }
+        // h16dq Phase 0: LoRA-gradient agreement of the dequant dX arm.
+        if args.contains("--verify-dq-grads") { return .verifyDqGrads }
+        // h17x: explanatory micro-benchmarks (dX cost breakdown, forward anomaly).
+        if args.contains("--benchmark-explain") { return .explain }
         if args.contains("--benchmark-thermal-selflimit") { return .thermalSelfLimit }
         if args.contains("--benchmark-thermal-cycle") { return .thermalCycle }
         if args.contains("--benchmark-thermal-cooldown") { return .thermalCooldown }
@@ -175,6 +181,12 @@ extension LLMEvaluator {
         /// compares kernels against dequantized references.
         /// See runNaxVerifyBenchmark.
         case verifyQmmN
+        /// h16dq Phase 0: compare the full LoRA gradients of one training step
+        /// under the on / dequant / off dX arms at 250 and 1024 tokens. See
+        /// runDqGradCheck.
+        case verifyDqGrads
+        /// h17x: explanatory micro-benchmarks. See runExplainBenchmark.
+        case explain
         /// NAX A/B (follow-on to h11): the per-op decomposition run on an
         /// ALIGNED token grid with `MLX_ENABLE_NAX_N` alternated per iteration,
         /// so each cell yields paired on/off measurements at the same die
@@ -205,6 +217,77 @@ extension LLMEvaluator {
         return args[i + 1]
     }
 
+    // MARK: - h14 cap-sweep overrides (2026-09-11)
+
+    /// Launch-arg overrides for the h1-h4 cap-sweep path (`--benchmark-train`).
+    /// Added for the paper's memory-consistency rerun: the h4 memory numbers
+    /// were taken with the (buggy) 28-block LoRA config while h8 used 36, and
+    /// the "8B fits for inference but not training" claim had never been
+    /// measured. All optional; absent → byte-identical to the h4 behaviour.
+    ///   --lora-layers N     LoRA on the last N blocks (default: loraLayers=28)
+    ///   --gc on|off         per-block gradient checkpointing (default: true)
+    ///   --iterations N      steps per cell (default: 200)
+    ///   --caps 32,64,...    sequence-length caps (default: seqCaps)
+    ///   --model <hf id>     model override (e.g. mlx-community/Qwen3-8B-4bit)
+    /// When ANY override is present the records are tagged with the h14
+    /// app_build and routed to a separate JSONL (`train_bench_metrics_h14.jsonl`,
+    /// nax-arm suffixed) so the h3/h4 files are never touched.
+    struct CapSweepOverride: Sendable {
+        let loraLayers: Int
+        let gradientCheckpointing: Bool
+        let iterations: Int
+        let caps: [Int]
+        let modelId: String?
+        /// `--lora-rank N` and `--lora-keys q,v,k,o,gate,up,down` (h14 rank/placement ablation).
+        let loraRank: Int
+        let loraKeys: [String]
+        let active: Bool
+        var loraKeysLabel: String { loraKeys.map { $0.replacingOccurrences(of: "self_attn.", with: "").replacingOccurrences(of: "mlp.", with: "") }.joined(separator: ",") }
+        var appBuild: String {
+            active ? naxArmAppBuild("ondevice-train-capsweep-h14") : TrainBenchConstants.appBuild
+        }
+        var fileName: String {
+            active ? naxArmFileName("train_bench_metrics_h14.jsonl") : TrainBenchConstants.metricsFileName
+        }
+        var granularityLabel: String {
+            gradientCheckpointing ? TrainBenchConstants.checkpointGranularity : "none"
+        }
+    }
+
+    /// `--run-tag <tag>` (h14 repeats, 2026-09-11): suffix for the E2E JSONL and
+    /// app_build so repeat runs never append to the campaign's canonical files.
+    nonisolated static var trainBenchmarkRunTag: String? {
+        guard let v = launchArgValue("--run-tag"), !v.isEmpty else { return nil }
+        return v.replacingOccurrences(of: "/", with: "_")
+    }
+
+    nonisolated static var capSweepOverride: CapSweepOverride {
+        let ll = launchArgValue("--lora-layers").flatMap { Int($0) }
+        let gcArg = launchArgValue("--gc")
+        let gc: Bool? = gcArg.map { $0 == "on" }
+        let it = launchArgValue("--iterations").flatMap { Int($0) }
+        let caps = launchArgValue("--caps").map {
+            $0.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        }
+        let model = launchArgValue("--model")
+        let rank = launchArgValue("--lora-rank").flatMap { Int($0) }
+        let keyMap = ["q": "self_attn.q_proj", "k": "self_attn.k_proj", "v": "self_attn.v_proj", "o": "self_attn.o_proj",
+                      "gate": "mlp.gate_proj", "up": "mlp.up_proj", "down": "mlp.down_proj"]
+        let keys = launchArgValue("--lora-keys").map {
+            $0.split(separator: ",").compactMap { keyMap[String($0).trimmingCharacters(in: .whitespaces)] }
+        }
+        let active = ll != nil || gc != nil || it != nil || caps != nil || model != nil || rank != nil || keys != nil
+        return CapSweepOverride(
+            loraLayers: ll ?? TrainBenchConstants.loraLayers,
+            gradientCheckpointing: gc ?? TrainBenchConstants.gradientCheckpointing,
+            iterations: it ?? TrainBenchConstants.iterations,
+            caps: (caps?.isEmpty == false ? caps! : TrainBenchConstants.seqCaps),
+            modelId: model,
+            loraRank: rank ?? TrainBenchConstants.loraRank,
+            loraKeys: (keys?.isEmpty == false ? keys! : TrainBenchConstants.loraKeys),
+            active: active)
+    }
+
     /// `--nax-arm on|off` — NAX A/B arm for an E2E run. Sets MLX_ENABLE_NAX_N,
     /// tags every record, routes to a separate JSONL and an arm-specific adapter
     /// path, and enables the seeded batch shuffle so both arms see an IDENTICAL
@@ -232,6 +315,29 @@ extension LLMEvaluator {
     /// while keeping the cells thermally paired at the block level.
     nonisolated static var trainBenchmarkPinArms: Bool {
         CommandLine.arguments.contains("--pin-arms")
+    }
+
+    /// `--ab-arms off,on,dequant` (h16dq, 2026-09-23): run the NAX A/B over an
+    /// explicit arm list instead of the on/off pair. `dequant` keeps the NAX forward
+    /// and checkpoint recompute but builds dX by dequantizing the weight and running
+    /// the dense matmul (MLX_QMM_VJP_DEQUANT=1, the local primitives.cpp patch).
+    /// Only honoured with `--benchmark-nax-ab` and without `--pin-arms`. Unknown
+    /// labels reject the whole list (nil), so a typo cannot silently drop an arm.
+    /// `--vjp-dequant` (h16dq Phase 2): set MLX_QMM_VJP_DEQUANT=1 for the whole
+    /// launch, so an ordinary single-arm run (e.g. `--benchmark-train-e2e
+    /// --nax-arm on`) computes dX by dequantize + dense matmul. Recorded as
+    /// `vjp_dequant` and a `-dqab` app_build suffix in every E2E record.
+    nonisolated static var trainBenchmarkVJPDequant: Bool {
+        CommandLine.arguments.contains("--vjp-dequant")
+    }
+
+    nonisolated static var trainBenchmarkABArms: [String]? {
+        guard let v = launchArgValue("--ab-arms"), !v.isEmpty else { return nil }
+        let arms = v.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !arms.isEmpty, arms.allSatisfy({ ["off", "on", "dequant"].contains($0) }) else {
+            return nil
+        }
+        return arms
     }
 
     /// On-device JSONL filename for the current global NAX arm:
@@ -431,10 +537,24 @@ extension LLMEvaluator {
             setenv("MLX_ENABLE_NAX_N", arm == "on" ? "1" : "0", 1)
             tlog("global NAX arm=\(arm) (records tagged nax_arm, JSONLs suffixed _nax-\(arm))")
         }
+        // h16dq Phase 2: whole-launch dequant dX. Unset otherwise, so every other
+        // round runs exactly the code it always did.
+        if Self.trainBenchmarkVJPDequant {
+            setenv("MLX_QMM_VJP_DEQUANT", "1", 1)
+            tlog("global VJP dequant ON (MLX_QMM_VJP_DEQUANT=1; records tagged vjp_dequant)")
+        }
         // NAX qmm_n verification: no model, no training, seconds not minutes.
         // Checked first so it can never be shadowed by the model-loading paths.
         if mode == .verifyQmmN {
             await runNaxVerifyBenchmark()
+            return
+        }
+        if mode == .verifyDqGrads {
+            await runDqGradCheck()
+            return
+        }
+        if mode == .explain {
+            await runExplainBenchmark()
             return
         }
         // Idle energy baseline (h9) is a separate orchestration path (no
@@ -533,11 +653,20 @@ extension LLMEvaluator {
             UIDevice.current.isBatteryMonitoringEnabled = true
         #endif
 
+        // h14: optional overrides (model / LoRA block count / GC / iterations /
+        // caps). Applied before load so the override model is what trains.
+        let ov = Self.capSweepOverride
+        if let m = ov.modelId {
+            modelConfiguration = ModelConfiguration(id: m, defaultPrompt: "Why is the sky blue?")
+        }
+
         let sessionId = UUID().uuidString
-        tlog("start session=\(sessionId) mode=\(mode) build=\(TrainBenchConstants.appBuild)")
+        tlog("start session=\(sessionId) mode=\(mode) build=\(ov.appBuild) "
+            + "loraLayers=\(ov.loraLayers) gc=\(ov.gradientCheckpointing) "
+            + "iterations=\(ov.iterations) caps=\(ov.caps) model=\(modelConfiguration.name)")
         benchLogLine(
             "train-benchmark start session=\(sessionId) mode=\(mode) "
-                + "build=\(TrainBenchConstants.appBuild)")
+                + "build=\(ov.appBuild)")
 
         guard
             let trainData = Self.loadBundledLoRAData(TrainBenchConstants.trainResource),
@@ -562,7 +691,7 @@ extension LLMEvaluator {
         // (sentinel present, no train records) is pinpointable.
         let caps =
             (mode == .stress)
-            ? [TrainBenchConstants.stressSeqCap] : TrainBenchConstants.seqCaps
+            ? [TrainBenchConstants.stressSeqCap] : ov.caps
 
         for (i, cap) in caps.enumerated() {
             await runTrainCell(
@@ -622,7 +751,8 @@ extension LLMEvaluator {
             batchSize: batchSize, seqCap: seqCap, sessionId: sessionId,
             battery: batteryStart, nTrain: trainData.count)
 
-        let iterations = TrainBenchConstants.iterations
+        let ov = Self.capSweepOverride
+        let iterations = ov.iterations
         let stepsPerReport = TrainBenchConstants.stepsPerReport
 
         // decision 9: wrap LoRA-apply + train in do/catch. OOM may surface as a
@@ -632,23 +762,24 @@ extension LLMEvaluator {
             let result = try await container.perform {
                 ctx throws -> TrainCellResult in
 
-                // Apply OPPU LoRA (r=8, q+v only, all 28 layers). Mutates the
+                // Apply OPPU LoRA (r=8, q+v only). Block count defaults to the
+                // h1-h4 constant (28); h14 passes --lora-layers 36. Mutates the
                 // model in place: freezes base, replaces q/v projections.
                 let config = LoRAConfiguration(
-                    numLayers: TrainBenchConstants.loraLayers,
+                    numLayers: ov.loraLayers,
                     loraParameters: .init(
-                        rank: TrainBenchConstants.loraRank,
-                        scale: TrainBenchConstants.loraScale,
-                        keys: TrainBenchConstants.loraKeys))
+                        rank: ov.loraRank,
+                        scale: ov.loraRank == TrainBenchConstants.loraRank ? TrainBenchConstants.loraScale : Float(2 * ov.loraRank),
+                        keys: ov.loraKeys))
                 _ = try LoRAContainer.from(model: ctx.model, configuration: config)
 
                 // h4: enable per-transformer-block gradient checkpointing on the
-                // model (no-op for any non-SmolLM3 model). The model's forward
-                // reads each block's trainable params at call time, so this is
-                // set after LoRA is applied. See TrainBenchConstants /
-                // SmolLM3Model.checkpointGroupSize.
-                if TrainBenchConstants.gradientCheckpointing {
+                // model (SmolLM3; h14 adds the Qwen3 port for the 8B sweep). The
+                // model's forward reads each block's trainable params at call
+                // time, so this is set after LoRA is applied.
+                if ov.gradientCheckpointing {
                     (ctx.model as? SmolLM3Model)?.checkpointGroupSize = 1
+                    (ctx.model as? Qwen3Model)?.checkpointGroupSize = 1
                 }
 
                 // Cap sequence length (see capExamples). Done inside perform so
@@ -892,10 +1023,10 @@ extension LLMEvaluator {
         var trainError: String? = nil
         do {
             try await container.perform { mc in
-                // OPPU LoRA: r=8, q+v only, all 28 layers (fresh adapter stacked
-                // on the already-fused A1-lamp base weights).
+                // OPPU LoRA: r=8, q+v only, last N blocks (28 by default, the
+                // h5-era constant; h14 repeats pass --lora-layers 36).
                 let config = LoRAConfiguration(
-                    numLayers: TrainBenchConstants.loraLayers,
+                    numLayers: Self.capSweepOverride.loraLayers,
                     loraParameters: .init(
                         rank: TrainBenchConstants.loraRank,
                         scale: TrainBenchConstants.loraScale,
@@ -1138,7 +1269,10 @@ extension LLMEvaluator {
     /// Output file for this run: the NAX A/B round writes to its own JSONL so
     /// `train_bench_metrics_e2e.jsonl` (h5 backlog) stays untouched.
     private nonisolated static func e2eFileName(_ c: E2ERunContext) -> String? {
-        c.naxArm == nil ? nil : TrainBenchConstants.naxABE2EMetricsFileName
+        let base: String? = c.naxArm == nil ? nil : TrainBenchConstants.naxABE2EMetricsFileName
+        guard let tag = trainBenchmarkRunTag else { return base }
+        let name = base ?? TrainBenchConstants.e2eMetricsFileName
+        return String(name.dropLast(".jsonl".count)) + "_\(tag).jsonl"
     }
 
     private nonisolated static func e2eBaseRecord(_ c: E2ERunContext, recordType: String) -> [String: Any] {
@@ -1159,7 +1293,7 @@ extension LLMEvaluator {
             "model": c.modelName,
             "lora_rank": TrainBenchConstants.loraRank,
             "lora_keys": TrainBenchConstants.loraKeysLabel,
-            "num_lora_layers": TrainBenchConstants.loraLayers,
+            "num_lora_layers": capSweepOverride.loraLayers,
             "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
             "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
             "optimizer": "adamw",
@@ -1167,7 +1301,10 @@ extension LLMEvaluator {
             "weight_decay": TrainBenchConstants.e2eWeightDecay,
             "adam_bias_correction": TrainBenchConstants.e2eAdamBiasCorrection,
             "steps_per_report": TrainBenchConstants.e2eStepsPerReport,
-            "app_build": TrainBenchConstants.appBuild,
+            "app_build": TrainBenchConstants.appBuild + (trainBenchmarkRunTag.map { "-" + $0 } ?? "")
+                + (trainBenchmarkVJPDequant ? TrainBenchConstants.dqabAppBuildSuffix : ""),
+            "vjp_dequant": trainBenchmarkVJPDequant,
+            "mlx_local_patches": TrainBenchConstants.mlxLocalPatches,
             "bench_schema_version": TrainBenchConstants.schemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -2716,6 +2853,9 @@ extension LLMEvaluator {
         /// sub-block (one block per arm) instead of alternating per iteration.
         /// Separate JSONL + `-pinned` build suffix. See trainBenchmarkPinArms.
         var pinnedArms: Bool = false
+        /// h16dq `--ab-arms`: the arm list for the rotated-triplet A/B. Empty means
+        /// the ordinary two-arm alternation, byte-identical to every prior round.
+        var abArms: [String] = []
     }
 
     /// The six per-phase times of ONE barriered training iteration, seconds.
@@ -2784,7 +2924,11 @@ extension LLMEvaluator {
                 ?? modelConfiguration.name,
             idleMinutes: idleMinutes,
             naxAB: naxAB,
-            pinnedArms: naxAB && Self.trainBenchmarkPinArms)
+            pinnedArms: naxAB && Self.trainBenchmarkPinArms,
+            abArms: (naxAB && !Self.trainBenchmarkPinArms) ? (Self.trainBenchmarkABArms ?? []) : [])
+        if !ctx.abArms.isEmpty {
+            tlog("perop: h16dq arms=\(ctx.abArms) tag=\(Self.trainBenchmarkRunTag ?? TrainBenchConstants.dqabDefaultRunTag)")
+        }
 
         let runStart = Date.timeIntervalSinceReferenceDate
         let batteryStart = Self.batterySnapshot()
@@ -2827,7 +2971,11 @@ extension LLMEvaluator {
         // cold ref runs the same kernel.
         _ = Self.setNaxArm(on: false, enabled: naxAB)
         if Self.trainBenchmarkNaxArm != nil { setenv("MLX_ENABLE_NAX_N", "0", 1) }
-        await runPerOpColdRef(container: container, ctx: ctx, runStart: runStart)
+        if Self.perOpGradientCheckpointing {
+            await runPerOpColdRef(container: container, ctx: ctx, runStart: runStart)
+        } else {
+            tlog("perop: skipping 500-token cold-ref probe (gc off)")
+        }
         if let arm = Self.trainBenchmarkNaxArm {
             setenv("MLX_ENABLE_NAX_N", arm == "on" ? "1" : "0", 1)
         }
@@ -2835,10 +2983,12 @@ extension LLMEvaluator {
         // 2+3. Both passes, ascending tokens, no cooldown gate anywhere.
         let grid =
             naxAB
-            ? TrainBenchConstants.naxABTokenCounts
-            : TrainBenchConstants.peropTokenCounts
+            ? (ctx.abArms.isEmpty
+                ? TrainBenchConstants.naxABTokenCounts
+                : TrainBenchConstants.naxABTokenCounts + TrainBenchConstants.dqabExtraTokens)
+            : (Self.perOpTokenGridOverride ?? TrainBenchConstants.peropTokenCounts)
         var cellIndex = 0
-        for pass in TrainBenchConstants.peropPasses {
+        for pass in Self.perOpPasses {
             for tokens in grid {
                 await runPerOpCell(
                     container: container, ctx: ctx, targetTokens: tokens, pass: pass,
@@ -2980,10 +3130,17 @@ extension LLMEvaluator {
 
                 let example = Self.syntheticExample(
                     targetTokens: targetTokens, tokenizer: c.tokenizer)
+                // h16dq: its own budget (2 warm-ups + 12 per arm); otherwise h11's.
+                let dq = !ctx.abArms.isEmpty
+                let warmupCount =
+                    dq
+                    ? TrainBenchConstants.dqabWarmupIterations
+                    : TrainBenchConstants.peropWarmupIterations
                 let total =
-                    TrainBenchConstants.peropWarmupIterations
-                    + TrainBenchConstants.peropKeptIterations
-                let warmupCount = TrainBenchConstants.peropWarmupIterations
+                    dq
+                    ? warmupCount + TrainBenchConstants.dqabKeptPerArm * ctx.abArms.count
+                    : TrainBenchConstants.peropWarmupIterations
+                        + TrainBenchConstants.peropKeptIterations
 
                 // --- fused sub-block (validity control) ----------------------
                 // Stock `LoRATrain.train` with stepsPerReport = 1 — h7's exact
@@ -3031,7 +3188,10 @@ extension LLMEvaluator {
                     // AFTER an iteration completes, so it records the arm that just
                     // ran and arms the NEXT one; iteration 0's arm is set here.
                     // Even iterations are ON so each cell starts on the patched path.
-                    var fusedArm = Self.setNaxArm(on: true, enabled: ctx.naxAB)
+                    var fusedArm =
+                        dq
+                        ? Self.setABArm(Self.abArm(ctx.abArms, iteration: 0, warmup: warmupCount))
+                        : Self.setNaxArm(on: true, enabled: ctx.naxAB)
                     try LoRATrain.train(
                         model: model, train: [example], validate: [example],
                         optimizer: Self.perOpOptimizer(), tokenizer: c.tokenizer,
@@ -3046,8 +3206,17 @@ extension LLMEvaluator {
                                 phases: nil,
                                 elapsed: Date.timeIntervalSinceReferenceDate - runStart,
                                 arm: fusedArm)
-                            fusedArm = Self.setNaxArm(
-                                on: (iteration + 1) % 2 == 0, enabled: ctx.naxAB)
+                            if dq {
+                                // Arm the NEXT iteration and reset the allocator
+                                // peak so each record carries its own arm's peak.
+                                fusedArm = Self.setABArm(
+                                    Self.abArm(
+                                        ctx.abArms, iteration: iteration + 1, warmup: warmupCount))
+                                GPU.resetPeakMemory()
+                            } else {
+                                fusedArm = Self.setNaxArm(
+                                    on: (iteration + 1) % 2 == 0, enabled: ctx.naxAB)
+                            }
                         }
                         return .more
                     }
@@ -3095,7 +3264,12 @@ extension LLMEvaluator {
                     for iteration in 0 ..< total {
                         // Arm set BEFORE the iteration runs — unlike the fused
                         // block, this loop brackets each iteration directly.
-                        let arm = Self.setNaxArm(on: iteration % 2 == 0, enabled: ctx.naxAB)
+                        let arm =
+                            dq
+                            ? Self.setABArm(
+                                Self.abArm(ctx.abArms, iteration: iteration, warmup: warmupCount))
+                            : Self.setNaxArm(on: iteration % 2 == 0, enabled: ctx.naxAB)
+                        if dq { GPU.resetPeakMemory() }
                         let (phases, loss, ntokens, seqLen) = Self.perOpBarrieredIteration(
                             model: model, tokenizer: c.tokenizer, example: example,
                             lossValueGrad: lossValueGrad, optimizer: optimizer)
@@ -3148,6 +3322,43 @@ extension LLMEvaluator {
         guard enabled else { return nil }
         setenv("MLX_ENABLE_NAX_N", on ? "1" : "0", 1)
         return on ? "on" : "off"
+    }
+
+    /// h16dq: set BOTH dispatch variables for one of the three arms and return
+    /// its label. `off` = stock generic dX; `on` = the NAX dX kernel; `dequant` =
+    /// NAX forward, dX by dequantize + dense matmul. MLX_QMM_VJP_DEQUANT is read in
+    /// `QuantizedMatmul::vjp`, i.e. when the backward GRAPH is built, and the NAX
+    /// flag at dispatch; both happen inside one iteration after this call, and
+    /// nothing is compiled, so the arm in force here is the one that runs.
+    private nonisolated static func setABArm(_ label: String) -> String {
+        setenv("MLX_ENABLE_NAX_N", label == "off" ? "0" : "1", 1)
+        setenv("MLX_QMM_VJP_DEQUANT", label == "dequant" ? "1" : "0", 1)
+        return label
+    }
+
+    /// h16dq arm schedule. Warm-ups cycle the list in order; measured iterations
+    /// run in triplets rotated by one per triplet (off,on,dequant / on,dequant,off
+    /// / dequant,off,on), so slow drift lands evenly on every arm.
+    nonisolated static func abArm(_ arms: [String], iteration i: Int, warmup w: Int) -> String {
+        let n = arms.count
+        if i < w { return arms[i % n] }
+        let k = i - w
+        return arms[(k % n + (k / n) % n) % n]
+    }
+
+    /// Process memory as iOS sees it (jetsam acts on footprint, not the MLX
+    /// allocator peak): current and lifetime-peak `phys_footprint`.
+    nonisolated static func physFootprint() -> (current: Int?, peak: Int?) {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return (nil, nil) }
+        return (Int(info.phys_footprint), Int(info.ledger_phys_footprint_peak))
     }
 
     /// ONE barriered training iteration: `LoRATrain.train`'s per-iteration body
@@ -3664,9 +3875,33 @@ extension LLMEvaluator {
                 scale: TrainBenchConstants.loraScale,
                 keys: TrainBenchConstants.loraKeys))
         _ = try LoRAContainer.from(model: model, configuration: config)
-        if TrainBenchConstants.gradientCheckpointing {
+        // h14b (2026-09-13): `--gc off` disables per-block checkpointing so the
+        // recomputation share of the backward pass can be measured directly
+        // (backward_gcOn - backward_gcOff at matched tokens).
+        if perOpGradientCheckpointing {
             (model as? SmolLM3Model)?.checkpointGroupSize = 1
         }
+    }
+
+    /// Per-op GC flag: `--gc on|off` override when present, else the constant.
+    nonisolated static var perOpGradientCheckpointing: Bool {
+        launchArgValue("--gc").map { $0 == "on" } ?? TrainBenchConstants.gradientCheckpointing
+    }
+    /// `--passes cool,hot` override for the per-op pass list.
+    nonisolated static var perOpPasses: [String] {
+        launchArgValue("--passes").map { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
+            ?? TrainBenchConstants.peropPasses
+    }
+    /// `--caps` override for the per-op token grid (only when explicitly passed).
+    nonisolated static var perOpTokenGridOverride: [Int]? {
+        launchArgValue("--caps").map { $0.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) } }
+    }
+    /// Suffix for app_build / file name when any per-op override is active.
+    nonisolated static var perOpOverrideSuffix: String {
+        var parts: [String] = []
+        if launchArgValue("--gc") != nil { parts.append("gc-" + (perOpGradientCheckpointing ? "on" : "off")) }
+        if let t = trainBenchmarkRunTag { parts.append(t) }
+        return parts.isEmpty ? "" : "-" + parts.joined(separator: "-")
     }
 
     // MARK: - Per-op (h11) record builders
@@ -3679,11 +3914,19 @@ extension LLMEvaluator {
             "timestamp_utc": ISO8601DateFormatter().string(from: Date()),
             "idle_minutes": c.idleMinutes ?? NSNull(),
             "token_grid": c.naxAB
-                ? TrainBenchConstants.naxABTokenCounts
+                ? (c.abArms.isEmpty
+                    ? TrainBenchConstants.naxABTokenCounts
+                    : TrainBenchConstants.naxABTokenCounts + TrainBenchConstants.dqabExtraTokens)
                 : TrainBenchConstants.peropTokenCounts,
+            "ab_arms": c.abArms,
+            "mlx_local_patches": TrainBenchConstants.mlxLocalPatches,
             "nax_ab": c.naxAB,
-            "warmup_iterations": TrainBenchConstants.peropWarmupIterations,
-            "kept_iterations": TrainBenchConstants.peropKeptIterations,
+            "warmup_iterations": c.abArms.isEmpty
+                ? TrainBenchConstants.peropWarmupIterations
+                : TrainBenchConstants.dqabWarmupIterations,
+            "kept_iterations": c.abArms.isEmpty
+                ? TrainBenchConstants.peropKeptIterations
+                : TrainBenchConstants.dqabKeptPerArm * c.abArms.count,
             "cold_ref_tokens": TrainBenchConstants.peropColdRefTokens,
             "cold_ref_iterations": TrainBenchConstants.peropColdRefIterations,
             "sample_interval_s": TrainBenchConstants.peropSampleSeconds,
@@ -3692,8 +3935,8 @@ extension LLMEvaluator {
             "lora_rank": TrainBenchConstants.loraRank,
             "lora_keys": TrainBenchConstants.loraKeysLabel,
             "num_lora_layers": TrainBenchConstants.peropLoraLayers,
-            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
-            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
+            "gradient_checkpointing": perOpGradientCheckpointing,
+            "checkpoint_granularity": perOpGradientCheckpointing ? TrainBenchConstants.checkpointGranularity : "none",
             "optimizer": "adamw",
             "learning_rate": TrainBenchConstants.e2eLearningRate,
             "weight_decay": TrainBenchConstants.e2eWeightDecay,
@@ -3701,8 +3944,10 @@ extension LLMEvaluator {
             "app_build": c.naxAB
                 ? (c.pinnedArms
                     ? TrainBenchConstants.naxABAppBuild + "-pinned"
-                    : TrainBenchConstants.naxABAppBuild)
-                : naxArmAppBuild(TrainBenchConstants.peropAppBuild),
+                    : (c.abArms.isEmpty
+                        ? TrainBenchConstants.naxABAppBuild
+                        : TrainBenchConstants.naxABAppBuild + TrainBenchConstants.dqabAppBuildSuffix))
+                : naxArmAppBuild(TrainBenchConstants.peropAppBuild) + perOpOverrideSuffix,
             "nax_arm": trainBenchmarkNaxArm ?? NSNull(),
             "pinned_arms": c.pinnedArms,
             "bench_schema_version": TrainBenchConstants.peropSchemaVersion,
@@ -3746,6 +3991,14 @@ extension LLMEvaluator {
         r["elapsed_s"] = elapsed
         r["peak_mem_bytes"] = Memory.snapshot().peakMemory
         r["active_mem_bytes"] = Memory.snapshot().activeMemory
+        if !c.abArms.isEmpty {
+            let fp = physFootprint()
+            r["phys_footprint_bytes"] = fp.current ?? NSNull()
+            r["phys_footprint_peak_bytes"] = fp.peak ?? NSNull()
+            #if os(iOS)
+                r["os_proc_available_bytes"] = Int(os_proc_available_memory())
+            #endif
+        }
         r["thermal_state"] = thermalString()
         r["low_power_mode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
         if let p = phases {
@@ -3756,7 +4009,7 @@ extension LLMEvaluator {
             r["phase_optimizer_s"] = p.optimizer
             r["phase_readback_s"] = p.readback
         }
-        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms)
+        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms, dqab: !c.abArms.isEmpty)
     }
 
     private nonisolated static func appendPerOpSample(
@@ -3770,7 +4023,7 @@ extension LLMEvaluator {
         r["thermal_state"] = thermal
         r["low_power_mode"] = lpm
         r["cpu_util_pct"] = cpuUtilPct ?? NSNull()
-        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms)
+        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms, dqab: !c.abArms.isEmpty)
     }
 
     private nonisolated static func appendPerOpMarker(
@@ -3778,14 +4031,14 @@ extension LLMEvaluator {
     ) {
         var r = perOpBaseRecord(c, recordType: recordType)
         for (k, v) in extra { r[k] = v }
-        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms)
+        emitPerOp(r, naxAB: c.naxAB, pinned: c.pinnedArms, dqab: !c.abArms.isEmpty)
     }
 
     /// Append one h11 JSONL line. Its own file: the h9 L run is still pending
     /// against `train_bench_metrics_e2e.jsonl`, which this round must not
     /// touch.
     private nonisolated static func emitPerOp(
-        _ record: [String: Any], naxAB: Bool = false, pinned: Bool = false
+        _ record: [String: Any], naxAB: Bool = false, pinned: Bool = false, dqab: Bool = false
     ) {
         guard
             let data = try? JSONSerialization.data(
@@ -3795,10 +4048,15 @@ extension LLMEvaluator {
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
             naxAB
-                ? (pinned
-                    ? TrainBenchConstants.naxABPinnedMetricsFileName
-                    : TrainBenchConstants.naxABMetricsFileName)
-                : naxArmFileName(TrainBenchConstants.peropMetricsFileName))
+                ? (dqab
+                    // h16dq: its own file, never the historical naxab JSONLs.
+                    ? "train_bench_metrics_naxab_\(trainBenchmarkRunTag ?? TrainBenchConstants.dqabDefaultRunTag).jsonl"
+                    : (pinned
+                        ? TrainBenchConstants.naxABPinnedMetricsFileName
+                        : TrainBenchConstants.naxABMetricsFileName))
+                : naxArmFileName(perOpOverrideSuffix.isEmpty
+                    ? TrainBenchConstants.peropMetricsFileName
+                    : TrainBenchConstants.peropMetricsFileName.replacingOccurrences(of: ".jsonl", with: perOpOverrideSuffix + ".jsonl")))
         peropFileLock.lock()
         defer { peropFileLock.unlock() }
         do {
@@ -3989,6 +4247,349 @@ extension LLMEvaluator {
     }
 
     /// Run the whole grid and write one JSONL row per case.
+    /// h16dq Phase 0: does the dequant dX arm give the same LoRA gradients?
+    ///
+    /// One training step's FULL LoRA gradient set, computed three times on the
+    /// same model weights and the same example (no optimizer step between arms):
+    /// `on` (NAX dX, the reference), `dequant` and `off`. For each pair and each
+    /// token length the record carries the max over parameters of
+    /// max|a - b| / max|b|, the global relative L2 error, and a NaN/Inf flag.
+    /// LoRA-A gradients are exactly zero in every arm at initialisation (B = 0),
+    /// so parameters whose reference is all-zero are counted and skipped rather
+    /// than divided by zero. The B gradients of every block below the last one
+    /// flow through the frozen quantized layers' dX, which is the path under test.
+    func runDqGradCheck() async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+        let sessionId = UUID().uuidString
+        tlog("dq-grad-check start session=\(sessionId)")
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("dq-grad-check: model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        let ctx = PerOpRunContext(
+            sessionId: sessionId,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name,
+            idleMinutes: nil, naxAB: true, pinnedArms: false,
+            abArms: ["on", "dequant", "off"])
+        let battery = Self.batterySnapshot()
+        Self.appendPerOpMarker(
+            ctx, recordType: "dq_check_start",
+            extra: [
+                "battery_level": battery.level, "charging": battery.charging,
+                "thermal_state": Self.thermalString(),
+                "check_tokens": TrainBenchConstants.dqabGradCheckTokens,
+            ])
+        do {
+            try await container.perform { c throws -> Void in
+                try Self.applyPerOpLoRA(to: c.model)
+                let model: Module = c.model
+                let lossValueGrad = valueAndGrad(model: model) {
+                    (m: Module, arrays: [MLXArray]) -> [MLXArray] in
+                    let (ce, ntoks) = LoRATrain.loss(
+                        model: m, inputs: arrays[0], targets: arrays[1], lengths: arrays[2])
+                    return [ce, ntoks]
+                }
+                for tokens in TrainBenchConstants.dqabGradCheckTokens {
+                    let example = Self.syntheticExample(
+                        targetTokens: tokens, tokenizer: c.tokenizer)
+                    let toks = c.tokenizer.encode(text: example)
+                    let length = toks.count
+                    let batchArray = MLXArray.zeros([1, length], type: Int32.self)
+                    batchArray[0, 0 ..< length] = MLXArray(toks)
+                    let inputs = batchArray[0..., .stride(to: -1)]
+                    let targets = batchArray[0..., 1...]
+                    let lengths = MLXArray([length])
+
+                    var grads: [String: [String: MLXArray]] = [:]
+                    var losses: [String: Float] = [:]
+                    var peaks: [String: Int] = [:]
+                    for arm in ["on", "dequant", "off"] {
+                        _ = Self.setABArm(arm)
+                        GPU.resetPeakMemory()
+                        let (res, g) = lossValueGrad(model, [inputs, targets, lengths])
+                        let flat = g.flattened()
+                        eval([res[0]] + flat.map { $0.1 })
+                        var d: [String: MLXArray] = [:]
+                        for (k, v) in flat { d[k] = v.asType(.float32) }
+                        eval(Array(d.values))
+                        grads[arm] = d
+                        losses[arm] = res[0].item(Float.self)
+                        peaks[arm] = Memory.snapshot().peakMemory
+                    }
+                    for (a, b) in [("dequant", "on"), ("off", "on")] {
+                        guard let ga = grads[a], let gb = grads[b] else { continue }
+                        var maxRel: Float = 0
+                        var worst = ""
+                        var num: Float = 0
+                        var den: Float = 0
+                        var zeroRef = 0
+                        var compared = 0
+                        var nonFinite = false
+                        for (k, vb) in gb {
+                            guard let va = ga[k] else { continue }
+                            let diff = va - vb
+                            let dmax = abs(diff).max().item(Float.self)
+                            let bmax = abs(vb).max().item(Float.self)
+                            let amax = abs(va).max().item(Float.self)
+                            if !dmax.isFinite || !amax.isFinite { nonFinite = true }
+                            num += (diff * diff).sum().item(Float.self)
+                            den += (vb * vb).sum().item(Float.self)
+                            if bmax == 0 { zeroRef += 1; continue }
+                            compared += 1
+                            let rel = dmax / bmax
+                            if rel > maxRel { maxRel = rel; worst = k }
+                        }
+                        let rel2 = den > 0 ? (num / den).squareRoot() : 0
+                        Self.appendPerOpMarker(
+                            ctx, recordType: "dq_grad_check",
+                            extra: [
+                                "target_tokens": tokens, "seq_len": inputs.dim(1),
+                                "arm_a": a, "arm_b": b,
+                                "max_rel_err": maxRel, "worst_param": worst,
+                                "global_rel_l2": rel2,
+                                "params_compared": compared, "params_zero_ref": zeroRef,
+                                "non_finite": nonFinite,
+                                "loss_a": losses[a] ?? .nan, "loss_b": losses[b] ?? .nan,
+                                "peak_mem_a": peaks[a] ?? -1, "peak_mem_b": peaks[b] ?? -1,
+                                "thermal_state": Self.thermalString(),
+                            ])
+                        tlog("dq-grad-check tok=\(tokens) \(a) vs \(b): max_rel=\(maxRel) rel_l2=\(rel2) nonfinite=\(nonFinite) worst=\(worst)")
+                    }
+                }
+            }
+        } catch {
+            tlog("dq-grad-check error: \(error)")
+            Self.appendPerOpMarker(
+                ctx, recordType: "dq_check_error", extra: ["error": "\(error)"])
+        }
+        _ = Self.setABArm("on")
+        setenv("MLX_QMM_VJP_DEQUANT", "0", 1)
+        Self.appendPerOpMarker(
+            ctx, recordType: "dq_check_end", extra: ["thermal_state": Self.thermalString()])
+        tlog("dq-grad-check done")
+        finishTrainBenchmark()
+    }
+
+    /// h17x (2026-09-23): two explanatory micro-benchmarks in one launch. Records go
+    /// to `train_bench_metrics_naxab_<run-tag>.jsonl` (default h16dq routing).
+    ///
+    /// Part D, where the dequant dX arm's extra backward time goes. On block 0's
+    /// seven real quantized linears (before LoRA is attached), at M = 249 and 999,
+    /// dX = dY.W is timed five ways in rotated order: dequantize alone, the dense
+    /// matmul alone (pre-dequantized W), dequantize + dense (what the local VJP patch
+    /// does), NAX qmm_n and generic qmm_n. Each is its own eval, so every figure is
+    /// one kernel's (or one pair's) wall time.
+    ///
+    /// Part F, is the stock arm's slower forward real? With LoRA and per-block
+    /// checkpointing as in training, at 249 and 999 tokens, arms off/on alternated:
+    ///   F1 forward only: LoRATrain.loss, eval(loss); no backward graph exists.
+    ///   F2 as the barriered harness: build value_and_grad, eval(loss), eval(grads).
+    ///   F4 build the graph under the iteration's arm, flip MLX_ENABLE_NAX_N to the
+    ///      OTHER value, then eval(loss), eval(grads): shows whether the forward gap
+    ///      follows the env at graph-build time or at forward-eval time.
+    /// No optimizer step anywhere, so the weights never change between arms.
+    func runExplainBenchmark() async {
+        enableThinking = false
+        #if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = true
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
+        let sessionId = UUID().uuidString
+        tlog("explain start session=\(sessionId)")
+        let container: ModelContainer
+        do {
+            container = try await load()
+        } catch {
+            tlog("explain: model load failed: \(error)")
+            finishTrainBenchmark()
+            return
+        }
+        let ctx = PerOpRunContext(
+            sessionId: sessionId,
+            modelName: modelConfiguration.name.components(separatedBy: "/").last
+                ?? modelConfiguration.name,
+            idleMinutes: nil, naxAB: true, pinnedArms: false,
+            abArms: ["off", "on"])
+        let b0 = Self.batterySnapshot()
+        Self.appendPerOpMarker(
+            ctx, recordType: "explain_start",
+            extra: [
+                "battery_level": b0.level, "charging": b0.charging,
+                "thermal_state": Self.thermalString(),
+            ])
+        do {
+            try await container.perform { c throws -> Void in
+                let now = { Date.timeIntervalSinceReferenceDate }
+                func med(_ xs: [Double]) -> Double {
+                    let s = xs.sorted()
+                    return s.isEmpty ? .nan : s[s.count / 2]
+                }
+                // ---- Part D ----------------------------------------------------
+                setenv("MLX_QMM_VJP_DEQUANT", "0", 1)
+                let linears = c.model.namedModules().compactMap {
+                    (name, m) -> (String, QuantizedLinear)? in
+                    guard name.contains("layers.0."), let q = m as? QuantizedLinear else {
+                        return nil
+                    }
+                    return (name, q)
+                }.sorted { $0.0 < $1.0 }
+                tlog("explain D: \(linears.count) quantized linears in block 0")
+                let ops = ["dequant_only", "dense_only", "dequant_plus_dense", "qmm_n_nax", "qmm_n_generic"]
+                let warmD = 2
+                let repsD = 8
+                for M in [249, 999] {
+                    for (name, q) in linears {
+                        let (outDim, inDim) = q.shape
+                        let dt = q.scales.dtype
+                        let dY = MLXRandom.normal([M, outDim]).asType(dt)
+                        let wdq = dequantized(
+                            q.weight, scales: q.scales, biases: q.biases,
+                            groupSize: q.groupSize, bits: q.bits, mode: q.mode)
+                        eval(dY, wdq)
+                        var samples: [String: [Double]] = [:]
+                        for r in 0 ..< (warmD + repsD) {
+                            for k in 0 ..< ops.count {
+                                let op = ops[(k + r) % ops.count]
+                                var out: MLXArray
+                                let t0 = now()
+                                switch op {
+                                case "dequant_only":
+                                    out = dequantized(
+                                        q.weight, scales: q.scales, biases: q.biases,
+                                        groupSize: q.groupSize, bits: q.bits, mode: q.mode)
+                                case "dense_only":
+                                    out = matmul(dY, wdq)
+                                case "dequant_plus_dense":
+                                    out = matmul(
+                                        dY,
+                                        dequantized(
+                                            q.weight, scales: q.scales, biases: q.biases,
+                                            groupSize: q.groupSize, bits: q.bits, mode: q.mode))
+                                case "qmm_n_nax":
+                                    setenv("MLX_ENABLE_NAX_N", "1", 1)
+                                    out = quantizedMM(
+                                        dY, q.weight, scales: q.scales, biases: q.biases,
+                                        transpose: false, groupSize: q.groupSize, bits: q.bits,
+                                        mode: q.mode)
+                                default:
+                                    setenv("MLX_ENABLE_NAX_N", "0", 1)
+                                    out = quantizedMM(
+                                        dY, q.weight, scales: q.scales, biases: q.biases,
+                                        transpose: false, groupSize: q.groupSize, bits: q.bits,
+                                        mode: q.mode)
+                                }
+                                eval(out)
+                                let dtS = now() - t0
+                                if r >= warmD { samples[op, default: []].append(dtS) }
+                            }
+                        }
+                        setenv("MLX_ENABLE_NAX_N", "1", 1)
+                        var extra: [String: Any] = [
+                            "part": "D", "linear": name, "M": M, "out_dim": outDim, "in_dim": inDim,
+                            "dtype": "\(dt)", "reps": repsD,
+                            "packed_bytes": q.weight.nbytes + q.scales.nbytes + (q.biases?.nbytes ?? 0),
+                            "dequantized_bytes": wdq.nbytes,
+                            "thermal_state": Self.thermalString(),
+                        ]
+                        for op in ops {
+                            extra[op + "_median_s"] = med(samples[op] ?? [])
+                            extra[op + "_min_s"] = (samples[op] ?? []).min() ?? .nan
+                        }
+                        Self.appendPerOpMarker(ctx, recordType: "explain_dx", extra: extra)
+                        tlog("explain D M=\(M) \(name): deq=\(med(samples["dequant_only"] ?? [])) dense=\(med(samples["dense_only"] ?? [])) nax=\(med(samples["qmm_n_nax"] ?? []))")
+                    }
+                }
+
+                // ---- Part F ----------------------------------------------------
+                try Self.applyPerOpLoRA(to: c.model)
+                let model: Module = c.model
+                let lossValueGrad = valueAndGrad(model: model) {
+                    (m: Module, arrays: [MLXArray]) -> [MLXArray] in
+                    let (ce, ntoks) = LoRATrain.loss(
+                        model: m, inputs: arrays[0], targets: arrays[1], lengths: arrays[2])
+                    return [ce, ntoks]
+                }
+                let warmF = 1
+                for tokens in [250, 1000] {
+                    let repsF = tokens > 500 ? 6 : 8
+                    let example = Self.syntheticExample(targetTokens: tokens, tokenizer: c.tokenizer)
+                    let toks = c.tokenizer.encode(text: example)
+                    let length = toks.count
+                    let batchArray = MLXArray.zeros([1, length], type: Int32.self)
+                    batchArray[0, 0 ..< length] = MLXArray(toks)
+                    let inputs = batchArray[0..., .stride(to: -1)]
+                    let targets = batchArray[0..., 1...]
+                    let lengths = MLXArray([length])
+                    for r in 0 ..< (warmF + repsF) {
+                        for k in 0 ..< 2 {
+                            let arm = ["off", "on"][(k + r) % 2]
+                            _ = Self.setABArm(arm)
+                            // F1: forward only, no backward graph.
+                            var t0 = now()
+                            let (ce1, _) = LoRATrain.loss(
+                                model: model, inputs: inputs, targets: targets, lengths: lengths)
+                            eval(ce1)
+                            let f1 = now() - t0
+                            // F2: graph, then forward, then backward (the barriered harness).
+                            t0 = now()
+                            let (res2, g2) = lossValueGrad(model, [inputs, targets, lengths])
+                            let t1 = now()
+                            eval(res2[0])
+                            let t2 = now()
+                            eval(g2.flattened().map { $0.1 })
+                            let t3 = now()
+                            // F4: graph under `arm`, then flip NAX_N before any eval.
+                            t0 = now()
+                            let (res4, g4) = lossValueGrad(model, [inputs, targets, lengths])
+                            setenv("MLX_ENABLE_NAX_N", arm == "off" ? "1" : "0", 1)
+                            let u1 = now()
+                            eval(res4[0])
+                            let u2 = now()
+                            eval(g4.flattened().map { $0.1 })
+                            let u3 = now()
+                            _ = Self.setABArm(arm)
+                            if r >= warmF {
+                                Self.appendPerOpMarker(
+                                    ctx, recordType: "explain_fwd",
+                                    extra: [
+                                        "part": "F", "target_tokens": tokens,
+                                        "seq_len": inputs.dim(1), "rep": r, "arm": arm,
+                                        "f1_forward_only_s": f1,
+                                        "f2_graph_s": t1 - t0, "f2_forward_s": t2 - t1,
+                                        "f2_backward_s": t3 - t2,
+                                        "f4_graph_arm": arm,
+                                        "f4_eval_nax_n": arm == "off" ? "1" : "0",
+                                        "f4_forward_s": u2 - u1, "f4_backward_s": u3 - u2,
+                                        "thermal_state": Self.thermalString(),
+                                        "peak_mem_bytes": Memory.snapshot().peakMemory,
+                                    ])
+                            }
+                        }
+                    }
+                    tlog("explain F tokens=\(tokens) done")
+                }
+            }
+        } catch {
+            tlog("explain error: \(error)")
+            Self.appendPerOpMarker(ctx, recordType: "explain_error", extra: ["error": "\(error)"])
+        }
+        setenv("MLX_ENABLE_NAX_N", "1", 1)
+        setenv("MLX_QMM_VJP_DEQUANT", "0", 1)
+        Self.appendPerOpMarker(
+            ctx, recordType: "explain_end", extra: ["thermal_state": Self.thermalString()])
+        tlog("explain done")
+        finishTrainBenchmark()
+    }
+
     func runNaxVerifyBenchmark() async {
         let started = Date()
         tlog("nax-verify: start, \(Self.naxVerifyCases.count) cases")
@@ -5001,15 +5602,15 @@ extension LLMEvaluator {
             "charging": batteryStart.charging,
             "low_power_mode": s.lowPowerMode,
             "model": modelName,
-            "lora_rank": TrainBenchConstants.loraRank,
-            "lora_keys": TrainBenchConstants.loraKeysLabel,
-            "num_lora_layers": TrainBenchConstants.loraLayers,
+            "lora_rank": Self.capSweepOverride.loraRank,
+            "lora_keys": Self.capSweepOverride.loraKeysLabel,
+            "num_lora_layers": Self.capSweepOverride.loraLayers,
             "num_train_examples": nTrain,
-            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
-            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
-            "iterations_total": TrainBenchConstants.iterations,
+            "gradient_checkpointing": Self.capSweepOverride.gradientCheckpointing,
+            "checkpoint_granularity": Self.capSweepOverride.granularityLabel,
+            "iterations_total": Self.capSweepOverride.iterations,
             "steps_per_report": TrainBenchConstants.stepsPerReport,
-            "app_build": TrainBenchConstants.appBuild,
+            "app_build": Self.capSweepOverride.appBuild,
             "bench_schema_version": TrainBenchConstants.schemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -5046,15 +5647,15 @@ extension LLMEvaluator {
             "charging": batteryStart.charging,
             "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
             "model": modelName,
-            "lora_rank": TrainBenchConstants.loraRank,
-            "lora_keys": TrainBenchConstants.loraKeysLabel,
-            "num_lora_layers": TrainBenchConstants.loraLayers,
+            "lora_rank": Self.capSweepOverride.loraRank,
+            "lora_keys": Self.capSweepOverride.loraKeysLabel,
+            "num_lora_layers": Self.capSweepOverride.loraLayers,
             "num_train_examples": nTrain,
-            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
-            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
-            "iterations_total": TrainBenchConstants.iterations,
+            "gradient_checkpointing": Self.capSweepOverride.gradientCheckpointing,
+            "checkpoint_granularity": Self.capSweepOverride.granularityLabel,
+            "iterations_total": Self.capSweepOverride.iterations,
             "steps_per_report": TrainBenchConstants.stepsPerReport,
-            "app_build": TrainBenchConstants.appBuild,
+            "app_build": Self.capSweepOverride.appBuild,
             "bench_schema_version": TrainBenchConstants.schemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -5085,15 +5686,15 @@ extension LLMEvaluator {
             "charging": battery.charging,
             "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
             "model": modelName,
-            "lora_rank": TrainBenchConstants.loraRank,
-            "lora_keys": TrainBenchConstants.loraKeysLabel,
-            "num_lora_layers": TrainBenchConstants.loraLayers,
+            "lora_rank": Self.capSweepOverride.loraRank,
+            "lora_keys": Self.capSweepOverride.loraKeysLabel,
+            "num_lora_layers": Self.capSweepOverride.loraLayers,
             "num_train_examples": nTrain,
-            "gradient_checkpointing": TrainBenchConstants.gradientCheckpointing,
-            "checkpoint_granularity": TrainBenchConstants.checkpointGranularity,
-            "iterations_total": TrainBenchConstants.iterations,
+            "gradient_checkpointing": Self.capSweepOverride.gradientCheckpointing,
+            "checkpoint_granularity": Self.capSweepOverride.granularityLabel,
+            "iterations_total": Self.capSweepOverride.iterations,
             "steps_per_report": TrainBenchConstants.stepsPerReport,
-            "app_build": TrainBenchConstants.appBuild,
+            "app_build": Self.capSweepOverride.appBuild,
             "bench_schema_version": TrainBenchConstants.schemaVersion,
             "git_commit": TrainBenchConstants.gitCommit,
             "git_dirty": TrainBenchConstants.gitDirty,
@@ -5117,7 +5718,7 @@ extension LLMEvaluator {
         }
         let line = json + "\n"
         let url = URL.documentsDirectory.appendingPathComponent(
-            TrainBenchConstants.metricsFileName)
+            Self.capSweepOverride.fileName)
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 let handle = try FileHandle(forWritingTo: url)

@@ -73,8 +73,14 @@ enum TrainBenchConstants {
     ///   31524ed — hard-link flattening + capture-dir cleanup.
     ///   6cc1488 — h12 task-adapter harness (this bake follows it).
     ///   d75d940 — nax rerun campaign harness (this bake follows it).
-    static let gitCommit = "d75d940"
-    static let gitDirty = false
+    ///   ef31670 — h16dq dequant-dense backward arm (2026-09-23). This bake follows
+    ///     ef31670 with UNCOMMITTED changes: the MLX `QuantizedMatmul::vjp` dequant
+    ///     branch (primitives.cpp, env MLX_QMM_VJP_DEQUANT) and the `--ab-arms`
+    ///     harness below, hence gitDirty = true. See `mlxLocalPatches`.
+    static let gitCommit = "ef31670"
+    static let gitDirty = true
+    /// Local patches in the vendored MLX that change what a record measures.
+    static let mlxLocalPatches = "nax-n-dispatch,qmm-vjp-dequant-env"
 
     // --- Gradient-checkpointing flags (h4) -----------------------------------
     /// Baked into every record so GC runs are unambiguously distinguishable from
@@ -964,6 +970,19 @@ enum TrainBenchConstants {
     /// the unseeded system RNG and the two loss curves would differ by data
     /// order rather than by the kernel under test.
     static let naxABShuffleSeed: UInt64 = 20260806
+
+    // --- h16dq: dequantize-then-dense backward arm (2026-09-23) --------------
+    /// `--ab-arms off,on,dequant` runs the NAX A/B with a third arm whose dX is a
+    /// dequantize + dense matmul (MLX_QMM_VJP_DEQUANT=1). Separate JSONL
+    /// (`train_bench_metrics_naxab_<run-tag>.jsonl`), `-dqab` build suffix, and its
+    /// own iteration budget: 2 warm-ups, then `dqabKeptPerArm` per arm in rotated
+    /// triplets. 1024 is appended to the A/B grid.
+    static let dqabAppBuildSuffix = "-dqab"
+    static let dqabWarmupIterations = 2
+    static let dqabKeptPerArm = 12
+    static let dqabExtraTokens = [1024]
+    static let dqabDefaultRunTag = "h16dq"
+    static let dqabGradCheckTokens = [250, 1024]
 
     // --- Tier 2: Metal capture -------------------------------------------
     /// Capture config: h7/h10's canonical 500-token anchor, one iteration,

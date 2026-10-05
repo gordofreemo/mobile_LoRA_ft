@@ -145,6 +145,13 @@ public class Qwen3ModelInner: Module {
     fileprivate let layers: [Qwen3TransformerBlock]
     let norm: RMSNorm
 
+    /// Gradient-checkpoint granularity (h14, 2026-09-11): a direct port of the
+    /// SmolLM3 construction so the 8B-class feasibility sweep can train with
+    /// the same per-block checkpointing the 3B measurements use. nil = off.
+    /// See `SmolLM3ModelInner.checkpointGroupSize` for the full rationale.
+    var checkpointGroupSize: Int? = nil
+    private var checkpointRetainer: [Any] = []
+
     public init(_ args: Qwen3Configuration) {
         precondition(args.vocabularySize > 0)
 
@@ -163,11 +170,63 @@ public class Qwen3ModelInner: Module {
 
         let mask = createAttentionMask(h: h, cache: cache?.first)
 
-        for (i, layer) in layers.enumerated() {
-            h = layer(h, mask: mask, cache: cache?[i])
+        if let groupSize = checkpointGroupSize {
+            precondition(
+                layers.count % groupSize == 0,
+                "checkpointGroupSize (\(groupSize)) must evenly divide layer count (\(layers.count))"
+            )
+            checkpointRetainer.removeAll(keepingCapacity: true)
+            var start = 0
+            while start < layers.count {
+                let group = Array(layers[start ..< start + groupSize])
+                let groupCaches = (start ..< start + groupSize).map { cache?[$0] }
+                h = checkpointedGroup(group, h, mask: mask, caches: groupCaches)
+                start += groupSize
+            }
+        } else {
+            for (i, layer) in layers.enumerated() {
+                h = layer(h, mask: mask, cache: cache?[i])
+            }
         }
 
         return norm(h)
+    }
+
+    /// Port of `SmolLM3ModelInner.checkpointedGroup` (public `CustomFunction`
+    /// + `vjp`, equivalent to `mx.checkpoint`; trainable params threaded as
+    /// explicit differentiable inputs). See that implementation for details.
+    private func checkpointedGroup(
+        _ blocks: [Qwen3TransformerBlock], _ x: MLXArray,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode, caches: [KVCache?]
+    ) -> MLXArray {
+        let perBlockFlat = blocks.map { $0.trainableParameters().flattened() }
+        let perBlockKeys = perBlockFlat.map { $0.map { $0.0 } }
+        let paramArrays = perBlockFlat.flatMap { $0.map { $0.1 } }
+
+        func run(_ inputs: [MLXArray]) -> [MLXArray] {
+            var h = inputs[0]
+            var offset = 1
+            for (idx, pair) in zip(blocks, perBlockKeys).enumerated() {
+                let (block, keys) = pair
+                let blockParams = Array(inputs[offset ..< offset + keys.count])
+                offset += keys.count
+                let restored = NestedDictionary<String, MLXArray>.unflattened(
+                    Array(zip(keys, blockParams)))
+                block.update(parameters: restored)
+                h = block(h, mask: mask, cache: caches[idx])
+            }
+            return [h]
+        }
+
+        let checkpointed = CustomFunction {
+            Forward { inputs in run(inputs) }
+            VJP { primals, cotangents in
+                vjp(run, primals: primals, cotangents: cotangents).1
+            }
+        }
+        checkpointRetainer.append(checkpointed)
+
+        return checkpointed([x] + paramArrays)[0]
     }
 }
 
@@ -199,6 +258,13 @@ public class Qwen3Model: Module, LLMModel, KVCacheDimensionProvider {
             out = model.embedTokens.asLinear(out)
         }
         return out
+    }
+
+    /// Gradient checkpointing group size for training (h14 port of the
+    /// SmolLM3 knob). nil = off. Set ONLY for training.
+    public var checkpointGroupSize: Int? {
+        get { model.checkpointGroupSize }
+        set { model.checkpointGroupSize = newValue }
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
