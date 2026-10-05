@@ -1,0 +1,24 @@
+task              metric   | Task k=1 +User k=1 +User k=0 |   D(k0-T)      D_u      p_u      p_q | beats?
+citation          accuracy |   0.6341    0.6423    0.6585 |   +0.0244  +0.0350     0.32    0.469 | yes, n.s.
+movie_tagging     accuracy |   0.4933    0.5697    0.5012 |   +0.0079  -0.0594 4.88e-05    0.379 | yes, n.s.
+news_categorize   accuracy |   0.8100    0.8150    0.7424 |   -0.0676  -0.0720 2.59e-06 6.32e-38 | NO
+news_headline     rouge_1  |   0.1723    0.1731    0.1612 |   -0.0109  -0.0114 1.12e-06 1.76e-14 | NO
+product_rating    MAE      |   0.2054    0.1964    0.1786 |   +0.0268  +0.0297    0.456    0.494 | yes, n.s.
+scholarly_title   rouge_1  |   0.4993    0.5040    0.4888 |   -0.0113  -0.0131     0.38    0.453 | NO
+tweet_paraphrase  rouge_1  |   0.5659    0.5804    0.5345 |   -0.0321  -0.0375   0.0101   0.0236 | NO
+
+per-user adapter WITHOUT retrieval beats the task adapter WITH k=1 retrieval on 3 of 7 tasks (point estimate)
+D oriented so + = better (MAE sign flipped by the scorer).
+
+NOTES (2026-09-23)
+- +User k=0 = the existing _r5 per-user adapters (trained at k=1) evaluated with NO retrieved
+  record, via PATCH P25 (--k 1 --eval-only --eval-k 0 --ckpt-tag _r5). Cluster 196986, scored 197092.
+- Task k=1 = the untagged task_k1 baseline, i.e. the retrieval baseline of Table 8.
+- CORRECTION 2026-09-24: the verdict below tested a different claim. 10-discussion.tex:10 is about
+  the TASK adapter without retrieval, and Table 7's 4-bit no-profile column supports it (six of seven);
+  see experiments/2026-09-23-claim-audit.md. This file stands only for the per-user adapter at k=0.
+- (Superseded) VERDICT: 10-discussion.tex:10 ("without retrieval it beats the retrieval baseline on six of seven
+  tasks") is FALSE. 3/7 by point estimate, none significant; significantly WORSE on news categorize,
+  news headline, tweet paraphrase; movie tagging's per-user contrast is significantly worse
+  (D_u -0.059, p=5e-5). The adapter complements retrieval, it does not replace it.
+- The 1.5-4.4 J/query figure never had a source (no inference-energy measurement exists).

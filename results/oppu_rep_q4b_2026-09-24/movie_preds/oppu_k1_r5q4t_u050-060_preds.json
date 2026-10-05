@@ -1,0 +1,890 @@
+{
+    "task": "LaMP_2M",
+    "golds": [
+        {
+            "id": "803035",
+            "output": " comedy"
+        },
+        {
+            "id": "803036",
+            "output": " comedy"
+        },
+        {
+            "id": "803037",
+            "output": " comedy"
+        },
+        {
+            "id": "803038",
+            "output": " dystopia"
+        },
+        {
+            "id": "803039",
+            "output": " dystopia"
+        },
+        {
+            "id": "803040",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803041",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803042",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803043",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803044",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803045",
+            "output": " classic"
+        },
+        {
+            "id": "803046",
+            "output": " dystopia"
+        },
+        {
+            "id": "803047",
+            "output": " fantasy"
+        },
+        {
+            "id": "81834",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81835",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81836",
+            "output": " dystopia"
+        },
+        {
+            "id": "803083",
+            "output": " comedy"
+        },
+        {
+            "id": "803084",
+            "output": " based on a book"
+        },
+        {
+            "id": "803085",
+            "output": " twist ending"
+        },
+        {
+            "id": "803086",
+            "output": " based on a book"
+        },
+        {
+            "id": "803087",
+            "output": " dystopia"
+        },
+        {
+            "id": "803088",
+            "output": " fantasy"
+        },
+        {
+            "id": "803089",
+            "output": " twist ending"
+        },
+        {
+            "id": "803090",
+            "output": " comedy"
+        },
+        {
+            "id": "803091",
+            "output": " comedy"
+        },
+        {
+            "id": "803092",
+            "output": " comedy"
+        },
+        {
+            "id": "803093",
+            "output": " comedy"
+        },
+        {
+            "id": "803094",
+            "output": " comedy"
+        },
+        {
+            "id": "803095",
+            "output": " comedy"
+        },
+        {
+            "id": "803096",
+            "output": " dystopia"
+        },
+        {
+            "id": "803097",
+            "output": " dystopia"
+        },
+        {
+            "id": "803098",
+            "output": " comedy"
+        },
+        {
+            "id": "803099",
+            "output": " comedy"
+        },
+        {
+            "id": "803100",
+            "output": " comedy"
+        },
+        {
+            "id": "803101",
+            "output": " psychology"
+        },
+        {
+            "id": "803102",
+            "output": " comedy"
+        },
+        {
+            "id": "81852",
+            "output": " comedy"
+        },
+        {
+            "id": "81853",
+            "output": " comedy"
+        },
+        {
+            "id": "81854",
+            "output": " dystopia"
+        },
+        {
+            "id": "81855",
+            "output": " comedy"
+        },
+        {
+            "id": "803153",
+            "output": " comedy"
+        },
+        {
+            "id": "803154",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803155",
+            "output": " dystopia"
+        },
+        {
+            "id": "803156",
+            "output": " psychology"
+        },
+        {
+            "id": "803157",
+            "output": " comedy"
+        },
+        {
+            "id": "803158",
+            "output": " dystopia"
+        },
+        {
+            "id": "803159",
+            "output": " comedy"
+        },
+        {
+            "id": "803160",
+            "output": " dystopia"
+        },
+        {
+            "id": "803161",
+            "output": " comedy"
+        },
+        {
+            "id": "803162",
+            "output": " action"
+        },
+        {
+            "id": "803163",
+            "output": " true story"
+        },
+        {
+            "id": "803164",
+            "output": " action"
+        },
+        {
+            "id": "803165",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803166",
+            "output": " comedy"
+        },
+        {
+            "id": "803167",
+            "output": " action"
+        },
+        {
+            "id": "803168",
+            "output": " comedy"
+        },
+        {
+            "id": "803169",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803170",
+            "output": " dystopia"
+        },
+        {
+            "id": "803171",
+            "output": " psychology"
+        },
+        {
+            "id": "803172",
+            "output": " comedy"
+        },
+        {
+            "id": "803173",
+            "output": " action"
+        },
+        {
+            "id": "803174",
+            "output": " action"
+        },
+        {
+            "id": "803175",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803176",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803177",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803178",
+            "output": " action"
+        },
+        {
+            "id": "803179",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81878",
+            "output": " comedy"
+        },
+        {
+            "id": "81879",
+            "output": " dystopia"
+        },
+        {
+            "id": "81880",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81881",
+            "output": " violence"
+        },
+        {
+            "id": "81882",
+            "output": " social commentary"
+        },
+        {
+            "id": "803183",
+            "output": " comedy"
+        },
+        {
+            "id": "803184",
+            "output": " dystopia"
+        },
+        {
+            "id": "803185",
+            "output": " comedy"
+        },
+        {
+            "id": "803186",
+            "output": " comedy"
+        },
+        {
+            "id": "803187",
+            "output": " comedy"
+        },
+        {
+            "id": "803188",
+            "output": " dark comedy"
+        },
+        {
+            "id": "803189",
+            "output": " dystopia"
+        },
+        {
+            "id": "803190",
+            "output": " twist ending"
+        },
+        {
+            "id": "803191",
+            "output": " comedy"
+        },
+        {
+            "id": "803192",
+            "output": " comedy"
+        },
+        {
+            "id": "803193",
+            "output": " dystopia"
+        },
+        {
+            "id": "803194",
+            "output": " true story"
+        },
+        {
+            "id": "803195",
+            "output": " violence"
+        },
+        {
+            "id": "803196",
+            "output": " classic"
+        },
+        {
+            "id": "803197",
+            "output": " dystopia"
+        },
+        {
+            "id": "803198",
+            "output": " action"
+        },
+        {
+            "id": "803199",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803200",
+            "output": " comedy"
+        },
+        {
+            "id": "81885",
+            "output": " comedy"
+        },
+        {
+            "id": "81886",
+            "output": " comedy"
+        },
+        {
+            "id": "81887",
+            "output": " twist ending"
+        },
+        {
+            "id": "81888",
+            "output": " violence"
+        },
+        {
+            "id": "803253",
+            "output": " dystopia"
+        },
+        {
+            "id": "803254",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803255",
+            "output": " dystopia"
+        },
+        {
+            "id": "803256",
+            "output": " dystopia"
+        },
+        {
+            "id": "803257",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803258",
+            "output": " dystopia"
+        },
+        {
+            "id": "803259",
+            "output": " comedy"
+        },
+        {
+            "id": "803260",
+            "output": " comedy"
+        },
+        {
+            "id": "803261",
+            "output": " twist ending"
+        },
+        {
+            "id": "803262",
+            "output": " comedy"
+        },
+        {
+            "id": "803263",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803264",
+            "output": " true story"
+        },
+        {
+            "id": "803265",
+            "output": " true story"
+        },
+        {
+            "id": "803266",
+            "output": " dystopia"
+        },
+        {
+            "id": "803267",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803268",
+            "output": " comedy"
+        },
+        {
+            "id": "803269",
+            "output": " based on a book"
+        },
+        {
+            "id": "803270",
+            "output": " action"
+        },
+        {
+            "id": "803271",
+            "output": " classic"
+        },
+        {
+            "id": "803272",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803273",
+            "output": " comedy"
+        },
+        {
+            "id": "803274",
+            "output": " classic"
+        },
+        {
+            "id": "803275",
+            "output": " action"
+        },
+        {
+            "id": "803276",
+            "output": " dystopia"
+        },
+        {
+            "id": "803277",
+            "output": " fantasy"
+        },
+        {
+            "id": "803278",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803279",
+            "output": " twist ending"
+        },
+        {
+            "id": "803280",
+            "output": " classic"
+        },
+        {
+            "id": "81908",
+            "output": " dystopia"
+        },
+        {
+            "id": "81909",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81910",
+            "output": " comedy"
+        },
+        {
+            "id": "81911",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81912",
+            "output": " violence"
+        },
+        {
+            "id": "803283",
+            "output": " twist ending"
+        },
+        {
+            "id": "803284",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803285",
+            "output": " dark comedy"
+        },
+        {
+            "id": "803286",
+            "output": " dystopia"
+        },
+        {
+            "id": "803287",
+            "output": " twist ending"
+        },
+        {
+            "id": "803288",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803289",
+            "output": " twist ending"
+        },
+        {
+            "id": "803290",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803291",
+            "output": " twist ending"
+        },
+        {
+            "id": "803292",
+            "output": " twist ending"
+        },
+        {
+            "id": "803293",
+            "output": " psychology"
+        },
+        {
+            "id": "803294",
+            "output": " dystopia"
+        },
+        {
+            "id": "803295",
+            "output": " twist ending"
+        },
+        {
+            "id": "803296",
+            "output": " twist ending"
+        },
+        {
+            "id": "803297",
+            "output": " thought-provoking"
+        },
+        {
+            "id": "81913",
+            "output": " twist ending"
+        },
+        {
+            "id": "81914",
+            "output": " twist ending"
+        },
+        {
+            "id": "81915",
+            "output": " comedy"
+        },
+        {
+            "id": "803310",
+            "output": " psychology"
+        },
+        {
+            "id": "803311",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803312",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803313",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803314",
+            "output": " comedy"
+        },
+        {
+            "id": "803315",
+            "output": " dark comedy"
+        },
+        {
+            "id": "803316",
+            "output": " true story"
+        },
+        {
+            "id": "803317",
+            "output": " true story"
+        },
+        {
+            "id": "803318",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803319",
+            "output": " classic"
+        },
+        {
+            "id": "803320",
+            "output": " action"
+        },
+        {
+            "id": "803321",
+            "output": " fantasy"
+        },
+        {
+            "id": "803322",
+            "output": " true story"
+        },
+        {
+            "id": "803323",
+            "output": " comedy"
+        },
+        {
+            "id": "803324",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803325",
+            "output": " comedy"
+        },
+        {
+            "id": "803326",
+            "output": " comedy"
+        },
+        {
+            "id": "803327",
+            "output": " psychology"
+        },
+        {
+            "id": "803328",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803329",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803330",
+            "output": " comedy"
+        },
+        {
+            "id": "803331",
+            "output": " dystopia"
+        },
+        {
+            "id": "803332",
+            "output": " based on a book"
+        },
+        {
+            "id": "803333",
+            "output": " true story"
+        },
+        {
+            "id": "803334",
+            "output": " dystopia"
+        },
+        {
+            "id": "803335",
+            "output": " classic"
+        },
+        {
+            "id": "803336",
+            "output": " comedy"
+        },
+        {
+            "id": "81920",
+            "output": " comedy"
+        },
+        {
+            "id": "81921",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81922",
+            "output": " comedy"
+        },
+        {
+            "id": "81923",
+            "output": " sci-fi"
+        },
+        {
+            "id": "81924",
+            "output": " dystopia"
+        },
+        {
+            "id": "803349",
+            "output": " dystopia"
+        },
+        {
+            "id": "803350",
+            "output": " comedy"
+        },
+        {
+            "id": "803351",
+            "output": " psychology"
+        },
+        {
+            "id": "803352",
+            "output": " twist ending"
+        },
+        {
+            "id": "803353",
+            "output": " dystopia"
+        },
+        {
+            "id": "803354",
+            "output": " fantasy"
+        },
+        {
+            "id": "803355",
+            "output": " classic"
+        },
+        {
+            "id": "803356",
+            "output": " twist ending"
+        },
+        {
+            "id": "803357",
+            "output": " comedy"
+        },
+        {
+            "id": "803358",
+            "output": " comedy"
+        },
+        {
+            "id": "803359",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803360",
+            "output": " dystopia"
+        },
+        {
+            "id": "81928",
+            "output": " comedy"
+        },
+        {
+            "id": "81929",
+            "output": " dystopia"
+        },
+        {
+            "id": "81930",
+            "output": " romance"
+        },
+        {
+            "id": "803361",
+            "output": " comedy"
+        },
+        {
+            "id": "803362",
+            "output": " comedy"
+        },
+        {
+            "id": "803363",
+            "output": " comedy"
+        },
+        {
+            "id": "803364",
+            "output": " comedy"
+        },
+        {
+            "id": "803365",
+            "output": " fantasy"
+        },
+        {
+            "id": "803366",
+            "output": " comedy"
+        },
+        {
+            "id": "803367",
+            "output": " classic"
+        },
+        {
+            "id": "803368",
+            "output": " comedy"
+        },
+        {
+            "id": "803369",
+            "output": " true story"
+        },
+        {
+            "id": "803370",
+            "output": " comedy"
+        },
+        {
+            "id": "803371",
+            "output": " comedy"
+        },
+        {
+            "id": "81931",
+            "output": " fantasy"
+        },
+        {
+            "id": "81932",
+            "output": " comedy"
+        },
+        {
+            "id": "803384",
+            "output": " comedy"
+        },
+        {
+            "id": "803385",
+            "output": " comedy"
+        },
+        {
+            "id": "803386",
+            "output": " based on a book"
+        },
+        {
+            "id": "803387",
+            "output": " dystopia"
+        },
+        {
+            "id": "803388",
+            "output": " comedy"
+        },
+        {
+            "id": "803389",
+            "output": " dystopia"
+        },
+        {
+            "id": "803390",
+            "output": " based on a book"
+        },
+        {
+            "id": "803391",
+            "output": " sci-fi"
+        },
+        {
+            "id": "803392",
+            "output": " twist ending"
+        },
+        {
+            "id": "803393",
+            "output": " comedy"
+        },
+        {
+            "id": "803394",
+            "output": " classic"
+        },
+        {
+            "id": "803395",
+            "output": " classic"
+        },
+        {
+            "id": "803396",
+            "output": " dystopia"
+        },
+        {
+            "id": "81937",
+            "output": " comedy"
+        },
+        {
+            "id": "81938",
+            "output": " fantasy"
+        },
+        {
+            "id": "81939",
+            "output": " dystopia"
+        }
+    ],
+    "model": "/home/ange00008/projects/mobileFT_distill/data/models/q4eval/SmolLM3-3B-oppu_movie_tagging-q4deq"
+}

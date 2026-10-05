@@ -1,0 +1,128 @@
+                           | bf16 (published Table 8)                | 4-bit (phone's weights)                
+task              metric   |    Task   +User        D      D_u    p_u |    Task   +User        D      D_u    p_u
+news_categorize   accuracy |   0.810   0.815   +0.005   +0.009  0.205 |   0.805   0.816   +0.010   +0.014  0.019
+news_headline     rouge_1  |   0.172   0.173   +0.001   +0.002 0.0981 |   0.158   0.158   -0.000   +0.000  0.929
+movie_tagging     accuracy |   0.493   0.570   +0.076   +0.023 0.000156 |   0.361   0.468   +0.107   +0.015 0.0691
+citation          accuracy |   0.634   0.642   +0.008   +0.015  0.615 |   0.634   0.634   +0.000   +0.015  0.593
+product_rating    MAE      |   0.205   0.196   +0.009   +0.020  0.635 |   0.223   0.214   +0.009   +0.015  0.642
+tweet_paraphrase  rouge_1  |   0.564   0.580   +0.015   +0.013 0.0801 |   0.536   0.534   -0.001   +0.001  0.847
+scholarly_title   rouge_1  |   0.500   0.504   +0.004   +0.002  0.749 |   0.496   0.477   -0.019   -0.018  0.107
+
+D, D_u oriented so + = better (MAE sign flipped). p_u: user-grouped paired t-test.
+
+4-bit minus bf16, oriented + = 4-bit better (MAE sign-flipped). query-level D (p) | user-grouped D_u (p_u)
+news_categorize   n= 6033 Task: -0.005 (0.077) | -0.006 (0.2)  +User: +0.000 (0.85) | -0.001 (0.8)  gain: +0.005 (0.093) | +0.005 (0.28)  task-score changed on 4.8%
+news_headline     n= 6725 Task: -0.014 (5.8e-23) | -0.013 (1.3e-11)  +User: -0.015 (3e-26) | -0.015 (1.4e-14)  gain: -0.001 (0.34) | -0.002 (0.2)  task-score changed on 81.8%
+movie_tagging     n= 3302 Task: -0.132 (1.2e-54) | -0.113 (7.3e-16)  +User: -0.101 (1.2e-39) | -0.120 (2.2e-16)  gain: +0.031 (1.5e-06) | -0.008 (0.15)  task-score changed on 24.7%
+citation          n=  123 Task: +0.000 (1) | +0.000 (1)  +User: -0.008 (0.85) | +0.000 (1)  gain: -0.008 (0.81) | +0.000 (1)  task-score changed on 22.8%
+product_rating    n=  112 Task: -0.018 (0.64) | -0.015 (0.71)  +User: -0.018 (0.53) | -0.020 (0.5)  gain: +0.000 (1) | -0.005 (0.9)  task-score changed on 13.4%
+tweet_paraphrase  n=  109 Task: -0.031 (0.0075) | -0.034 (0.0061)  +User: -0.048 (8.7e-05) | -0.045 (0.00018)  gain: -0.017 (0.075) | -0.012 (0.2)  task-score changed on 87.2%
+scholarly_title   n=  107 Task: -0.004 (0.8) | -0.004 (0.8)  +User: -0.027 (0.056) | -0.024 (0.087)  gain: -0.023 (0.069) | -0.020 (0.11)  task-score changed on 69.2%
+
+queries 3302 users 100 {'C16T': 3302, 'C4T': 3302, 'C16U': 3302, 'C4U': 3302, 'PT': 3302, 'PU': 3302, 'PD': 3302} missing {'C16T': 0, 'C4T': 0, 'C16U': 0, 'C4U': 0, 'PT': 0, 'PU': 0, 'PD': 0}
+accuracy {'C16T': 0.4933, 'C4T': 0.361, 'C16U': 0.5697, 'C4U': 0.4682, 'PT': 0.3658, 'PU': 0.4788, 'PD': 0.4861}
+agree C4T  vs PT  : 0.9058  (differ on 9.42%)
+agree C4U  vs PU  : 0.9182  (differ on 8.18%)
+agree C4U  vs PD  : 0.9019  (differ on 9.81%)
+agree C16T vs C4T : 0.5796  (differ on 42.04%)
+agree C16T vs PT  : 0.5854  (differ on 41.46%)
+agree C16U vs C4U : 0.6566  (differ on 34.34%)
+agree C16U vs PU  : 0.6672  (differ on 33.28%)
+agree PU   vs PD  : 0.9152  (differ on 8.48%)
+C16U - C16T: D +0.0763 (p 8.4e-38)  D_u +0.0231 (p_u 0.000156)
+C4U  - C4T : D +0.1072 (p 2.59e-60)  D_u +0.0155 (p_u 0.0691)
+PU   - PT  : D +0.1130 (p 5.1e-65)  D_u +0.0215 (p_u 0.0137)
+PD   - PT  : D +0.1202 (p 6.09e-71)  D_u +0.0267 (p_u 0.00335)
+PT   - C4T : D +0.0048 (p 0.176)  D_u +0.0073 (p_u 0.122)
+PU   - C4U : D +0.0106 (p 0.00319)  D_u +0.0133 (p_u 0.0079)
+
+ARMS (movie block): C16 = cluster bf16 (published Table 8), C4 = cluster 4-bit (this run),
+P = phone (h13, Table 9). T = task adapter k=1, U = +User cluster-trained adapter,
+PD = +User phone-trained adapter.
+
+NOTES (2026-09-24)
+- 4-bit = the phone recipe per task (scripts/q4eval/build_q4_oppu_model.py on conduit, cluster
+  197525, all 7 merged-base hashes matched), MLX affine 4-bit g64 then dequantized to bf16 HF
+  weights, the same fake-quant path as Table 7. Training untouched: the +User arm applies the
+  existing bf16-trained _r5 adapters on top of the 4-bit task model, as the phone's
+  "cluster-trained adapter" row does.
+- Task: run_task_lora.py --premerged (PATCH P26), clusters 197530/197532. +User: run_oppu.py
+  --eval-only --premerged --ckpt-tag _r5, cluster 197536 (67 shards). Scored: cluster 197554.
+- Same users and queries as the bf16 table in all 7 tasks.
+- Scripts: eval/q4b_table8_compare.py, eval/q4b_table8_drops.py, eval/q4b_movie_phone_vs_cluster.py.
+  Data: results/oppu_rep_q4b_2026-09-24/.
+
+=== FOLLOW-UP 2026-09-24: per-user adapters TRAINED on the 4-bit model (_r5q4t) ===
+                           |  4-bit | +User, bf16-trained         | +User, 4-bit-trained        | 4-bit-trained - bf16-trained
+task              metric   |   Task |  score      D    D_u    p_u |  score      D    D_u    p_u |      d      p    d_u    p_u
+news_categorize   accuracy |  0.805 |  0.816 +0.010 +0.014  0.019 |  0.811 +0.006 +0.012  0.095 | -0.004  0.013 -0.002   0.28
+news_headline     rouge_1  |  0.158 |  0.158 -0.000 +0.000   0.93 |  0.159 +0.001 +0.001   0.33 | +0.001   0.24 +0.001   0.32
+movie_tagging     accuracy |  0.361 |  0.468 +0.107 +0.015  0.069 |  0.488 +0.127 +0.030 0.0011 | +0.019 9.5e-10 +0.014  2e-05
+citation          accuracy |  0.634 |  0.634 +0.000 +0.015   0.59 |  0.634 +0.000 +0.015   0.59 | +0.000      1 +0.000      1
+product_rating    MAE      |  0.223 |  0.214 +0.009 +0.015   0.64 |  0.205 +0.018 +0.025   0.43 | +0.009   0.71 +0.010   0.67
+tweet_paraphrase  rouge_1  |  0.536 |  0.534 -0.001 +0.001   0.85 |  0.530 -0.005 -0.003   0.62 | -0.004   0.14 -0.004   0.14
+scholarly_title   rouge_1  |  0.496 |  0.477 -0.019 -0.018   0.11 |  0.486 -0.008 -0.006   0.55 | +0.011  0.059 +0.011  0.059
+
+movie tagging vs phone (C4Ut = cluster 4-bit-trained):
+queries 3302 users 100 {'C16T': 3302, 'C4T': 3302, 'C16U': 3302, 'C4U': 3302, 'C4Ut': 3302, 'PT': 3302, 'PU': 3302, 'PD': 3302} missing {'C16T': 0, 'C4T': 0, 'C16U': 0, 'C4U': 0, 'C4Ut': 0, 'PT': 0, 'PU': 0, 'PD': 0}
+accuracy {'C16T': 0.4933, 'C4T': 0.361, 'C16U': 0.5697, 'C4U': 0.4682, 'C4Ut': 0.4876, 'PT': 0.3658, 'PU': 0.4788, 'PD': 0.4861}
+agree C4Ut vs PD  : 0.9219  (differ on 7.81%)
+agree C4Ut vs C4U : 0.9461  (differ on 5.39%)
+C4Ut - C4T : D +0.1266 (p 2.16e-78)  D_u +0.0298 (p_u 0.00114)
+PD   - C4Ut: D -0.0015 (p 0.667)  D_u +0.0042 (p_u 0.374)
+C4Ut - C4U : D +0.0194 (p 9.47e-10)  D_u +0.0144 (p_u 1.96e-05)
+
+NOTES
+- r5 recipe unchanged; the only change is --premerged --model_name <q4deq>, so the adapter trains
+  against the dequantized 4-bit task model (BF16-exact). Cluster 197572 (67 jobs, all exit 0),
+  scored against the same 4-bit Task arm (_q4), cluster 197643. Generator: q4t_*_sub.
+- d/p/d_u/p_u columns: 4-bit-trained minus bf16-trained, + = 4-bit-trained better (MAE flipped).
+
+=== SHUFFLED-HISTORY CONTROL AT 4-BIT (_r5q4tshuf), 2026-09-24 ===
+task              metric    n_u |    Task   +User        D      D_u      p_u |   +Shuf        D      D_u      p_u | own-shuf        p      d_u      p_u |  same%
+movie_tagging     accuracy  100 |  0.3610  0.4876  +0.1266  +0.0298  0.00114 |  0.3725  +0.0115  +0.0098   0.0254 |  +0.1151 7.69e-71  +0.0200   0.0223 |  81.1%
+                  shuffled D / own D = 0.09   (plan: <= ~1/3 personal, > ~1/2 partly quantization recovery)
+news_categorize   accuracy   49 |  0.8051  0.8112  +0.0061  +0.0116   0.0947 |  0.7970  -0.0081  -0.0087    0.177 |  +0.0143 6.02e-05  +0.0203   0.0396 |  90.4%
+                  shuffled D / own D = -1.32   (plan: <= ~1/3 personal, > ~1/2 partly quantization recovery)
+
+own-shuf = own-history minus shuffled-history adapter, paired over the same queries.
+Task scores asserted identical per query between the two arms.
+
+16-bit reference (published _r5 / _r5shuf, same per-query pairs):
+movie_tagging     own D +0.0763 D_u +0.0231 | shuf D +0.0061 D_u +0.0049 (p_u 0.339) | own-shuf D +0.0703 (p 9.4e-35) D_u +0.0182 (p_u 0.0039) | shuf/own 0.08 / 0.21
+news_categorize   own D +0.0050 D_u +0.0090 | shuf D -0.0099 D_u -0.0106 (p_u 0.069) | own-shuf D +0.0149 (p 7.1e-06) D_u +0.0196 (p_u 0.054)
+
+NOTES
+- _r5q4t pipeline (P26 4-bit base, r5 recipe P19) + P23 --shuffle-users: user i trains on user
+  (i+1) mod N's history. Movie: cluster 197688 (10 jobs), scored 197695. News categorization:
+  cluster 197689 (5 jobs, job priority -10), scored 197696. All jobs exit 0.
+- Sanity: predictions 3302 / 6033 (= _r5q4t); no zero lora_B; mapping 0->1, 1->2, last->0 (all
+  i->(i+1) mod N); checkpoints of users 0, 1, 50 (news: 48) differ byte-wise from _r5q4t.
+- VERDICT (plan table): the 4-bit gain is personal (shuffled D = 9% of own D on movie tagging).
+  Per user the shuffled gain is 33% of own and significant (p_u 0.025), so report both views
+  with the own-shuf difference. Personal part per user unchanged by quantization (+0.020 vs +0.018).
+
+=== ADAPTER DEPTH AT 4-BIT (_r5q4td24, _r5q4td18), 2026-09-24 ===
+4-bit Task arm (_q4): 0.3610   n = 3302 queries, 100 users
+depth  tag        |    acc        D      D_u      p_u | retains D / D_u |    vs 36        p      d_u      p_u |  same%
+36     _r5q4t     | 0.4876  +0.1266  +0.0298  0.00114 |               - |        -        -        -        - |      -
+24     _r5q4td24  | 0.4764  +0.1154  +0.0198   0.0246 |     91% /    66% |  -0.0112 3.56e-07  -0.0100 3.94e-05 |  97.4%
+18     _r5q4td18  | 0.4724  +0.1114  +0.0190   0.0234 |     88% /    64% |  -0.0151 9.28e-08  -0.0108 0.000112 |  95.9%
+
+vs 36 = accuracy of this depth minus the 36-block adapter, paired over the same queries.
+Task scores asserted identical per query across all three arms.
+
+16-bit reference (published _r5 / _r5d24 / _r5d18, same per-query files):
+36  acc 0.5697  D +0.0763  D_u +0.0231 (p_u 0.00016)
+24  acc 0.5700  D +0.0766  D_u +0.0236 (p_u 8.6e-05)  retains 100% / 102%  vs 36 +0.0003 (p 0.88)  d_u +0.0005 (p_u 0.67)  same 98.0%
+18  acc 0.5648  D +0.0715  D_u +0.0201 (p_u 0.00043)  retains  94% /  87%  vs 36 -0.0048 (p 0.036) d_u -0.0030 (p_u 0.088) same 97.5%
+
+NOTES
+- _r5q4t pipeline (P26 + P19) + P24 --lora-layers N. Smoke cluster 197693 (user 0, both depths:
+  [P24] layers 12..35 / 18..35, q4deq path, trainable 1,277,952 / 958,464 = N/36 of 1,916,928);
+  batch 197694 (20 jobs, all exit 0), scored 197698.
+- Sanity: 3302 predictions per depth; no zero lora_B; users 0 and 50 keys cover only the last N
+  blocks; checkpoints of users 0, 1, 50 differ byte-wise from _r5q4t.
+- VERDICT (plan table): 24 blocks retain < 95% (91% / 66%), loss significant (-0.0112, p 4e-7;
+  -0.0100 per user, p_u 4e-5) -> Sec 6.2 reports 24-block retention like 18 and drops "no measured
+  loss of quality". 18 blocks: 88% / 64%.
