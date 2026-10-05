@@ -63,6 +63,11 @@ parser.add_argument('--user-end', type=int, default=-1, help='shard: last test-u
 parser.add_argument('--tag', type=str, default='', help="output namespace tag, e.g. '_smoke' (keeps smoke artifacts off real-run paths)")
 parser.add_argument('--seed', type=int, default=0, help='generation seed (their code sets none)')
 parser.add_argument('--overwrite', action='store_true')
+parser.add_argument('--lora-layers', type=int, default=-1,
+                    help='PATCH P24: adapt only the LAST N transformer blocks '
+                         '(-1 = every block, PEFT default). Mirrors the device '
+                         "harness's --lora-layers so cluster and phone can be "
+                         'compared at matched adapter depth.')
 parser.add_argument('--user-recipe', choices=['code', 'r5'], default='code',
                     help="PATCH P19 (recipe ablation): 'code' = their released recipe "
                          "(LR 1e-4, alpha 8, linear, warmup 0.1, 2 epochs, batch 16); "
@@ -139,10 +144,26 @@ base_model.config.bos_token_id = tokenizer.bos_token_id
 base_model.gradient_checkpointing_enable()
 base_model = prepare_model_for_kbit_training(base_model)
 
+# PATCH P24: restrict LoRA to the last N blocks. Gradients stop at the first
+# adapted block, so N is the lever that moves backward-pass compute (rank does
+# not). layers_to_transform=None is PEFT's default and adapts every block.
+_n_hidden = getattr(base_model.config, 'num_hidden_layers', None)
+if args.lora_layers is not None and args.lora_layers >= 0:
+    if _n_hidden is None:
+        raise RuntimeError('--lora-layers needs config.num_hidden_layers')
+    if not (0 < args.lora_layers <= _n_hidden):
+        raise ValueError(f'--lora-layers {args.lora_layers} outside 1..{_n_hidden}')
+    _layers_to_transform = list(range(_n_hidden - args.lora_layers, _n_hidden))
+else:
+    _layers_to_transform = None
+print(f'[P24] lora_layers={args.lora_layers} n_hidden={_n_hidden} '
+      f'layers_to_transform={_layers_to_transform}', flush=True)
+
 peft_config = LoraConfig(
     r=8,
     lora_alpha=16 if args.user_recipe == 'r5' else 8,   # PATCH P19
     target_modules=["q_proj", "v_proj"],
+    layers_to_transform=_layers_to_transform,           # PATCH P24
     lora_dropout=0.05,
     bias="none",
     task_type="CAUSAL_LM",
