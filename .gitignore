@@ -53,8 +53,19 @@ __pycache__/
 
 # Build output and tool scratch, never worth tracking
 ios/BGProbe/build/
+ios/**/xcuserdata/
 train/checkpoints_mlx/
 .playwright-mcp/
+*.bak-*
+*.pre-final
+
+# Local only: archived drafts, LaMP-derived device data, run state, partial pulls
+_archive/
+data/ondevice_task_data/
+scripts/.h15run/
+scripts/results
+scripts/_night2_status.py
+results/ondevice/PARTIAL-*
 
 # h13 derived data — all regenerable: the texts come from their code on conduit
 # (scripts/h13/dump_movie_texts.py), the per-user corpora and MLX adapters from
