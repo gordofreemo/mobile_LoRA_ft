@@ -2,6 +2,8 @@
 
 Andrew Geyko, Marius Mosbach, André Brinkmann
 
+Paper: [arXiv:2610.06325](https://arxiv.org/abs/2610.06325)
+
 This repository contains the code and measurement data for the paper.
 
 We fine-tune SmolLM3-3B with LoRA on an iPhone 17 Pro and measure complete training runs:
@@ -112,9 +114,13 @@ runs.
 
 ```bibtex
 @misc{geyko2026finetuning,
-  title  = {Fine-Tuning a 3B-Parameter {LLM} on a Smartphone: Characterizing Sustained Training},
-  author = {Geyko, Andrew and Mosbach, Marius and Brinkmann, Andr{\'e}},
-  year   = {2026},
+  title         = {Fine-Tuning a 3B-Parameter {LLM} on a Smartphone: Characterizing Sustained Training},
+  author        = {Geyko, Andrew and Mosbach, Marius and Brinkmann, Andr{\'e}},
+  year          = {2026},
+  eprint        = {2610.06325},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.DC},
+  url           = {https://arxiv.org/abs/2610.06325},
 }
 ```
 
